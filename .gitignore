@@ -1,0 +1,17 @@
+node_modules/
+
+# Eval case sets are generated from a real vault and contain its content.
+# They stay machine-local under $CLAUDE_MEMORY_HOME/eval/ and are never committed.
+eval-cases-*.jsonl
+
+# State, indexes, logs — all of it belongs in $CLAUDE_MEMORY_HOME, never in the repo.
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.sock
+
+__pycache__/
+*.pyc
+
+.DS_Store

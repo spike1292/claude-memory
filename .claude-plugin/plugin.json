@@ -1,0 +1,21 @@
+{
+  "name": "memory",
+  "version": "0.1.0",
+  "description": "Layered memory for Claude Code, backed by a plain-Markdown Obsidian vault. Per-project facts, session logs, auto-distilled lessons, and hybrid semantic + lexical recall that runs entirely on your machine.",
+  "author": {
+    "name": "Henk Bakker",
+    "url": "https://github.com/spike1292"
+  },
+  "homepage": "https://github.com/spike1292/claude-memory#readme",
+  "repository": "https://github.com/spike1292/claude-memory",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "obsidian",
+    "vault",
+    "semantic-search",
+    "embeddings",
+    "rag",
+    "session-continuity"
+  ]
+}
