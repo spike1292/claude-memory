@@ -17,13 +17,27 @@ import sys
 from datetime import date
 from pathlib import Path
 
+def memory_home() -> Path:
+    """Mirror of hooks/lib/vault-env.sh memory_home()."""
+    return Path(os.environ.get("CLAUDE_MEMORY_HOME") or Path.home() / ".claude-memory")
+
+
 def resolve_vault() -> Path:
-    """Mirror of hooks/lib/vault-env.sh resolve_vault(). DISTILL_VAULT stays supported
-    for tests; CLAUDE_VAULT is the real knob."""
+    """Mirror of hooks/lib/vault-env.sh resolve_vault(): env var, then the machine-local
+    config file, then the default. DISTILL_VAULT stays supported for tests.
+
+    The config file is load-bearing, not a nicety: this runs detached from a hook and
+    inherits no environment worth relying on."""
     for var in ("DISTILL_VAULT", "CLAUDE_VAULT"):
         v = os.environ.get(var)
         if v:
             return Path(v)
+    try:
+        v = (memory_home() / "vault").read_text(encoding="utf-8").splitlines()[0].strip()
+        if v:
+            return Path(v)
+    except (OSError, IndexError):
+        pass
     return Path.home() / "Documents/ClaudeVault"
 
 

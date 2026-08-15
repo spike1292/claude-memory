@@ -17,9 +17,18 @@ export const pluginRoot = path.dirname(hooksDir);
 export const scriptsDir = path.join(pluginRoot, 'scripts');
 export const vaultEnvSh = path.join(libDir, 'vault-env.sh');
 
-/** Vault root. $CLAUDE_VAULT wins, else ~/Documents/ClaudeVault. Mirrors resolve_vault(). */
+/**
+ * Vault root. Mirrors resolve_vault(): env var, then the machine-local config file,
+ * then the default. The file is load-bearing — `env` in settings.local.json does not
+ * reach hook subprocesses, so nothing may depend on the variable being present.
+ */
 export function vault() {
-  return process.env.CLAUDE_VAULT || path.join(os.homedir(), 'Documents', 'ClaudeVault');
+  if (process.env.CLAUDE_VAULT) return process.env.CLAUDE_VAULT;
+  try {
+    const v = fs.readFileSync(path.join(memoryHome(), 'vault'), 'utf8').split('\n')[0].trim();
+    if (v) return v;
+  } catch { /* not configured yet — fall through to the default */ }
+  return path.join(os.homedir(), 'Documents', 'ClaudeVault');
 }
 
 /**

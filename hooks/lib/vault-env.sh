@@ -10,12 +10,34 @@
 # runs from a version-pinned cache dir, from a dev checkout, and via symlink.
 
 # --- vault root ---------------------------------------------------------------
-# $CLAUDE_VAULT wins; otherwise a portable default. Set CLAUDE_VAULT in
-# ~/.claude/settings.local.json (gitignored) rather than hard-coding a personal
-# path anywhere tracked.
+# Three sources, in order: the env var, a machine-local config FILE, the default.
+#
+# The config file is not redundant. `env` in ~/.claude/settings.local.json does NOT
+# reach hook subprocesses (verified 2026-08-15 the hard way: with only the env var
+# set, the SessionStart hook resolved to the default, built an empty vault there and
+# repointed the memory symlink at it). A hook must be able to find the vault with no
+# inherited environment at all, so the file is the load-bearing mechanism and the env
+# var is the override.
+#
+#   echo "/path/to/vault" > "$(memory_home)/vault"     # what /memory:install writes
 resolve_vault() {
   if [ -n "${CLAUDE_VAULT:-}" ]; then printf '%s' "$CLAUDE_VAULT"; return; fi
+  _cfg="$(memory_home)/vault"
+  if [ -f "$_cfg" ]; then
+    _v=$(head -n1 "$_cfg" | tr -d '\r\n')
+    if [ -n "$_v" ]; then printf '%s' "$_v"; return; fi
+  fi
   printf '%s' "$HOME/Documents/ClaudeVault"
+}
+
+# Which of the three won — for /memory:doctor, so "wrong vault" is diagnosable.
+vault_source() {
+  if [ -n "${CLAUDE_VAULT:-}" ]; then printf 'CLAUDE_VAULT env'; return; fi
+  _cfg="$(memory_home)/vault"
+  if [ -f "$_cfg" ] && [ -n "$(head -n1 "$_cfg" | tr -d '\r\n')" ]; then
+    printf '%s' "$_cfg"; return
+  fi
+  printf 'built-in default'
 }
 
 # --- mutable state ------------------------------------------------------------

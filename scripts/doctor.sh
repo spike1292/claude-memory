@@ -75,19 +75,43 @@ if [ -d "$ROOT/node_modules/@huggingface/transformers/.cache" ]; then
        "a /plugin update will discard them. The HF cache redirect in hooks/lib/paths.mjs is not taking effect."
 fi
 
-echo
 echo "vault"
+echo "  resolved from: $(vault_source)"
 if [ -d "$VAULT" ]; then
   ok "vault exists"
   [ -w "$VAULT" ] && ok "vault writable" || fail "vault not writable" "hooks cannot write notes. Check permissions on $VAULT"
-  if [ -z "${CLAUDE_VAULT:-}" ]; then
-    warn "CLAUDE_VAULT unset — using the default $HOME/Documents/ClaudeVault" \
-         "if your vault is elsewhere, set CLAUDE_VAULT in ~/.claude/settings.local.json"
+
+  # "Pointed at the WRONG vault" is the failure that matters, and an existence check
+  # cannot see it: on 2026-08-15 a misresolution silently created an empty scaffold at
+  # the default path and repointed the memory symlink at it. Everything read as fine.
+  # So: count the notes, and if there are none, go looking for a populated vault
+  # elsewhere before calling this healthy.
+  n=$(find "$VAULT" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$n" -gt 0 ]; then
+    ok "vault holds $n notes"
   else
-    ok "CLAUDE_VAULT set"
+    other=""
+    for cand in "$HOME/Documents/ClaudeVault" \
+                "$(head -n1 "$STATE/vault" 2>/dev/null)" \
+                "$HOME/Library/CloudStorage"/*/*/Claude; do
+      [ -n "$cand" ] && [ -d "$cand" ] && [ "$cand" != "$VAULT" ] || continue
+      [ "$(find "$cand" -type f -name '*.md' 2>/dev/null | head -1)" ] && { other="$cand"; break; }
+    done
+    if [ -n "$other" ]; then
+      fail "vault is EMPTY but a populated vault exists at $other" \
+           "you are pointed at the wrong one — nothing will be recalled and new notes land in the empty one. Fix: echo '$other' > \"$STATE/vault\""
+    else
+      warn "vault is empty" "expected on a first install; notes appear as you work."
+    fi
   fi
 else
-  fail "vault does not exist: $VAULT" "create it, or set CLAUDE_VAULT in ~/.claude/settings.local.json to the real path"
+  fail "vault does not exist: $VAULT" "create it, or write the real path: echo /path/to/vault > \"$STATE/vault\""
+fi
+# The env var is an override, not the mechanism — `env` in settings.local.json does NOT
+# reach hook subprocesses, so a config file is what actually keeps hooks on the vault.
+if [ ! -f "$STATE/vault" ] && [ -z "${CLAUDE_VAULT:-}" ]; then
+  warn "no $STATE/vault config file" \
+       "hooks run with no inherited env, so setting CLAUDE_VAULT in settings.local.json alone does NOT reach them. Run /memory:install, or: echo '$VAULT' > \"$STATE/vault\""
 fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."

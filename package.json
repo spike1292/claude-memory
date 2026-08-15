@@ -1,6 +1,6 @@
 {
   "name": "claude-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Layered memory for Claude Code — local embedding runtime for scripts/memory-semantic.mjs",
   "license": "MIT",

@@ -72,12 +72,18 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    Report the size. If `$STATE/models` is empty but a model loaded, the cache redirect is broken —
    say so loudly rather than moving on.
 
-7. **Set `CLAUDE_VAULT`** in `~/.claude/settings.local.json` (gitignored, machine-local) if it is not
-   already set and the vault is not at the default `~/Documents/ClaudeVault`:
-   ```json
-   { "env": { "CLAUDE_VAULT": "/absolute/path/to/vault" } }
+7. **Point the plugin at the vault.** Ask the user for the path — it is theirs, not a guess to make —
+   then write it to the config file:
+   ```bash
+   echo "/absolute/path/to/vault" > "$STATE/vault"
    ```
-   Ask before writing this — it is the user's path, not a guess to make.
+   **This file, not an env var, is the mechanism.** `env` in `~/.claude/settings.local.json` does
+   **not** reach hook subprocesses: with only the env var set, the SessionStart hook resolves to the
+   default `~/Documents/ClaudeVault`, silently builds an empty scaffold there, and repoints the
+   memory symlink at it. Setting `CLAUDE_VAULT` as well is fine — it overrides the file — but it is
+   not sufficient on its own.
+
+   Skip this only if the vault really is at `~/Documents/ClaudeVault`.
 
 8. **Optionally arm per-prompt recall.** It ships inert, because injecting into every prompt changes
    how every session reads. Mention it; do not enable it unasked:

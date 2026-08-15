@@ -41,23 +41,31 @@ Without it, everything except semantic search still works.
 
 ## Configuration
 
-Set these in `~/.claude/settings.local.json` (machine-local, gitignored):
+**Where your vault is** goes in a file, not an environment variable:
 
-```json
-{
-  "env": {
-    "CLAUDE_VAULT": "/absolute/path/to/your/Obsidian/vault",
-    "MEMORY_RECALL_ENABLED": "1"
-  }
-}
+```bash
+echo "/absolute/path/to/your/Obsidian/vault" > ~/.claude-memory/vault
 ```
 
-| Variable | Default | What it does |
+Hooks run as detached subprocesses with essentially no inherited environment, and `env` in
+`~/.claude/settings.local.json` does **not** reach them. Configure the vault by env var alone and
+the hooks resolve to the default instead, build an empty scaffold there, and repoint your memory
+symlink at it. `/memory:install` writes this file; `/memory:doctor` hard-fails if you end up
+pointed at an empty vault while a populated one exists.
+
+Everything else is an env var, set in `~/.claude/settings.local.json`:
+
+```json
+{ "env": { "MEMORY_RECALL_ENABLED": "1" } }
+```
+
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `CLAUDE_VAULT` | `~/Documents/ClaudeVault` | vault root |
-| `CLAUDE_MEMORY_HOME` | `~/.claude-memory` | machine-local state: indexes, model weights, logs, eval cases |
-| `MEMORY_RECALL_ENABLED` | unset (off) | arm per-prompt recall |
-| `MEMORY_SEMANTIC_MODEL` | `bge-m3` | also `bge-small-en`, `e5-multi` |
+| `~/.claude-memory/vault` (file) | `~/Documents/ClaudeVault` | vault root — **the reliable knob** |
+| `CLAUDE_VAULT` (env) | unset | overrides the file, when the environment does reach the process |
+| `CLAUDE_MEMORY_HOME` (env) | `~/.claude-memory` | machine-local state: indexes, model weights, logs, eval cases |
+| `MEMORY_RECALL_ENABLED` (env) | unset (off) | arm per-prompt recall |
+| `MEMORY_SEMANTIC_MODEL` (env) | `bge-m3` | also `bge-small-en`, `e5-multi` |
 
 **Per-prompt recall ships inert on purpose.** Injecting retrieved notes into every prompt changes
 how every session reads; that should be your decision, not a default.
