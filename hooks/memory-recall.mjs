@@ -22,7 +22,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { projectKey, stateDir, scriptsDir } from './lib/paths.mjs';
+import { projectKey, stateDir, scriptsDir, memoryHome } from './lib/paths.mjs';
 
 const MAX_NOTES = 4;
 const MAX_CHARS = 900;   // ~250 tokens
@@ -32,8 +32,13 @@ const MIN_PROMPT = 25;   // one-word prompts have no retrievable intent
 const STOP = new Set('the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about with have has had will'.split(' '));
 
 // Ships INERT. Injecting into every prompt changes how every session reads, so arming it is the
-// user's call: set MEMORY_RECALL_ENABLED=1 in ~/.claude/settings.local.json (env block).
-if (process.env.MEMORY_RECALL_ENABLED !== '1') process.exit(0);
+// user's call. Two ways to arm it, and the FILE is the one that reliably works: `env` in
+// settings.local.json does not reach hook subprocesses, so MEMORY_RECALL_ENABLED alone left this
+// hook silently disabled (found 2026-08-15 — it had not fired once since being packaged).
+//   touch "$CLAUDE_MEMORY_HOME/recall-enabled"      # or MEMORY_RECALL_ENABLED=1
+const armed = process.env.MEMORY_RECALL_ENABLED === '1'
+  || fs.existsSync(path.join(memoryHome(), 'recall-enabled'));
+if (!armed) process.exit(0);
 
 try {
   const raw = fs.readFileSync(0, 'utf8');

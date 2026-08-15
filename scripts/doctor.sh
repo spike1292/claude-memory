@@ -143,8 +143,20 @@ sock="$STATE/run/search-$slug-$model.sock"
 
 echo
 echo "recall"
-[ "${MEMORY_RECALL_ENABLED:-}" = "1" ] && ok "per-prompt recall armed" \
-  || warn "per-prompt recall is OFF" 'ships inert by design. Set {"env":{"MEMORY_RECALL_ENABLED":"1"}} in ~/.claude/settings.local.json'
+if [ -f "$STATE/recall-enabled" ]; then
+  ok "per-prompt recall armed (via $STATE/recall-enabled)"
+elif [ "${MEMORY_RECALL_ENABLED:-}" = "1" ]; then
+  # Armed only for processes that inherit this environment — hooks do not.
+  warn "MEMORY_RECALL_ENABLED is set here, but hooks will not see it" \
+       "settings.local.json env does not reach hook subprocesses. Run: touch \"$STATE/recall-enabled\""
+else
+  warn "per-prompt recall is OFF" "ships inert by design. Arm it with: touch \"$STATE/recall-enabled\""
+fi
+# Recall logs every decision, including abstentions. No log at all means it never ran.
+if [ -f "$STATE/recall-enabled" ] && [ -z "$(ls "$STATE/logs"/recall-*.jsonl 2>/dev/null)" ]; then
+  warn "recall is armed but has never logged a decision" \
+       "it exits before logging only when disabled or on a very short prompt. If this persists after a session, the hook is not firing."
+fi
 
 echo
 if [ "$fails" -gt 0 ]; then

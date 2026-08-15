@@ -53,19 +53,22 @@ the hooks resolve to the default instead, build an empty scaffold there, and rep
 symlink at it. `/memory:install` writes this file; `/memory:doctor` hard-fails if you end up
 pointed at an empty vault while a populated one exists.
 
-Everything else is an env var, set in `~/.claude/settings.local.json`:
+**Per-prompt recall** is off until you arm it, for the same reason — with a file:
 
-```json
-{ "env": { "MEMORY_RECALL_ENABLED": "1" } }
+```bash
+touch ~/.claude-memory/recall-enabled
 ```
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `~/.claude-memory/vault` (file) | `~/Documents/ClaudeVault` | vault root — **the reliable knob** |
-| `CLAUDE_VAULT` (env) | unset | overrides the file, when the environment does reach the process |
+| `~/.claude-memory/recall-enabled` (file) | absent (off) | arm per-prompt recall |
+| `CLAUDE_VAULT` (env) | unset | overrides the vault file, where the environment does reach the process |
+| `MEMORY_RECALL_ENABLED` (env) | unset | same, for recall |
 | `CLAUDE_MEMORY_HOME` (env) | `~/.claude-memory` | machine-local state: indexes, model weights, logs, eval cases |
-| `MEMORY_RECALL_ENABLED` (env) | unset (off) | arm per-prompt recall |
 | `MEMORY_SEMANTIC_MODEL` (env) | `bge-m3` | also `bge-small-en`, `e5-multi` |
+
+The env-var forms are kept as overrides, but do not rely on them for anything a hook needs.
 
 **Per-prompt recall ships inert on purpose.** Injecting retrieved notes into every prompt changes
 how every session reads; that should be your decision, not a default.

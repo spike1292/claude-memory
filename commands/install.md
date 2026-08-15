@@ -87,8 +87,10 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
 
 8. **Optionally arm per-prompt recall.** It ships inert, because injecting into every prompt changes
    how every session reads. Mention it; do not enable it unasked:
-   ```json
-   { "env": { "MEMORY_RECALL_ENABLED": "1" } }
+   ```bash
+   touch "$STATE/recall-enabled"
    ```
+   Same caveat as the vault: `MEMORY_RECALL_ENABLED=1` in `settings.local.json` does not reach the
+   hook, so the file is what actually arms it.
 
 9. **Finish with `/memory:doctor`** and report its output verbatim.
