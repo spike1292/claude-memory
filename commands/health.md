@@ -2,13 +2,20 @@
 description: Audit memory — surface contradictions, stale claims, and orphans across Memory/ and Insights/ (asks before deleting)
 ---
 
-Find rot in the vault before it misleads a future session. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.essent.nl-sitecoreplus-frontend`), NOT the checkout path — run `. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. Vault root: `<vault>` = `. ~/.claude/hooks/lib/vault-env.sh; resolve_vault` — **never `$CLAUDE_VAULT` directly, it is unset on this machine**. Prompt-driven — read, judge, report. **Never delete or rewrite a note without explicit confirmation** (vault rule).
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
+Find rot in the vault before it misleads a future session. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), NOT the checkout path — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. Prompt-driven — read, judge, report. **Never delete or rewrite a note without explicit confirmation** (vault rule).
 
 0. **Run the mechanical checks first — do not re-derive them by hand:**
 
    ```
-   node ~/.claude/scripts/memory-audit-checks.mjs
-   node ~/.claude/scripts/memory-semantic.mjs --coverage
+   node "$MEM/scripts/memory-audit-checks.mjs"
+   node "$MEM/scripts/memory-semantic.mjs" --coverage
    ```
 
    The second one answers a question no audit had ever asked: **is every note actually in the

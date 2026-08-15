@@ -2,12 +2,19 @@
 description: Prune memory — archive old logs, dedup Insight notes (asks before deleting), refresh the search index
 ---
 
-Keep the vault signal-dense. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.essent.nl-sitecoreplus-frontend`), NOT the checkout path — run `. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. `<repo>` = last path segment of `pwd`, lowercased. Vault root: `<vault>` = `. ~/.claude/hooks/lib/vault-env.sh; resolve_vault` — **never `$CLAUDE_VAULT` directly, it is unset on this machine**. Best run at **end of session**, after the Stop-hook distiller's final pass.
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
+Keep the vault signal-dense. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), NOT the checkout path — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. `<repo>` = last path segment of `pwd`, lowercased. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. Best run at **end of session**, after the Stop-hook distiller's final pass.
 
 0. **Take the carry-forward list first — before looking for anything new:**
 
    ```
-   node ~/.claude/scripts/memory-audit-checks.mjs --deferred
+   node "$MEM/scripts/memory-audit-checks.mjs" --deferred
    ```
 
    It prints every `/memory:health` finding whose disposition in `REFLECTIONS.md` still reads *deferred*. Those are items a previous audit judged real and handed to prune; work them before hunting fresh duplicates, and **close each one by editing its disposition row** — "applied", "declined" with a reason, or "deferred" narrowed to whatever genuinely remains. An unedited row stays open forever and the next prune re-reads it.
@@ -17,13 +24,13 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    Run the full `memory-audit-checks.mjs` (no flag) if you want its same-folder Jaccard pairs as a starting point for step 2 — it clusters same-folder first, which is what step 2 requires anyway.
 
 1. **Archive old logs** (mechanical, safe): run
-   `~/.claude/scripts/prune-logs.sh "<vault>/Logs/<slug>"`
+   `"$MEM/scripts/prune-logs.sh" "<vault>/Logs/<slug>"`
    (override the window with `PRUNE_DAYS=N`). This moves logs >90 days into `Logs/<slug>/Archive/` — no deletion.
 
 2. **Dedup insights** (needs judgment). **Start from the semantic scan, not from titles:**
 
    ```
-   node ~/.claude/scripts/memory-semantic.mjs --dupes [--min 0.86] [--top 30]
+   node "$MEM/scripts/memory-semantic.mjs" --dupes [--min 0.86] [--top 30]
    ```
 
    It ranks same-folder pairs by embedding similarity in well under a second, and cross-folder pairs are excluded by construction. **Use it in preference to token overlap.** On 2026-08-14 the Jaccard scan in `memory-audit-checks.mjs` reported **0 pairs ≥0.45** across 987 notes while eleven real duplicates sat in them — notes that restate one idea in different words ("origin owns Cache-Control" / "cache-control at origin not CloudFront" / "cache-control source should follow the content source") share a concept but almost no vocabulary. That is the same keyword-vs-meaning gap that makes `ctx_search` miss paraphrased questions. Keep the Jaccard list as a secondary signal; it still catches literal restatements cheaply.
@@ -43,7 +50,7 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    pairs before trusting the count. Recalibrating means sweeping the threshold and eyeballing where
    real duplicates stop and coincidence starts.
 
-3. **Refresh BOTH indexes** so retrieval reflects the pruned state — the FTS5 one below, and the semantic one: `node ~/.claude/scripts/memory-semantic.mjs --index` (incremental: re-embeds only notes whose mtime moved and drops rows for deleted notes, so it is seconds after a prune). **Run it here even though a SessionStart hook also refreshes it** — that hook fires at the *start* of the next session, and until then the vector side would keep answering with notes this prune just deleted. (Routine freshness after *new* notes is automatic — the distiller re-indexes at SessionEnd; this step matters mainly for **deletions**, which must drop stale chunks.)
+3. **Refresh BOTH indexes** so retrieval reflects the pruned state — the FTS5 one below, and the semantic one: `node "$MEM/scripts/memory-semantic.mjs" --index` (incremental: re-embeds only notes whose mtime moved and drops rows for deleted notes, so it is seconds after a prune). **Run it here even though a SessionStart hook also refreshes it** — that hook fires at the *start* of the next session, and until then the vector side would keep answering with notes this prune just deleted. (Routine freshness after *new* notes is automatic — the distiller re-indexes at SessionEnd; this step matters mainly for **deletions**, which must drop stale chunks.)
    - **Source label MUST be lowercase** `<repo>` — the SessionEnd distiller indexes as `vault-insights-frontend` / `vault-memory-frontend` (lowercase). If you index with a different case (e.g. `vault-insights-Frontend`), FTS5 stores a *second* copy under the case-variant label and every note returns twice, halving the effective result window and pushing real matches below the top-5. Lowercase the repo segment before substituting.
    - Because deletes happened, don't just re-index (append-only FTS5 keeps stale chunks): **`ctx purge` (scope: project) THEN re-index** both dirs:
      - `ctx_index(path: "<vault>/Insights/<slug>", source: "vault-insights-<repo-lowercase>")`
@@ -53,7 +60,7 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
 3b. **Check for consolidation gaps** (occasionally — not every prune):
 
    ```
-   node ~/.claude/scripts/memory-semantic.mjs --clusters
+   node "$MEM/scripts/memory-semantic.mjs" --clusters
    ```
 
    Dedup asks "are these two notes the same?"; this asks the opposite question — **"are these twenty notes one topic that nothing summarises?"** It clusters across folders (a topic is normally a Pattern + a Mistake + a Decision) and reports clusters with no `permanent/` note as central to them as their own typical member. That is the `staging → promotion` step of the knowledge lifecycle, which has otherwise never happened: **965 Insights against 5 `permanent/` notes.** Two clusters found this way — 9 notes on cache-policy quota, 6 on Cache-Control ownership — had each sat unnoticed for weeks.

@@ -514,12 +514,12 @@ const modelChanged = hasChunks && storedModel !== MODEL;
 let embedder = null;
 async function embed(texts) {
   if (!embedder) {
-    // Point the weights at $CLAUDE_MEMORY_HOME/models BEFORE the first pipeline() call.
-    // transformers.js otherwise caches ~722 MB inside node_modules/@huggingface/transformers/.cache,
-    // which lives in the plugin's version-pinned dir and is discarded on every /plugin update.
-    paths.modelCacheDir();
-    const { pipeline } = await import('@huggingface/transformers');
-    embedder = await pipeline('feature-extraction', MODEL, { dtype: 'q8' });
+    const transformers = await import('@huggingface/transformers');
+    // Redirect the weights to $CLAUDE_MEMORY_HOME/models BEFORE the first pipeline() call.
+    // The default caches ~722 MB inside node_modules/@huggingface/transformers/.cache, which is
+    // the plugin's version-pinned dir and is discarded on every /plugin update.
+    paths.useModelCache(transformers);
+    embedder = await transformers.pipeline('feature-extraction', MODEL, { dtype: 'q8' });
   }
   // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
   // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a

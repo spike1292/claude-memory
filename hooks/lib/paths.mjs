@@ -55,14 +55,16 @@ export function legacyKey(dir = process.cwd()) {
 }
 
 /**
- * Point transformers.js at $CLAUDE_MEMORY_HOME/models instead of its default cache
- * inside node_modules/@huggingface/transformers/.cache. Without this the ~722 MB of
- * ONNX weights sit in the plugin's version-pinned cache dir and are re-downloaded on
- * every `/plugin update`. Must run before the first pipeline() call.
+ * Point transformers.js at $CLAUDE_MEMORY_HOME/models instead of its default cache inside
+ * node_modules/@huggingface/transformers/.cache. Without this the ~722 MB of ONNX weights sit
+ * in the plugin's version-pinned dir and are re-downloaded on every `/plugin update`.
+ *
+ * It must be done by mutating the library's own `env`, NOT via HF_HOME/TRANSFORMERS_CACHE:
+ * transformers.js v4 ignores both (verified 2026-08-15 — env.cacheDir still resolved to the
+ * package dir with them set). Call this with the imported module, before the first pipeline().
  */
-export function modelCacheDir() {
+export function useModelCache(transformers) {
   const d = stateDir('models');
-  process.env.HF_HOME = process.env.HF_HOME || d;
-  process.env.TRANSFORMERS_CACHE = process.env.TRANSFORMERS_CACHE || d;
+  transformers.env.cacheDir = d;
   return d;
 }

@@ -2,7 +2,14 @@
 description: Retrieval-eval — measure whether memory actually surfaces the right notes for realistic questions (recall@k, MRR)
 ---
 
-Check that the memory can be *found*, not just that it exists. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.essent.nl-sitecoreplus-frontend`), NOT the checkout path — run `. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. Vault root: `<vault>` = `. ~/.claude/hooks/lib/vault-env.sh; resolve_vault` — **never `$CLAUDE_VAULT` directly, it is unset on this machine**. Prompt-driven; makes no changes on its own.
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
+Check that the memory can be *found*, not just that it exists. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), NOT the checkout path — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. Prompt-driven; makes no changes on its own.
 
 0. **Two instruments, and they answer different questions.**
 
@@ -10,9 +17,9 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    calls, and the note set cannot move under you:
 
    ```
-   node ~/.claude/scripts/memory-synth-vault.mjs --out /tmp/bench --notes 300 --seed 7
-   node ~/.claude/scripts/memory-semantic.mjs --vault /tmp/bench --slug bench --index --rebuild
-   node ~/.claude/scripts/memory-eval.mjs --vault /tmp/bench --slug bench --run --cases /tmp/bench/cases-paraphrase.jsonl
+   node "$MEM/scripts/memory-synth-vault.mjs" --out /tmp/bench --notes 300 --seed 7
+   node "$MEM/scripts/memory-semantic.mjs" --vault /tmp/bench --slug bench --index --rebuild
+   node "$MEM/scripts/memory-eval.mjs" --vault /tmp/bench --slug bench --run --cases /tmp/bench/cases-paraphrase.jsonl
    ```
 
    Use it as a **tripwire**: its English set is at its ceiling (bge-m3 scores 100%), so it detects
@@ -27,8 +34,8 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    **Use the versioned case set — do not write fresh questions.**
 
    ```
-   node ~/.claude/scripts/memory-eval.mjs --run --cases ~/.claude/data/eval-cases-authored.jsonl --mode semantic
-   node ~/.claude/scripts/memory-eval.mjs --run --cases ~/.claude/data/eval-cases-authored.jsonl --mode lexical
+   node "$MEM/scripts/memory-eval.mjs" --run --cases "$STATE/eval/eval-cases-authored.jsonl" --mode semantic
+   node "$MEM/scripts/memory-eval.mjs" --run --cases "$STATE/eval/eval-cases-authored.jsonl" --mode lexical
    ```
 
    **No retrieval change ships without before/after numbers on the same cases.** Every previous run of this command hand-wrote its questions, so the reported movement measured the question set as much as the retrieval — "0.60 → 1.00" compared two different sets, written by someone who knew the vault and knew what had just been fixed. The versioned set measured **46.4%** where the hand-written one said 94%.
@@ -41,7 +48,7 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
 2. **Retrieve through BOTH channels — they fail differently.** Run each question through:
    - `ctx_search(queries:[...])` — BM25/FTS5, wins on exact identifiers (ticket keys, `--parallel=2`, file paths).
-   - `node ~/.claude/scripts/memory-semantic.mjs --query "..." -k 5` — vectors, wins on described-not-named questions. It is the only channel that bridges "firewall"→`WAF` or "short outage"→`cutover`.
+   - `node "$MEM/scripts/memory-semantic.mjs" --query "..." -k 5` — vectors, wins on described-not-named questions. It is the only channel that bridges "firewall"→`WAF` or "short outage"→`cutover`.
    - the `MEMORY.md` MOC hooks, which are auto-loaded and therefore have 100% L1 coverage by construction — a note reachable from its hook is not truly lost, whatever search returns.
 
    ⚠ **`--layer Memory` is REFUTED for the semantic tool** (measured 2026-08-15: EN @5 67.9% →

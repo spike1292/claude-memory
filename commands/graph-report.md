@@ -2,10 +2,17 @@
 description: (Re)generate the codebase graph digest from codebase-memory-mcp into the vault
 ---
 
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
 Generate a "God Nodes"-style codebase digest so future sessions read one summary instead of many files. Use the `codebase-memory-mcp` tools — do NOT read source files for this.
 
-1. Slug: `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.essent.nl-sitecoreplus-frontend`), **NOT the checkout path** — run `. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. Vault root: `<vault>` = `. ~/.claude/hooks/lib/vault-env.sh; resolve_vault` — **never `$CLAUDE_VAULT` directly, it is unset on this machine** (legacy-path fallback). `graph-staleness-check.sh` calls `resolve_vault` too; using anything else makes the background regen and a manual run write to two different files.
-   Note the **MCP project name is not the slug** — `codebase-memory-mcp` keys on the cwd path *without* a leading dash (e.g. `Users-henkbakker-Development-Frontend`). Get it from `list_projects` rather than constructing it.
+1. Slug: `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), **NOT the checkout path** — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. `graph-staleness-check.sh` calls `resolve_vault` too; using anything else makes the background regen and a manual run write to two different files.
+   Note the **MCP project name is not the slug** — `codebase-memory-mcp` keys on the cwd path *without* a leading dash (e.g. `Users-you-Development-Frontend`). Get it from `list_projects` rather than constructing it.
 2. Ensure the graph is fresh:
    - `index_status` — is this repo indexed? If not, `index_repository` first.
    - `detect_changes` — if it reports drift, re-index before continuing.

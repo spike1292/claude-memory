@@ -327,9 +327,9 @@ def selftest():
     with tempfile.TemporaryDirectory() as tmp:
         r = Path(tmp) / "r"
         for url, want in (
-            ("git@gitlab.essent.nl:Sitecoreplus/Frontend.git", "gitlab.essent.nl-sitecoreplus-frontend"),
-            ("https://gitlab.essent.nl/Sitecoreplus/Frontend.git", "gitlab.essent.nl-sitecoreplus-frontend"),
-            ("https://user:tok@gitlab.essent.nl/Sitecoreplus/Frontend", "gitlab.essent.nl-sitecoreplus-frontend"),
+            ("git@gitlab.example.com:TeamName/Frontend.git", "gitlab.example.com-teamname-frontend"),
+            ("https://gitlab.example.com/TeamName/Frontend.git", "gitlab.example.com-teamname-frontend"),
+            ("https://user:tok@gitlab.example.com/TeamName/Frontend", "gitlab.example.com-teamname-frontend"),
         ):
             shutil.rmtree(r, ignore_errors=True)
             subprocess.run(["git", "init", "-q", str(r)], check=True)

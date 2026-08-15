@@ -4,8 +4,16 @@
 # ponytail: only moves regular files when repointing — memory dirs hold .md files, not subdirs.
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/vault-env.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/lib/vault-env.sh"
 VAULT=$(resolve_vault)
+
+# Breadcrumb so /memory:* commands can find the plugin. ${CLAUDE_PLUGIN_ROOT} is only
+# guaranteed inside hooks.json command strings; a command body running in the Bash tool
+# may not have it. This file is the fallback, rewritten every session so a /plugin update
+# to a new version dir cannot leave it stale.
+MEM_HOME=$(memory_home); mkdir -p "$MEM_HOME"
+printf '%s' "$(cd "$HERE/.." && pwd)" > "$MEM_HOME/plugin-root"
 
 cwd=$(cat | jq -r '.cwd // empty' 2>/dev/null || true)
 [ -z "${cwd:-}" ] && cwd="$PWD"
@@ -101,5 +109,34 @@ command -v context-mode >/dev/null 2>&1 || cat <<'WARN'
   switch (fnm/nvm) dropped the global install.
   Fix: npm i -g context-mode     then: /memory:prune  (to catch up what was missed)
 WARN
+
+# --- standing retrieval rules --------------------------------------------------
+# A plugin cannot append to CLAUDE.md, and these three rules change behaviour in the moment
+# rather than when a note is written — so they go in the session context, not in the on-demand
+# /memory:protocol skill. Kept to ~15 lines: this is paid every session.
+cat <<CTX
+
+# Memory (plugin: $(cd "$HERE/.." && pwd))
+
+Layers in the vault: L1 facts \`Memory/$key/\` · L2 logs \`Logs/$key/\` · L3 lessons
+\`Insights/$key/{Patterns,Mistakes,Decisions}/\` · L4 graph \`Graph/$key/\` · cross-project \`permanent/\`.
+
+**Retrieval — \`$(cd "$HERE/.." && pwd)/scripts/memory-semantic.mjs --query "..." [-k 5]\` is the tool.**
+It runs vector + keyword arms and rank-fuses them, so it wins on described-not-named questions AND
+on identifiers. Local embeddings, so private notes never leave the machine.
+
+1. **Expand the query into domain vocabulary first — the single biggest recall lever.** The lexical
+   arm is keyword-only: "firewall" never matches \`WAF\`, "short outage" never matches \`cutover\`, and
+   generic words are weighted to nothing. Do not search the user's phrasing verbatim; restate it as
+   the terms the answer would be written in, and search both.
+2. **Do NOT pass \`--layer\` to narrow results.** It filters the note set instead of re-ranking it,
+   deleting gold answers that live in another layer. Measured: EN recall@5 67.9% → 53.6%.
+3. **Scope \`ctx_search\` to the layer you want** — unscoped, it is Insights-dominated (many small
+   dense notes outrank few large ones). Project facts → \`vault-memory-<repo>\`; "have I hit this
+   before" → \`vault-insights-<repo>\`. Answer an L1 miss by scoping, not by piling on aliases.
+
+Writing or auditing a note? Load the \`/memory:protocol\` skill first — filename/frontmatter rules,
+per-claim recency and supersession, aliases, and when knowledge graduates to \`permanent/\`.
+CTX
 
 exit 0

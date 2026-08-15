@@ -2,8 +2,15 @@
 description: Before you commit to a decision, make the vault argue against it — past failures, reversed calls, and refuted diagnoses on the same topic
 ---
 
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
 Confront a proposed decision with what this vault already learned. `<slug>` = the project key:
-`. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. Vault root: `resolve_vault`. **Read-only —
+`. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `resolve_vault`. **Read-only —
 this command changes nothing.** Its whole job is to make you slower for sixty seconds.
 
 The argument for it: this vault's own `REFLECTIONS.md` records diagnoses that were confidently wrong
@@ -13,7 +20,7 @@ not stopped them recurring; being confronted before acting might.
 **Input:** the decision, in the user's words. If they invoked this bare, ask for it in one sentence.
 
 1. **Retrieve the opposition — both channels, and widen the net beyond the obvious.**
-   - `node ~/.claude/scripts/memory-semantic.mjs --query "<the decision>" -k 8`
+   - `node "$MEM/scripts/memory-semantic.mjs" --query "<the decision>" -k 8`
    - `ctx_search(queries: [...], source: "vault-insights-<repo>")` — expand the query into the
      vocabulary the *answer* would use, not the user's phrasing (see CLAUDE.md).
    - Read `Insights/<slug>/REFLECTIONS.md` for the same subject, and `Mistakes/` in particular.

@@ -2,8 +2,15 @@
 description: Consolidate a cluster of related notes into one permanent/ note — every claim cited, and the result graded against the cluster it came from
 ---
 
+> **Paths.** Every shell snippet below assumes these two, set first:
+> ```bash
+> STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> ```
+> `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
+
 Turn a topic that many notes circle into one note that states it. `<slug>` = the project key:
-`. ~/.claude/hooks/lib/vault-env.sh; project_key "$PWD"`. Vault root: `resolve_vault`.
+`. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `resolve_vault`.
 
 This is the **promotion** step of the knowledge lifecycle (staging → promotion → skill/pointer). It
 has essentially never run by hand: 965 Insights against 5 `permanent/` notes. `--clusters` finds
@@ -18,7 +25,7 @@ softened.**
 1. **Pick the target.** Either the user names a topic, or:
 
    ```
-   node ~/.claude/scripts/memory-semantic.mjs --clusters --top 8
+   node "$MEM/scripts/memory-semantic.mjs" --clusters --top 8
    ```
 
    Prefer a cluster that has *cost something* — one whose members include Mistakes, or that a prune
@@ -53,7 +60,7 @@ softened.**
 6. **Grade the result — the tool checks its own output.** After writing, re-run:
 
    ```
-   node ~/.claude/scripts/memory-semantic.mjs --index && node ~/.claude/scripts/memory-semantic.mjs --clusters
+   node "$MEM/scripts/memory-semantic.mjs" --index && node "$MEM/scripts/memory-semantic.mjs" --clusters
    ```
 
    The cluster should **stop being reported**: coverage is judged by whether a `permanent/` note sits
