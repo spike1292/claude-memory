@@ -64,8 +64,9 @@ claude-memory/
 │   ├── install.md            NEW
 │   └── doctor.md             NEW
 ├── skills/
-│   └── memory-protocol/
-│       └── SKILL.md          note conventions, per-claim recency, supersession,
+│   └── protocol/
+│       └── SKILL.md          → /memory:protocol
+│                             note conventions, per-claim recency, supersession,
 │                             retrievability aliases, domain-knowledge lifecycle
 ├── hooks/
 │   ├── hooks.json            all nine registrations
@@ -256,8 +257,9 @@ Plugins cannot inject into `CLAUDE.md`. The memory protocol splits by how often 
   to stdout at SessionStart, which Claude Code injects as context. It emits this compact block.
 - **On demand** — the full note conventions (frontmatter, confidence, per-claim recency and
   supersession, aliases, wikilink discipline, promotion lifecycle) become
-  `skills/memory-protocol/SKILL.md`, invoked as `/memory:memory-protocol` or by the model when
-  writing notes.
+  `skills/protocol/SKILL.md`, invoked as `/memory:protocol` or picked up by the model when
+  writing notes. Commands and skills share one namespace, so `protocol` must not collide with
+  any `commands/*.md` name.
 
 `~/.claude/CLAUDE.md` keeps only the machine-specific parts — where `CLAUDE_VAULT` points, the
 Synology symlink caveat — and points at the plugin for everything else.
