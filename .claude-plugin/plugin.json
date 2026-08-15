@@ -1,6 +1,6 @@
 {
   "name": "memory",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Layered memory for Claude Code, backed by a plain-Markdown Obsidian vault. Per-project facts, session logs, auto-distilled lessons, and hybrid semantic + lexical recall that runs entirely on your machine.",
   "author": {
     "name": "Henk Bakker",

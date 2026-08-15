@@ -22,23 +22,24 @@ def memory_home() -> Path:
     return Path(os.environ.get("CLAUDE_MEMORY_HOME") or Path.home() / ".claude-memory")
 
 
-def resolve_vault() -> Path:
-    """Mirror of hooks/lib/vault-env.sh resolve_vault(): env var, then the machine-local
-    config file, then the default. DISTILL_VAULT stays supported for tests.
+def config() -> dict:
+    """User settings from $CLAUDE_MEMORY_HOME/config.json. A broken or absent config
+    degrades to defaults — this runs detached, so it must never raise."""
+    try:
+        return json.loads((memory_home() / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
-    The config file is load-bearing, not a nicety: this runs detached from a hook and
-    inherits no environment worth relying on."""
+
+def resolve_vault() -> Path:
+    """Mirror of hooks/lib/vault-env.sh resolve_vault(): env var, then config.json,
+    then the default. DISTILL_VAULT stays supported for tests."""
     for var in ("DISTILL_VAULT", "CLAUDE_VAULT"):
         v = os.environ.get(var)
         if v:
             return Path(v)
-    try:
-        v = (memory_home() / "vault").read_text(encoding="utf-8").splitlines()[0].strip()
-        if v:
-            return Path(v)
-    except (OSError, IndexError):
-        pass
-    return Path.home() / "Documents/ClaudeVault"
+    v = config().get("vault")
+    return Path(v) if v else Path.home() / "Documents/ClaudeVault"
 
 
 VAULT = resolve_vault()

@@ -9,35 +9,61 @@
 # Resolve relative to this file, never to an absolute install path: the plugin
 # runs from a version-pinned cache dir, from a dev checkout, and via symlink.
 
+# --- settings -----------------------------------------------------------------
+# $CLAUDE_MEMORY_HOME/config.json is where a user's choices live, the same way
+# ponytail uses ~/.config/ponytail/config.json and context-mode uses
+# ~/.context-mode/platform.json. Env vars stay supported as overrides.
+#
+#   { "vault": "/path/to/vault", "recall": true, "model": "bge-m3" }
+#
+# Config in a file rather than in ~/.claude/settings.json `env` is the ecosystem
+# convention, and it is also the robust choice: a file is read when the hook runs,
+# so it does not depend on what a given process inherited or on when the value was
+# written. Setting CLAUDE_VAULT in settings.local.json mid-session did NOT reach
+# this session's hooks on 2026-08-15, and the SessionStart hook resolved to the
+# default, built an empty vault there and repointed the memory symlink at it.
+#
+# Deliberately flat, and read with jq when available but sed otherwise: this file is
+# sourced by every hook, and a fresh install must work before anything is installed.
+config_file() { printf '%s' "$(memory_home)/config.json"; }
+
+config_get() {
+  _f=$(config_file)
+  [ -f "$_f" ] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    _v=$(jq -r --arg k "$1" '.[$k] // empty' "$_f" 2>/dev/null)
+  else
+    # sed -E, not basic regex: BSD sed (macOS) has no \| alternation, so the boolean
+    # branch silently matched nothing and `recall` read as off with jq absent.
+    _v=$(tr -d '\n' < "$_f" | sed -nE "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/p")
+    [ -n "$_v" ] || _v=$(tr -d '\n' < "$_f" \
+      | sed -nE "s/.*\"$1\"[[:space:]]*:[[:space:]]*(true|false).*/\1/p")
+  fi
+  [ -n "${_v:-}" ] || return 1
+  printf '%s' "$_v"
+}
+
 # --- vault root ---------------------------------------------------------------
-# Three sources, in order: the env var, a machine-local config FILE, the default.
-#
-# The config file is not redundant. `env` in ~/.claude/settings.local.json does NOT
-# reach hook subprocesses (verified 2026-08-15 the hard way: with only the env var
-# set, the SessionStart hook resolved to the default, built an empty vault there and
-# repointed the memory symlink at it). A hook must be able to find the vault with no
-# inherited environment at all, so the file is the load-bearing mechanism and the env
-# var is the override.
-#
-#   echo "/path/to/vault" > "$(memory_home)/vault"     # what /memory:install writes
 resolve_vault() {
   if [ -n "${CLAUDE_VAULT:-}" ]; then printf '%s' "$CLAUDE_VAULT"; return; fi
-  _cfg="$(memory_home)/vault"
-  if [ -f "$_cfg" ]; then
-    _v=$(head -n1 "$_cfg" | tr -d '\r\n')
-    if [ -n "$_v" ]; then printf '%s' "$_v"; return; fi
-  fi
+  _v=$(config_get vault) && [ -n "$_v" ] && { printf '%s' "$_v"; return; }
   printf '%s' "$HOME/Documents/ClaudeVault"
 }
 
-# Which of the three won — for /memory:doctor, so "wrong vault" is diagnosable.
+# Which source won — for /memory:doctor, so "wrong vault" is diagnosable.
 vault_source() {
   if [ -n "${CLAUDE_VAULT:-}" ]; then printf 'CLAUDE_VAULT env'; return; fi
-  _cfg="$(memory_home)/vault"
-  if [ -f "$_cfg" ] && [ -n "$(head -n1 "$_cfg" | tr -d '\r\n')" ]; then
-    printf '%s' "$_cfg"; return
-  fi
+  _v=$(config_get vault) && [ -n "$_v" ] && { printf '%s' "$(config_file)"; return; }
   printf 'built-in default'
+}
+
+# --- per-prompt recall ---------------------------------------------------------
+# Off unless explicitly armed: injecting into every prompt changes how every
+# session reads, so it is the user's call, not a default.
+recall_enabled() {
+  [ "${MEMORY_RECALL_ENABLED:-}" = "1" ] && return 0
+  [ "$(config_get recall 2>/dev/null)" = "true" ] && return 0
+  return 1
 }
 
 # --- mutable state ------------------------------------------------------------

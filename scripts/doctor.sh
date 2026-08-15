@@ -99,19 +99,20 @@ if [ -d "$VAULT" ]; then
     done
     if [ -n "$other" ]; then
       fail "vault is EMPTY but a populated vault exists at $other" \
-           "you are pointed at the wrong one — nothing will be recalled and new notes land in the empty one. Fix: echo '$other' > \"$STATE/vault\""
+           "you are pointed at the wrong one — nothing will be recalled and new notes land in the empty one. Fix: set \"vault\": \"$other\" in $(config_file)"
     else
       warn "vault is empty" "expected on a first install; notes appear as you work."
     fi
   fi
 else
-  fail "vault does not exist: $VAULT" "create it, or write the real path: echo /path/to/vault > \"$STATE/vault\""
+  fail "vault does not exist: $VAULT" "create it, or set \"vault\" in $(config_file)"
 fi
-# The env var is an override, not the mechanism — `env` in settings.local.json does NOT
-# reach hook subprocesses, so a config file is what actually keeps hooks on the vault.
-if [ ! -f "$STATE/vault" ] && [ -z "${CLAUDE_VAULT:-}" ]; then
-  warn "no $STATE/vault config file" \
-       "hooks run with no inherited env, so setting CLAUDE_VAULT in settings.local.json alone does NOT reach them. Run /memory:install, or: echo '$VAULT' > \"$STATE/vault\""
+# Config belongs in the plugin's own file, not in ~/.claude/settings.json `env` — that is
+# the ecosystem convention, and a file is read when the hook runs rather than depending on
+# what the process inherited or when the value was written.
+if [ ! -f "$(config_file)" ]; then
+  warn "no config file at $(config_file)" \
+       "running on defaults and env vars. Run /memory:install to write one."
 fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
@@ -143,19 +144,18 @@ sock="$STATE/run/search-$slug-$model.sock"
 
 echo
 echo "recall"
-if [ -f "$STATE/recall-enabled" ]; then
-  ok "per-prompt recall armed (via $STATE/recall-enabled)"
+if [ "$(config_get recall 2>/dev/null)" = "true" ]; then
+  ok "per-prompt recall armed (\"recall\": true in $(basename "$(config_file)"))"
 elif [ "${MEMORY_RECALL_ENABLED:-}" = "1" ]; then
-  # Armed only for processes that inherit this environment — hooks do not.
-  warn "MEMORY_RECALL_ENABLED is set here, but hooks will not see it" \
-       "settings.local.json env does not reach hook subprocesses. Run: touch \"$STATE/recall-enabled\""
+  warn "recall armed by env var only" \
+       "works where the environment reaches the hook, but a value added mid-session does not. Prefer \"recall\": true in $(config_file)"
 else
-  warn "per-prompt recall is OFF" "ships inert by design. Arm it with: touch \"$STATE/recall-enabled\""
+  warn "per-prompt recall is OFF" "ships inert by design. Arm it with \"recall\": true in $(config_file)"
 fi
 # Recall logs every decision, including abstentions. No log at all means it never ran.
-if [ -f "$STATE/recall-enabled" ] && [ -z "$(ls "$STATE/logs"/recall-*.jsonl 2>/dev/null)" ]; then
+if recall_enabled && [ -z "$(ls "$STATE/logs"/recall-*.jsonl 2>/dev/null)" ]; then
   warn "recall is armed but has never logged a decision" \
-       "it exits before logging only when disabled or on a very short prompt. If this persists after a session, the hook is not firing."
+       "expected until a session runs with it armed; if it persists, the hook is not firing."
 fi
 
 echo

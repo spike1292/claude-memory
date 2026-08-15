@@ -15,6 +15,20 @@ VAULT=$(resolve_vault)
 MEM_HOME=$(memory_home); mkdir -p "$MEM_HOME"
 printf '%s' "$(cd "$HERE/.." && pwd)" > "$MEM_HOME/plugin-root"
 
+# One-time migration off the two marker files that 0.1.1/0.1.2 briefly used, before
+# settling on one config.json like every other plugin. Runs first in the session, so
+# later hooks read the merged result.
+if [ ! -f "$MEM_HOME/config.json" ] && { [ -f "$MEM_HOME/vault" ] || [ -f "$MEM_HOME/recall-enabled" ]; }; then
+  _mv=$(head -n1 "$MEM_HOME/vault" 2>/dev/null | tr -d '\r\n')
+  _mr=false; [ -f "$MEM_HOME/recall-enabled" ] && _mr=true
+  {
+    printf '{\n'
+    [ -n "$_mv" ] && printf '  "vault": "%s",\n' "$_mv"
+    printf '  "recall": %s\n}\n' "$_mr"
+  } > "$MEM_HOME/config.json"
+  rm -f "$MEM_HOME/vault" "$MEM_HOME/recall-enabled"
+fi
+
 cwd=$(cat | jq -r '.cwd // empty' 2>/dev/null || true)
 [ -z "${cwd:-}" ] && cwd="$PWD"
 

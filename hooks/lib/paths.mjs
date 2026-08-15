@@ -18,17 +18,36 @@ export const scriptsDir = path.join(pluginRoot, 'scripts');
 export const vaultEnvSh = path.join(libDir, 'vault-env.sh');
 
 /**
- * Vault root. Mirrors resolve_vault(): env var, then the machine-local config file,
- * then the default. The file is load-bearing — `env` in settings.local.json does not
- * reach hook subprocesses, so nothing may depend on the variable being present.
+ * User settings: $CLAUDE_MEMORY_HOME/config.json — the same convention ponytail and
+ * context-mode use. Env vars override it. Returns {} when absent or unparseable;
+ * a broken config must degrade to defaults, never throw inside a hook.
+ *
+ *   { "vault": "/path/to/vault", "recall": true, "model": "bge-m3" }
  */
-export function vault() {
-  if (process.env.CLAUDE_VAULT) return process.env.CLAUDE_VAULT;
+export function configFile() {
+  return path.join(memoryHome(), 'config.json');
+}
+
+let _config;
+export function config() {
+  if (_config) return _config;
   try {
-    const v = fs.readFileSync(path.join(memoryHome(), 'vault'), 'utf8').split('\n')[0].trim();
-    if (v) return v;
-  } catch { /* not configured yet — fall through to the default */ }
-  return path.join(os.homedir(), 'Documents', 'ClaudeVault');
+    _config = JSON.parse(fs.readFileSync(configFile(), 'utf8'));
+  } catch {
+    _config = {};
+  }
+  return _config;
+}
+
+/** Vault root. Mirrors resolve_vault(): env var, then config.json, then the default. */
+export function vault() {
+  return process.env.CLAUDE_VAULT || config().vault
+    || path.join(os.homedir(), 'Documents', 'ClaudeVault');
+}
+
+/** Per-prompt recall is off unless explicitly armed. Mirrors recall_enabled(). */
+export function recallEnabled() {
+  return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;
 }
 
 /**

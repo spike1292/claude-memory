@@ -41,34 +41,35 @@ Without it, everything except semantic search still works.
 
 ## Configuration
 
-**Where your vault is** goes in a file, not an environment variable:
+Settings live in **`~/.claude-memory/config.json`**:
 
-```bash
-echo "/absolute/path/to/your/Obsidian/vault" > ~/.claude-memory/vault
+```json
+{
+  "vault": "/absolute/path/to/your/Obsidian/vault",
+  "recall": true,
+  "model": "bge-m3"
+}
 ```
 
-Hooks run as detached subprocesses with essentially no inherited environment, and `env` in
-`~/.claude/settings.local.json` does **not** reach them. Configure the vault by env var alone and
-the hooks resolve to the default instead, build an empty scaffold there, and repoint your memory
-symlink at it. `/memory:install` writes this file; `/memory:doctor` hard-fails if you end up
-pointed at an empty vault while a populated one exists.
-
-**Per-prompt recall** is off until you arm it, for the same reason — with a file:
-
-```bash
-touch ~/.claude-memory/recall-enabled
-```
-
-| Setting | Default | What it does |
+| Key | Default | What it does |
 | --- | --- | --- |
-| `~/.claude-memory/vault` (file) | `~/Documents/ClaudeVault` | vault root — **the reliable knob** |
-| `~/.claude-memory/recall-enabled` (file) | absent (off) | arm per-prompt recall |
-| `CLAUDE_VAULT` (env) | unset | overrides the vault file, where the environment does reach the process |
-| `MEMORY_RECALL_ENABLED` (env) | unset | same, for recall |
-| `CLAUDE_MEMORY_HOME` (env) | `~/.claude-memory` | machine-local state: indexes, model weights, logs, eval cases |
-| `MEMORY_SEMANTIC_MODEL` (env) | `bge-m3` | also `bge-small-en`, `e5-multi` |
+| `vault` | `~/Documents/ClaudeVault` | vault root |
+| `recall` | `false` | arm per-prompt recall |
+| `model` | `bge-m3` | also `bge-small-en`, `e5-multi`. Changing it means a full re-index. |
 
-The env-var forms are kept as overrides, but do not rely on them for anything a hook needs.
+`/memory:install` writes this file. `/memory:doctor` prints which source each value came from, and
+**hard-fails if you are pointed at an empty vault while a populated one exists** — the failure that
+an "is the directory there?" check cannot see.
+
+**Put configuration here, not in `~/.claude/settings.json`'s `env` block.** A config file is read
+when the hook runs, so it does not depend on what a given process inherited or on when the value was
+written — a `CLAUDE_VAULT` added to `settings.local.json` mid-session did not reach that session's
+hooks, and the SessionStart hook duly built an empty vault at the default path. Both ponytail and
+context-mode keep their settings in their own file for the same reason.
+
+Environment overrides are still honoured where they do reach the process:
+`CLAUDE_VAULT`, `MEMORY_RECALL_ENABLED=1`, `MEMORY_SEMANTIC_MODEL`, and `CLAUDE_MEMORY_HOME`
+(which relocates the state directory itself, so it can only be an env var).
 
 **Per-prompt recall ships inert on purpose.** Injecting retrieved notes into every prompt changes
 how every session reads; that should be your decision, not a default.
