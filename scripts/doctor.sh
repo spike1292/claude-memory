@@ -41,11 +41,29 @@ else
   fi
 fi
 command -v jq      >/dev/null 2>&1 && ok "jq"      || fail "jq not on PATH"      "every bash hook parses its stdin payload with jq. brew install jq"
-command -v python3 >/dev/null 2>&1 && ok "python3" || warn "python3 not on PATH" "SessionEnd distillation is skipped; Insights/ stops being written."
 command -v claude  >/dev/null 2>&1 && ok "claude CLI" \
   || warn "claude CLI not on PATH" "the distiller and the graph-report refresh shell out to it headlessly; both degrade to no-ops."
-command -v context-mode >/dev/null 2>&1 && ok "context-mode CLI" \
-  || warn "context-mode CLI not on PATH" "the SessionEnd vault re-index is skipped, so ctx_search drifts behind the notes on disk. npm i -g context-mode"
+
+echo
+echo "optional integrations"
+# Neither is required. Both are separate tools with their own indexes; the plugin's own
+# retrieval path does not read from either. Reported so a missing one is a known state
+# rather than a mystery, and so the cost of its absence is stated precisely.
+if command -v context-mode >/dev/null 2>&1; then
+  ok "context-mode CLI — ctx_search index kept fresh at SessionEnd"
+else
+  warn "context-mode CLI not on PATH (optional)" \
+    "ctx_search drifts behind the notes on disk. The plugin's own index is UNAFFECTED — memory-semantic.mjs carries its own vector and BM25 arms — and the distiller refreshes it instead. Restore ctx_search with: npm i -g context-mode (then /memory:prune)"
+fi
+# codebase-memory-mcp is an MCP server, not a CLI, so PATH cannot see it. The Graph layer is the
+# observable evidence: a GRAPH_REPORT.md exists only if the server has run for this project.
+gslug=$(project_key "$PWD")
+if [ -f "$VAULT/Graph/$gslug/GRAPH_REPORT.md" ]; then
+  ok "codebase-memory-mcp — L4 graph digest present for $gslug"
+else
+  warn "no L4 graph digest for this project (optional)" \
+    "L1-L3 memory is unaffected. If codebase-memory-mcp is configured, run /memory:graph-report to create one; if it is not, skip L4 entirely — nothing else depends on it."
+fi
 
 echo
 echo "embedding runtime"

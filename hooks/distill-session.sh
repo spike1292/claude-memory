@@ -40,6 +40,6 @@ fi
 echo "$now" > "$marker"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-command -v python3 >/dev/null 2>&1 || exit 0
-nohup python3 "$here/distill-session.py" "$tpath" "$cwd" >>"$cache/distill.log" 2>&1 &
+command -v node >/dev/null 2>&1 || exit 0
+nohup node "$here/distill-session.mjs" "$tpath" "$cwd" >>"$cache/distill.log" 2>&1 &
 exit 0

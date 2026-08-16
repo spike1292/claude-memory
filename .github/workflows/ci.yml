@@ -18,10 +18,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - uses: actions/setup-python@v5
-        with:
-          # 3.10+: distill-session.py uses `str | None` annotations.
-          python-version: '3.11'
 
       - name: Syntax-check every shell hook and script
         run: for f in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do bash -n "$f"; done
@@ -40,7 +36,19 @@ jobs:
           node scripts/memory-eval.mjs --selftest
           node scripts/memory-synth-vault.mjs --selftest
           node scripts/memory-audit-checks.mjs --selftest
-          python3 hooks/distill-session.py --selftest
+          node hooks/distill-session.mjs --selftest
+
+      # There is no Python left. Fail if any creeps back in — the whole point of the port was
+      # that a second runtime is a second thing to be the wrong version on someone's machine.
+      # Matches real dependencies only (a .py file, or a shell hook shelling out to python),
+      # not prose: the port's own comments explain why python went away.
+      - name: No Python dependency
+        run: |
+          bad=$( { git ls-files '*.py'; git grep -lE '\bpython3?\b' -- '*.sh'; } | sort -u )
+          if [ -n "$bad" ]; then
+            echo "::error::a Python dependency reappeared in: $bad"; exit 1
+          fi
+          echo "no python dependency"
 
   version:
     runs-on: ubuntu-latest

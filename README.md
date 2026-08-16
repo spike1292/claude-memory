@@ -33,11 +33,60 @@ Without it, everything except semantic search still works.
 | --- | --- |
 | **Node ≥ 22.5** | hard requirement — the engine uses the built-in `node:sqlite` |
 | `jq` | every hook parses its stdin payload with it |
-| `python3` | session distillation (`Insights/`); optional |
 | `claude` on PATH | distillation and graph refresh shell out to it headlessly; optional |
-| macOS / Linux | bash + python3; no Windows support |
+| macOS / Linux | bash + node; no Windows support |
+
+There is **no Python dependency.** The session distiller was ported to Node on 2026-08-16 — Node
+was already a hard requirement, so Python only added a second runtime that could be the wrong
+version. It usually was: macOS ships 3.9, which cannot parse the `str | None` annotations the
+distiller used, so on a stock Mac `Insights/` silently stopped being written.
 
 `/memory:doctor` checks all of these and tells you what each one being absent costs you.
+
+### Optional integrations
+
+Both are separate tools with their own indexes. Neither is installed by this plugin, neither is
+required, and **the plugin's own retrieval path does not read from either.**
+
+| | What it adds | Without it |
+| --- | --- | --- |
+| [`context-mode`](#context-mode-ctx_search) CLI | `ctx_search` — a second, BM25/FTS5 index over the vault | `ctx_search` goes stale; `memory-semantic.mjs` is unaffected |
+| `codebase-memory-mcp` server | the L4 `Graph/` layer and `/memory:graph-report` | no L4 digest; L1–L3 are unaffected |
+
+#### context-mode (`ctx_search`)
+
+The SessionEnd distiller refreshes context-mode's index so notes written this session are
+searchable next session, and several commands (`/memory:health`, `/memory:challenge`,
+`/memory:eval`) use `ctx_search` as their keyword arm.
+
+It is **not** what powers recall. `scripts/memory-semantic.mjs` carries its own vector arm *and*
+its own BM25 arm in its own SQLite file, and that is the primary retrieval path. When
+`context-mode` is not on PATH the distiller falls back to refreshing that index instead, so the
+notes you just wrote are still retrievable — only `ctx_search` drifts.
+
+```bash
+npm i -g context-mode     # reinstall for the Node version you are now on
+/memory:prune             # rebuild the index to catch up what was missed
+```
+
+The CLI installs into the *current Node version's* bin dir, so an `fnm`/`nvm` version switch drops
+it from PATH. That used to fail silently; both `/memory:doctor` and the SessionStart hook now say
+so, and say precisely what is degraded rather than implying the vault went dark.
+
+#### codebase-memory-mcp (the `Graph/` layer)
+
+L4 is the only layer that is not written by this plugin. `/memory:graph-report` asks the
+`codebase-memory-mcp` MCP server for a structural digest of the *code* — architecture, call
+graphs, entry points, `search_graph` / `trace_path` / `get_architecture` — and writes it to
+`<vault>/Graph/<project>/GRAPH_REPORT.md`. `graph-staleness-check.sh` regenerates it in the
+background once the repo has commits newer than the report.
+
+Configure the server in your Claude Code MCP settings first; it is not a CLI, so nothing on PATH
+can detect it. If you never configure it, **skip L4 entirely** — no hook fails, `graph-staleness-check`
+stays silent because it never auto-generates a first report, and L1–L3 work exactly as documented.
+
+Generated bodies sit between `<!-- @generated -->` sentinels so hand-written notes under the
+trailing `## Notes` heading survive a regeneration.
 
 ## Configuration
 
@@ -162,17 +211,9 @@ For team knowledge, do not share the vault — check the facts into the *project
 **"embedding runtime not installed" at session start.** Claude Code installed the packages but
 skipped `onnxruntime-node`'s postinstall, so the native binary is missing. `/memory:install`.
 
-**"context-mode not on PATH" at session start.** The vault re-index needs the `context-mode` CLI,
-and `npm i -g` installs into the *current Node version's* bin dir. With `fnm`/`nvm` that path is
-version-scoped, so switching Node versions drops it from PATH and the re-index stops running:
-
-```bash
-npm i -g context-mode     # reinstall for the Node version you are now on
-/memory:prune             # rebuild the index to catch up what was missed
-```
-
-This used to fail *silently* — a skipped re-index was indistinguishable from a successful one, and
-the vault just drifted out of sync with search.
+**"context-mode not on PATH" at session start.** Optional — see
+[context-mode](#context-mode-ctx_search) above. Only `ctx_search` is affected; recall keeps
+working.
 
 **Notes stopped being found after deleting some.** The keyword index is append-only, so deletions
 leave stale chunks behind. `/memory:prune` purges and rebuilds; a plain re-index does not.
@@ -243,12 +284,14 @@ run measure the questions, not the retrieval.
 ```bash
 node scripts/memory-semantic.mjs --selftest    # 52 assertions + real-note chunk checks
 node scripts/memory-eval.mjs     --selftest
-python3 hooks/distill-session.py --selftest
+node scripts/memory-synth-vault.mjs --selftest
+node scripts/memory-audit-checks.mjs --selftest
+node hooks/distill-session.mjs   --selftest
 scripts/doctor.sh
 ```
 
-Nothing resolves an absolute install path: bash uses `BASH_SOURCE`, node uses `import.meta.url`,
-python uses `__file__`. So a dev checkout, a symlink, and the version-pinned plugin cache all work
+Nothing resolves an absolute install path: bash uses `BASH_SOURCE` and node uses
+`import.meta.url`. So a dev checkout, a symlink, and the version-pinned plugin cache all work
 the same way. `${CLAUDE_PLUGIN_ROOT}` is used only in `hooks/hooks.json` and command bodies, where
 it is guaranteed — commands fall back to the `$CLAUDE_MEMORY_HOME/plugin-root` breadcrumb the
 SessionStart hook writes.
