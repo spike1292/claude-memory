@@ -21,7 +21,7 @@ node scripts/memory-semantic.mjs --selftest    # 52 assertions + chunk checks ag
 node scripts/memory-eval.mjs     --selftest    # 9 assertions
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest # 44 assertions
-python3 hooks/distill-session.py --selftest
+node hooks/distill-session.mjs   --selftest    # 22 assertions
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
 
@@ -48,11 +48,14 @@ vault resolves to, so isolate `HOME`, not just `CLAUDE_VAULT`, when testing hook
 
 ## Architecture
 
-**Two runtimes, three mirrors of the same resolution logic.** `hooks/lib/vault-env.sh` is the
+**Two runtimes, two mirrors of the same resolution logic.** `hooks/lib/vault-env.sh` is the
 source of truth for vault path, `$CLAUDE_MEMORY_HOME`, recall arming, and `project_key`.
-`hooks/lib/paths.mjs` mirrors it for Node (shelling out for `project_key` only — that sed pipeline
-stays single-implementation), and `hooks/distill-session.py` mirrors `memory_home()` for Python.
-Change one, check the others.
+`hooks/lib/paths.mjs` mirrors it for Node, shelling out for `project_key` only — that sed pipeline
+over git remote URLs stays single-implementation. Change one, check the other.
+
+There is **no Python.** `distill-session.py` was ported to `distill-session.mjs` on 2026-08-16; it
+now imports `paths.mjs` rather than carrying a third copy of the resolution logic, and CI fails if
+a `.py` file or a shell script calling `python` reappears. Everything is bash + Node ≥ 22.5.
 
 **Settings resolve env → `$CLAUDE_MEMORY_HOME/config.json` → built-in default**, in that order, and
 are read *when the hook runs*. Do not move settings into `~/.claude/settings.json`'s `env` block: a
@@ -93,6 +96,17 @@ purpose, because a drifting default makes recall stop silently instead of errori
 never wait on it. Its cosine gate (0.55) is separate from the BM25 gate; the bands overlap, so it
 errs toward abstaining.
 
+**Two optional integrations, neither installed by this plugin, neither on the retrieval path.**
+`context-mode` (a CLI) backs `ctx_search`, a *second* BM25/FTS5 index that `memory-semantic.mjs`
+never reads; when it is absent the distiller falls back to refreshing the plugin's own index, and
+only `ctx_search` freshness is lost. `codebase-memory-mcp` (an MCP server, so PATH cannot detect
+it) backs the L4 `Graph/` layer and `/memory:graph-report`; without it, skip L4 — nothing fails,
+and `graph-staleness-check.sh` stays silent because it never generates a first report.
+
+Do not write code that assumes either is present, and do not describe a missing one as breakage.
+State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
+`context-mode` was gone, which was never true.
+
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.sh` warns rather than blocking a write, and the heavy hooks
 (`distill-session`, `graph-staleness-check`, `semantic-index-refresh`) detach, debounce, and guard
@@ -109,6 +123,9 @@ fires SessionStart again.
   when editing; several of them are the only record of a silent failure.
 - `jq` is assumed by hooks but not by `vault-env.sh`, which parses config with sed as a fallback
   (BSD sed — use `sed -E`, basic regex has no `\|`).
+- Porting between the two runtimes is not mechanical. JS `\w` is ASCII-only where Python's is
+  unicode-aware (so slugs need `\p{L}\p{N}` with the `u` flag), and `toISOString()` is UTC where
+  `date.today()` is local — note filenames are dated, so that one is visible.
 - Version is written in four places — `package.json`, `.claude-plugin/plugin.json`, and both
   `.metadata.version` and `.plugins[0].version` in `.claude-plugin/marketplace.json`. Never bump
   them by hand; `scripts/release.sh` does all four and CI fails the PR if they disagree.
@@ -129,12 +146,23 @@ vault built by `memory-synth-vault.mjs`, plus `bash -n` over every shell file an
 check. It must be green to merge. `memory-semantic.mjs --selftest` hard-fails when it finds no
 notes rather than skipping, so CI always has to build that synthetic vault first.
 
-`.github/workflows/claude-review.yml` reviews every PR — this repo requires zero approvals, so it
-is the only second reader. Its prompt carries the repo's invariants; when a rule here changes,
-change it there too. It skips fork PRs, which get no secrets on a `pull_request` trigger.
+Two Claude workflows, deliberately not three:
 
-`hooks/distill-session.py` needs **Python ≥ 3.10** (`str | None` annotations). macOS ships 3.9, so
-the self-test fails on a bare system `python3`.
+- `claude-review.yml` reviews every PR — this repo requires zero approvals, so it is the only
+  second reader. Its prompt carries the repo's invariants; **when a rule here changes, change it
+  there too.** It skips fork PRs, which get no secrets on a `pull_request` trigger.
+- `claude.yml` answers `@claude` mentions on issues and PR comments. Complementary, not a reviewer.
+
+`/install-github-app` also generates `claude-code-review.yml`, a second auto-reviewer on the same
+`pull_request` trigger. It was deleted — two reviewers means two reviews on every PR. If you re-run
+the installer it will come back; delete it again, or delete `claude-review.yml` instead and accept
+a generic prompt.
+
+Both use `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `ANTHROPIC_API_KEY`. A workflow
+whose guard names a different secret than the action consumes will skip forever and report success.
+
+CI also fails if a Python dependency reappears — `.py` files and shell scripts calling `python`
+are both rejected.
 
 ### Releasing
 

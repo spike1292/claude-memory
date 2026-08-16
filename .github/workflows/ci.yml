@@ -14,14 +14,10 @@ jobs:
         # 22 is the floor `engines` promises (node:sqlite); 24 is what people actually run.
         node: ['22', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
-      - uses: actions/setup-python@v5
-        with:
-          # 3.10+: distill-session.py uses `str | None` annotations.
-          python-version: '3.11'
 
       - name: Syntax-check every shell hook and script
         run: for f in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do bash -n "$f"; done
@@ -40,12 +36,27 @@ jobs:
           node scripts/memory-eval.mjs --selftest
           node scripts/memory-synth-vault.mjs --selftest
           node scripts/memory-audit-checks.mjs --selftest
-          python3 hooks/distill-session.py --selftest
+          node hooks/distill-session.mjs --selftest
+
+      # There is no Python left. Fail if any creeps back in — the whole point of the port was
+      # that a second runtime is a second thing to be the wrong version on someone's machine.
+      # Matches real dependencies only (a .py file, or a shell hook shelling out to python),
+      # not prose: the port's own comments explain why python went away.
+      # No \b in the pattern: git grep -E is POSIX ERE, where \b is undefined — it matched
+      # NOTHING rather than erroring, so this half of the check was dead on arrival and the
+      # step still passed. Verified against a planted .py and a planted .sh; both are caught.
+      - name: No Python dependency
+        run: |
+          bad=$( { git ls-files '*.py'; git grep -l python -- '*.sh'; } | sort -u )
+          if [ -n "$bad" ]; then
+            echo "::error::a Python dependency reappeared in: $bad"; exit 1
+          fi
+          echo "no python dependency"
 
   version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Version agrees across all four manifest fields
         run: |
           v=$(jq -r .version package.json)

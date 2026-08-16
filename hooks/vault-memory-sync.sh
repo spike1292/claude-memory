@@ -113,15 +113,17 @@ fi
 rmdir "$VAULT/Commands/memory" 2>/dev/null || true
 rmdir "$VAULT/Commands" 2>/dev/null || true
 
-# The vault re-index (SessionEnd distiller) needs the context-mode CLI. It resolves out of an
-# fnm/nvm multishell dir, so switching Node versions silently drops it from PATH and the vault
-# quietly stops being searchable. Warn here — distill.log is not somewhere anyone looks.
+# context-mode is OPTIONAL — it backs ctx_search, a second index the plugin does not read from.
+# It resolves out of an fnm/nvm multishell dir, so switching Node versions silently drops it from
+# PATH; worth one line because distill.log is not somewhere anyone looks. Scoped to what is
+# actually lost: the earlier wording said the vault "stops being searchable", which was never
+# true — memory-semantic.mjs owns its own index and the distiller refreshes that instead.
 # Silent when present, so this costs nothing in the normal case.
 command -v context-mode >/dev/null 2>&1 || cat <<'WARN'
-⚠ context-mode CLI not on PATH — the vault re-index at SessionEnd will be SKIPPED, so
-  ctx_search results will drift behind the notes on disk. This usually means a Node version
-  switch (fnm/nvm) dropped the global install.
-  Fix: npm i -g context-mode     then: /memory:prune  (to catch up what was missed)
+ℹ context-mode CLI not on PATH (optional) — ctx_search results will drift behind the notes on
+  disk. Semantic recall and memory-semantic.mjs are unaffected; the SessionEnd distiller
+  refreshes the plugin's own index instead. Usually an fnm/nvm Node version switch.
+  To restore ctx_search: npm i -g context-mode     then: /memory:prune
 WARN
 
 # --- standing retrieval rules --------------------------------------------------
@@ -145,9 +147,11 @@ on identifiers. Local embeddings, so private notes never leave the machine.
    the terms the answer would be written in, and search both.
 2. **Do NOT pass \`--layer\` to narrow results.** It filters the note set instead of re-ranking it,
    deleting gold answers that live in another layer. Measured: EN recall@5 67.9% → 53.6%.
-3. **Scope \`ctx_search\` to the layer you want** — unscoped, it is Insights-dominated (many small
-   dense notes outrank few large ones). Project facts → \`vault-memory-<repo>\`; "have I hit this
-   before" → \`vault-insights-<repo>\`. Answer an L1 miss by scoping, not by piling on aliases.
+3. **If \`ctx_search\` is available, scope it to the layer you want** — unscoped, it is
+   Insights-dominated (many small dense notes outrank few large ones). Project facts →
+   \`vault-memory-<repo>\`; "have I hit this before" → \`vault-insights-<repo>\`. Answer an L1 miss
+   by scoping, not by piling on aliases. It is an optional second index (context-mode); when it is
+   absent the tool above is the whole retrieval path and nothing else changes.
 
 Writing or auditing a note? Load the \`/memory:protocol\` skill first — filename/frontmatter rules,
 per-claim recency and supersession, aliases, and when knowledge graduates to \`permanent/\`.

@@ -9,7 +9,44 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Removed
+
+- **The Python dependency.** `hooks/distill-session.py` is now `hooks/distill-session.mjs`. Node
+  ≥ 22.5 was already a hard requirement for `node:sqlite`, so Python only added a second runtime
+  that could be the wrong version — and usually was: macOS ships 3.9, which cannot parse the
+  `str | None` annotations the distiller used, so `Insights/` silently stopped being written on a
+  stock Mac. Verified equivalent against the original on write, dedup, and reconcile paths, which
+  produce byte-identical vaults. CI now rejects any `.py` file or shell script calling `python`.
+- One of the three mirrored config implementations. The distiller imports `hooks/lib/paths.mjs`
+  instead of re-deriving vault, config, and `project_key` resolution, so that logic exists twice
+  now (bash + Node) rather than three times.
+- `claude-code-review.yml`, the installer's generic auto-reviewer. It ran on the same
+  `pull_request` trigger as `claude-review.yml`, so every PR got reviewed twice; the surviving one
+  carries this repo's invariants and can actually comment (`pull-requests: write`).
+
+### Changed
+
+- **`context-mode` is documented as optional, and degrades instead of drifting.** When the CLI is
+  absent the SessionEnd distiller now refreshes the plugin's own semantic index rather than
+  refreshing nothing, so notes written this session stay retrievable; only `ctx_search` goes
+  stale. The old warning claimed the vault "stops being searchable", which was never true —
+  `memory-semantic.mjs` owns its own vector and BM25 arms and never read from context-mode.
+- `/memory:doctor` reports both optional integrations under their own heading, with the precise
+  cost of each being absent.
+- Pinned `actions/checkout` and `actions/setup-node` to v7 in every workflow, clearing GitHub's
+  Node 20 runtime deprecation warning.
+- Aligned the Claude workflows after `/install-github-app` ran: the review now authenticates with
+  `CLAUDE_CODE_OAUTH_TOKEN` (the subscription token the installer actually wrote) instead of
+  `ANTHROPIC_API_KEY`, which no longer existed and left the job skipping every PR while reporting
+  success. `claude.yml` (the `@claude` mention responder) is kept.
+
 ### Added
+
+- Documentation for the two optional integrations — `context-mode` (backs `ctx_search`) and
+  `codebase-memory-mcp` (backs the L4 `Graph/` layer and `/memory:graph-report`). Neither is
+  installed by this plugin, neither is required, and neither is on the retrieval path. Because
+  `codebase-memory-mcp` is an MCP server rather than a CLI, `/memory:doctor` detects it by the
+  presence of an L4 digest instead of by looking on PATH.
 
 - `CLAUDE.md` — architecture and conventions for future Claude Code sessions.
 - CI on every pull request: the five self-tests on Node 22 and 24, `bash -n` over every shell
