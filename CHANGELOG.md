@@ -20,6 +20,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - One of the three mirrored config implementations. The distiller imports `hooks/lib/paths.mjs`
   instead of re-deriving vault, config, and `project_key` resolution, so that logic exists twice
   now (bash + Node) rather than three times.
+- `claude-code-review.yml`, the installer's generic auto-reviewer. It ran on the same
+  `pull_request` trigger as `claude-review.yml`, so every PR got reviewed twice; the surviving one
+  carries this repo's invariants and can actually comment (`pull-requests: write`).
 
 ### Changed
 
@@ -30,8 +33,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `memory-semantic.mjs` owns its own vector and BM25 arms and never read from context-mode.
 - `/memory:doctor` reports both optional integrations under their own heading, with the precise
   cost of each being absent.
-- Pinned `actions/checkout` and `actions/setup-node` to v7, clearing GitHub's Node 20 runtime
-  deprecation warning.
+- Pinned `actions/checkout` and `actions/setup-node` to v7 in every workflow, clearing GitHub's
+  Node 20 runtime deprecation warning.
+- Aligned the Claude workflows after `/install-github-app` ran: the review now authenticates with
+  `CLAUDE_CODE_OAUTH_TOKEN` (the subscription token the installer actually wrote) instead of
+  `ANTHROPIC_API_KEY`, which no longer existed and left the job skipping every PR while reporting
+  success. `claude.yml` (the `@claude` mention responder) is kept.
 
 ### Added
 

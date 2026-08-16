@@ -146,9 +146,20 @@ vault built by `memory-synth-vault.mjs`, plus `bash -n` over every shell file an
 check. It must be green to merge. `memory-semantic.mjs --selftest` hard-fails when it finds no
 notes rather than skipping, so CI always has to build that synthetic vault first.
 
-`.github/workflows/claude-review.yml` reviews every PR — this repo requires zero approvals, so it
-is the only second reader. Its prompt carries the repo's invariants; when a rule here changes,
-change it there too. It skips fork PRs, which get no secrets on a `pull_request` trigger.
+Two Claude workflows, deliberately not three:
+
+- `claude-review.yml` reviews every PR — this repo requires zero approvals, so it is the only
+  second reader. Its prompt carries the repo's invariants; **when a rule here changes, change it
+  there too.** It skips fork PRs, which get no secrets on a `pull_request` trigger.
+- `claude.yml` answers `@claude` mentions on issues and PR comments. Complementary, not a reviewer.
+
+`/install-github-app` also generates `claude-code-review.yml`, a second auto-reviewer on the same
+`pull_request` trigger. It was deleted — two reviewers means two reviews on every PR. If you re-run
+the installer it will come back; delete it again, or delete `claude-review.yml` instead and accept
+a generic prompt.
+
+Both use `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `ANTHROPIC_API_KEY`. A workflow
+whose guard names a different secret than the action consumes will skip forever and report success.
 
 CI also fails if a Python dependency reappears — `.py` files and shell scripts calling `python`
 are both rejected.

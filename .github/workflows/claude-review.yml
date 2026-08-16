@@ -18,12 +18,17 @@ jobs:
       id-token: write
     # The `secrets` context cannot be used in a job-level `if`, but it can be used in job-level
     # `env` — so the guard lives on the steps. Without this the job goes red on every PR until
-    # the key is set, and a check that is always red is a check nobody reads.
+    # the token is set, and a check that is always red is a check nobody reads.
+    #
+    # CLAUDE_CODE_OAUTH_TOKEN, not ANTHROPIC_API_KEY: /install-github-app wired this repo to a
+    # Claude subscription rather than API billing. The guard is why the mismatch was survivable —
+    # it skipped rather than failing — but it also made the workflow silently inert, so the guard
+    # must name the SAME secret the action consumes or it hides exactly what it was meant to show.
     env:
-      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      HAS_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - if: env.HAS_KEY != 'true'
-        run: echo "::notice::ANTHROPIC_API_KEY is not set — skipping review. Run /install-github-app in Claude Code, or add the secret."
+        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set — skipping review. Run /install-github-app in Claude Code."
 
       - uses: actions/checkout@v7
         if: env.HAS_KEY == 'true'
@@ -33,7 +38,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: env.HAS_KEY == 'true'
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
