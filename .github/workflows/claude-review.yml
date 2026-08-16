@@ -25,7 +25,7 @@ jobs:
       - if: env.HAS_KEY != 'true'
         run: echo "::notice::ANTHROPIC_API_KEY is not set — skipping review. Run /install-github-app in Claude Code, or add the secret."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: env.HAS_KEY == 'true'
         with:
           fetch-depth: 1
@@ -53,18 +53,18 @@ jobs:
             2. State written inside the plugin directory instead of `$CLAUDE_MEMORY_HOME`.
                Plugin caches are version-pinned and wiped on update, taking indexes and
                722 MB of model weights with them.
-            3. An absolute install path anywhere. bash resolves via `BASH_SOURCE`, node via
-               `import.meta.url`, python via `__file__`. `${CLAUDE_PLUGIN_ROOT}` is only
-               reliable inside hooks.json command strings.
+            3. An absolute install path anywhere. bash resolves via `BASH_SOURCE` and node via
+               `import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside hooks.json
+               command strings.
             4. A hook that can block, hang, or fail a session. Hooks degrade to a no-op when
                a dependency is missing; `validate-note.sh` warns and never blocks; heavy
                hooks detach, debounce, and guard against recursing into themselves via a
                `*_CHILD` variable.
             5. Config resolution drift. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
                then the built-in default, and it must be read when the hook runs.
-               `hooks/lib/vault-env.sh` is the source of truth; `hooks/lib/paths.mjs` and
-               `hooks/distill-session.py` mirror it. A change to one that misses the others
-               is a bug even when both files pass their tests.
+               `hooks/lib/vault-env.sh` is the source of truth and `hooks/lib/paths.mjs`
+               mirrors it. A change to one that misses the other is a bug even when both
+               files pass their tests.
             6. Retrieval changes with no numbers. No recall or MRR figure lands without a
                case-set run behind it, and any figure quoted must name its case set. Flag
                per-model assumptions that were only checked on one model — pooling, chunk
@@ -75,8 +75,10 @@ jobs:
                while verifying nothing.
             8. A user-visible change with no `## [Unreleased]` entry in CHANGELOG.md, since
                that section becomes the release notes verbatim.
-            9. Portability: bash + POSIX (BSD sed on macOS has no `\|`, so `sed -E`), Node
-               >= 22.5, Python >= 3.10.
+            9. Portability: bash + POSIX (BSD sed on macOS has no `\|`, so `sed -E`) and
+               Node >= 22.5. There is deliberately NO Python — flag any reintroduction of a
+               second runtime, and note that porting between the two is not mechanical
+               (JS `\w` is ASCII-only; `toISOString()` is UTC where `date.today()` is local).
 
             Also apply ordinary judgement — correctness, races, error handling, and
             over-engineering. This codebase prefers the stdlib and the shortest thing that

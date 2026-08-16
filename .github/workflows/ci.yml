@@ -14,8 +14,8 @@ jobs:
         # 22 is the floor `engines` promises (node:sqlite); 24 is what people actually run.
         node: ['22', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
 
@@ -56,7 +56,7 @@ jobs:
   version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Version agrees across all four manifest fields
         run: |
           v=$(jq -r .version package.json)

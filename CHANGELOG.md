@@ -30,6 +30,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `memory-semantic.mjs` owns its own vector and BM25 arms and never read from context-mode.
 - `/memory:doctor` reports both optional integrations under their own heading, with the precise
   cost of each being absent.
+- Pinned `actions/checkout` and `actions/setup-node` to v7, clearing GitHub's Node 20 runtime
+  deprecation warning.
 
 ### Added
 
