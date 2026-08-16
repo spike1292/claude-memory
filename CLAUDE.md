@@ -129,6 +129,10 @@ vault built by `memory-synth-vault.mjs`, plus `bash -n` over every shell file an
 check. It must be green to merge. `memory-semantic.mjs --selftest` hard-fails when it finds no
 notes rather than skipping, so CI always has to build that synthetic vault first.
 
+`.github/workflows/claude-review.yml` reviews every PR — this repo requires zero approvals, so it
+is the only second reader. Its prompt carries the repo's invariants; when a rule here changes,
+change it there too. It skips fork PRs, which get no secrets on a `pull_request` trigger.
+
 `hooks/distill-session.py` needs **Python ≥ 3.10** (`str | None` annotations). macOS ships 3.9, so
 the self-test fails on a bare system `python3`.
 

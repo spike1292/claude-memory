@@ -1,0 +1,85 @@
+name: Claude Review
+
+# main is protected with zero required approvals — a solo repo has no second reader.
+# This is that reader. It comments; it never approves and never merges.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    # Fork PRs get no secrets on `pull_request`, so the action would fail with an empty key.
+    # Skip them explicitly rather than fail loudly on every outside contribution.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. The PR branch is already checked out.
+
+            Read CLAUDE.md first — it holds the invariants below and the reasoning behind
+            them. Most comments in this repo record a dated measurement that settled a
+            question; treat deleting one as a change that needs justifying.
+
+            Weight the review toward the things that break silently here. In rough order:
+
+            1. PRIVACY. This is a public repo and the vault is private. Flag any real note
+               content, personal or colleague names, internal hostnames, account IDs, or
+               generated eval case sets (`eval-cases-*.jsonl`) that appear in the diff or
+               in a test fixture. This is the one finding that must never be soft-pedalled.
+            2. State written inside the plugin directory instead of `$CLAUDE_MEMORY_HOME`.
+               Plugin caches are version-pinned and wiped on update, taking indexes and
+               722 MB of model weights with them.
+            3. An absolute install path anywhere. bash resolves via `BASH_SOURCE`, node via
+               `import.meta.url`, python via `__file__`. `${CLAUDE_PLUGIN_ROOT}` is only
+               reliable inside hooks.json command strings.
+            4. A hook that can block, hang, or fail a session. Hooks degrade to a no-op when
+               a dependency is missing; `validate-note.sh` warns and never blocks; heavy
+               hooks detach, debounce, and guard against recursing into themselves via a
+               `*_CHILD` variable.
+            5. Config resolution drift. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
+               then the built-in default, and it must be read when the hook runs.
+               `hooks/lib/vault-env.sh` is the source of truth; `hooks/lib/paths.mjs` and
+               `hooks/distill-session.py` mirror it. A change to one that misses the others
+               is a bug even when both files pass their tests.
+            6. Retrieval changes with no numbers. No recall or MRR figure lands without a
+               case-set run behind it, and any figure quoted must name its case set. Flag
+               per-model assumptions that were only checked on one model — pooling, chunk
+               size, query/doc prefixes and batch size do not transfer, and getting them
+               wrong degrades ranking silently rather than erroring.
+            7. Non-trivial logic with no self-test. Tests here are `--selftest` blocks inside
+               the file they test; there is no framework. Also flag a test that can pass
+               while verifying nothing.
+            8. A user-visible change with no `## [Unreleased]` entry in CHANGELOG.md, since
+               that section becomes the release notes verbatim.
+            9. Portability: bash + POSIX (BSD sed on macOS has no `\|`, so `sed -E`), Node
+               >= 22.5, Python >= 3.10.
+
+            Also apply ordinary judgement — correctness, races, error handling, and
+            over-engineering. This codebase prefers the stdlib and the shortest thing that
+            works; an abstraction with one caller is a finding.
+
+            Be specific and short. Quote the line, say what breaks, say what to do instead.
+            If the PR is clean, say so in one or two lines — do not manufacture findings,
+            and do not restate what the diff already shows. Prefix anything you are not
+            certain of with "possible:" so it reads as a question, not a defect.
+
+            Use `mcp__github_inline_comment__create_inline_comment` (with `confirmed: true`)
+            for line-specific findings and `gh pr comment` for the summary.
+            Post GitHub comments only — do not return the review as a message.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

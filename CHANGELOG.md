@@ -17,6 +17,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Release automation: pushing a `v*` tag publishes a GitHub release with that version's changelog
   section. `scripts/release.sh` prepares the version bump and opens the PR.
 - `main` is protected: no direct pushes, no force-pushes, CI must be green to merge.
+- Claude reviews every pull request (`.github/workflows/claude-review.yml`), weighted toward what
+  breaks silently here — vault content reaching a public repo, state written inside the
+  version-pinned plugin dir, blocking hooks, mirrored config logic drifting apart, and retrieval
+  changes with no case-set numbers behind them. It comments; it never approves or merges.
 
 ## [0.1.3] - 2026-08-15
 
