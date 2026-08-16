@@ -16,12 +16,22 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+    # The `secrets` context cannot be used in a job-level `if`, but it can be used in job-level
+    # `env` — so the guard lives on the steps. Without this the job goes red on every PR until
+    # the key is set, and a check that is always red is a check nobody reads.
+    env:
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
+      - if: env.HAS_KEY != 'true'
+        run: echo "::notice::ANTHROPIC_API_KEY is not set — skipping review. Run /install-github-app in Claude Code, or add the secret."
+
       - uses: actions/checkout@v6
+        if: env.HAS_KEY == 'true'
         with:
           fetch-depth: 1
 
       - uses: anthropics/claude-code-action@v1
+        if: env.HAS_KEY == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
