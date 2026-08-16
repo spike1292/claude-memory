@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the floor `engines` promises (node:sqlite); 24 is what people actually run.
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          # 3.10+: distill-session.py uses `str | None` annotations.
+          python-version: '3.11'
+
+      - name: Syntax-check every shell hook and script
+        run: for f in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do bash -n "$f"; done
+
+      # A synthetic vault, never a real one. memory-semantic's self-test asserts against real
+      # notes on purpose and hard-fails when it finds none — an empty run must not read as a pass.
+      - name: Build a synthetic vault
+        run: node scripts/memory-synth-vault.mjs --out "$RUNNER_TEMP/vault" --notes 60 --seed 7
+
+      - name: Self-tests
+        env:
+          CLAUDE_VAULT: ${{ runner.temp }}/vault
+          CLAUDE_MEMORY_HOME: ${{ runner.temp }}/memory-home
+        run: |
+          node scripts/memory-semantic.mjs --selftest
+          node scripts/memory-eval.mjs --selftest
+          node scripts/memory-synth-vault.mjs --selftest
+          node scripts/memory-audit-checks.mjs --selftest
+          python3 hooks/distill-session.py --selftest
+
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version agrees across all four manifest fields
+        run: |
+          v=$(jq -r .version package.json)
+          for spec in '.claude-plugin/plugin.json:.version' \
+                      '.claude-plugin/marketplace.json:.metadata.version' \
+                      '.claude-plugin/marketplace.json:.plugins[0].version'; do
+            f=${spec%%:*}; q=${spec#*:}
+            got=$(jq -r "$q" "$f")
+            echo "$f $q = $got"
+            [ "$got" = "$v" ] || {
+              echo "::error file=$f::version drift — $q is $got, package.json is $v. Use scripts/release.sh."
+              exit 1; }
+          done
+          echo "all four agree on $v"
