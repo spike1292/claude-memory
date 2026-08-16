@@ -253,6 +253,27 @@ the same way. `${CLAUDE_PLUGIN_ROOT}` is used only in `hooks/hooks.json` and com
 it is guaranteed — commands fall back to the `$CLAUDE_MEMORY_HOME/plugin-root` breadcrumb the
 SessionStart hook writes.
 
+### Contributing
+
+`main` is protected — branch, push, open a PR. CI runs the self-tests on Node 22 and 24 against a
+generated synthetic vault (never a real one) and must be green to merge.
+
+Put a note under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md) in the same PR as the change.
+That section becomes the release notes verbatim, so it is the only place the change gets described.
+
+### Releasing
+
+```bash
+scripts/release.sh 0.1.4      # bumps every version field, closes Unreleased, opens the PR
+# merge it, then:
+git switch main && git pull
+git tag v0.1.4 && git push origin v0.1.4
+```
+
+The tag publishes the release, not the merge. Version lives in four places (`package.json`,
+`.claude-plugin/plugin.json`, and two fields in `.claude-plugin/marketplace.json`); the script
+writes all four and CI fails the PR if they ever drift apart.
+
 ## License
 
 MIT
