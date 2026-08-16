@@ -42,9 +42,12 @@ jobs:
       # that a second runtime is a second thing to be the wrong version on someone's machine.
       # Matches real dependencies only (a .py file, or a shell hook shelling out to python),
       # not prose: the port's own comments explain why python went away.
+      # No \b in the pattern: git grep -E is POSIX ERE, where \b is undefined — it matched
+      # NOTHING rather than erroring, so this half of the check was dead on arrival and the
+      # step still passed. Verified against a planted .py and a planted .sh; both are caught.
       - name: No Python dependency
         run: |
-          bad=$( { git ls-files '*.py'; git grep -lE '\bpython3?\b' -- '*.sh'; } | sort -u )
+          bad=$( { git ls-files '*.py'; git grep -l python -- '*.sh'; } | sort -u )
           if [ -n "$bad" ]; then
             echo "::error::a Python dependency reappeared in: $bad"; exit 1
           fi
