@@ -1,0 +1,41 @@
+name: Release
+
+# Tags are the trigger, not merges: a version bump lands on main through a PR like everything
+# else, and the tag is what says "this commit is the release".
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match the version in the manifests
+        run: |
+          tag=${GITHUB_REF_NAME#v}
+          pkg=$(jq -r .version package.json)
+          [ "$tag" = "$pkg" ] || {
+            echo "::error::tag v$tag does not match package.json $pkg"; exit 1; }
+
+      # The release notes ARE the changelog section. One source, so they cannot disagree.
+      - name: Extract this version's changelog section
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          awk -v v="$v" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/         { exit }
+            on                     { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > notes.md
+          [ -s notes.md ] || {
+            echo "::error::CHANGELOG.md has no section for $v"; exit 1; }
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
