@@ -75,8 +75,27 @@ const MODELS = {
   // 8192 tokens where bge-small truncates at 512 — so m3 alone actually processed the long tail,
   // at quadratic attention cost. Benchmarked at EQUAL length it is 9.6x bge-small (384ms vs 40ms
   // per 1800-char text), below its 17x parameter ratio. Aligned to 1800 so the A/B varies the
-  // model and nothing else. dupeMin/clusterMin still unmeasured.
-  'bge-m3': { id: 'Xenova/bge-m3', dim: 1024, maxChars: 1800, d: '', q: '', pool: 'cls', dupeMin: 0.95, clusterMin: 0.92 },
+  // model and nothing else.
+  //
+  // dupeMin/clusterMin MEASURED 2026-08-17, and they were badly wrong before that: they had been
+  // copied from e5-multi (0.95/0.92) and never calibrated, which made both scans report a clean
+  // vault. Sweep over the 74-note claude-memory Insights set, against which a /memory:health audit
+  // had already hand-identified 16 same-lesson pairs:
+  //
+  //   --dupes --min   0.95  0.90  0.86  0.84  0.80  0.75      --clusters --min  0.92 .. 0.76  0.72
+  //   pairs              0     0     1     6     9    16      topics               0 .. 0       2
+  //
+  // Real duplicates occupy 0.75-0.869; the first coincidental pair appears at 0.714. m3's band sits
+  // LOW and wide, the opposite of e5-multi's high narrow one — which is exactly why the number does
+  // not transfer, in either direction. At 0.95 the scan found 0 of 16.
+  //
+  // clusterMin 0.72 is its own measurement, not dupeMin scaled: at 0.76 and above --clusters
+  // returned nothing, at 0.72 it surfaced two real uncovered topics (shell-vs-Node fork cost;
+  // conventional-commit version derivation), both with a typical-member similarity of ~0.89.
+  //
+  // Two real duplicates in that set scored BELOW 0.70 and no threshold would have found them; they
+  // were caught by reading. This scan proposes, the human judges — do not read a clean run as proof.
+  'bge-m3': { id: 'Xenova/bge-m3', dim: 1024, maxChars: 1800, d: '', q: '', pool: 'cls', dupeMin: 0.75, clusterMin: 0.72 },
 };
 // DEFAULT = bge-m3 since 2026-08-15, by measurement on both case sets (table at the top).
 //

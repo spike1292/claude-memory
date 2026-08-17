@@ -9,6 +9,39 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried
+  e5-multi's thresholds.** `dupeMin`/`clusterMin` were 0.95/0.92, copied when bge-m3 became the
+  default and never measured against it — and m3's similarity band sits *low and wide* where
+  e5-multi's is high and narrow. On a 74-note set with sixteen hand-identified duplicates the scan
+  returned **zero pairs**, so a miscalibrated threshold read as a clean vault. Measured by sweep and
+  set to **0.75 / 0.72** (real duplicates occupy 0.75–0.869, the first coincidental pair is at
+  0.714; `--clusters` found 0 topics at ≥0.76 and 2 real ones at 0.72). The sweep table is in the
+  model profile and in `/memory:prune` step 2b, which no longer warns that the values are
+  unmeasured. Two duplicates in that set scored below 0.70 and no threshold reaches them — the scan
+  bounds what it can find, it does not replace reading.
+- **The distiller re-created notes that `/memory:prune` had just merged away.**
+  `findNearDuplicate` compared only *filename slugs*, so a lesson restated in different words
+  became a new note; of sixteen same-lesson pairs found in one vault, only the six whose slugs
+  happened to overlap were ever reconciled. It now also compares note **bodies**, using containment
+  (overlap over the smaller token set) rather than Jaccard, because these pairs differ in length and
+  a union denominator buries them. Measured against those sixteen pairs plus seven judged
+  complementary: slug alone caught 0/16, body Jaccard ≥0.25 caught 6/16, body containment ≥0.40
+  catches **11/16 with no false merges**. Deliberately conservative — the highest complementary pair
+  scores 0.286, and a false merge deletes a distinct lesson while a miss only leaves work for
+  `/memory:prune`. Frontmatter, headings, alias lines and folded-in addenda are excluded from the
+  comparison. A two-argument call is unchanged and reads no files.
+- **`hooks/distill-session.mjs` executed `main()` on import**, so importing any of its helpers ran
+  the whole hook — spawning a headless `claude`, writing notes, reindexing. The third copy of a
+  defect already fixed in `validate-note.mjs` and `memory-audit-checks.mjs`. Now guarded by an
+  entry-point check that compares **real** paths: `distill-session.sh` builds its path from
+  `BASH_SOURCE` and passes node a path still containing any symlinked directory, while
+  `import.meta.url` is already resolved, so the lexical `path.resolve()` comparison used elsewhere
+  would have been false whenever the plugin is reached through a symlink — and the distiller would
+  have gone silently dead, writing nothing, with no error. A selftest invokes the file through a
+  symlink and asserts on its output, because the exit status is 0 either way.
+
 ### Changed
 
 - **Merging the release PR now publishes the release.** `release.yml` also triggers on pushes to

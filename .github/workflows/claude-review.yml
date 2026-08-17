@@ -80,8 +80,11 @@ jobs:
             6. Retrieval changes with no numbers. No recall or MRR figure lands without a
                case-set run behind it, and any figure quoted must name its case set. Flag
                per-model assumptions that were only checked on one model — pooling, chunk
-               size, query/doc prefixes and batch size do not transfer, and getting them
-               wrong degrades ranking silently rather than erroring.
+               size, query/doc prefixes, batch size and the `dupeMin`/`clusterMin`
+               thresholds do not transfer, and getting them wrong degrades ranking
+               silently rather than erroring. A threshold copied between model profiles is
+               a defect even when every test passes: bge-m3 carried e5-multi's 0.95 and so
+               reported zero duplicates on a vault holding sixteen.
             7. Non-trivial logic with no self-test. Tests here are `--selftest` blocks inside
                the file they test; there is no framework. Also flag a test that can pass
                while verifying nothing.
