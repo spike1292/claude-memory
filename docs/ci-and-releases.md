@@ -67,14 +67,40 @@ Changelog format. The release notes are generated from that section verbatim, so
 place the story gets written.
 
 ```bash
-scripts/release.sh 0.1.4      # bumps all four versions, closes Unreleased, opens the PR
-# merge the PR, then:
-git switch main && git pull
-git tag v0.1.4 && git push origin v0.1.4
+scripts/release.sh          # version derived from the commits since the last tag
+scripts/release.sh 0.3.0    # or state it outright
 ```
 
-**The tag publishes, not the merge.** `.github/workflows/release.yml` checks the tag against
-`package.json`, extracts that version's changelog section, and creates the GitHub release from it.
+That opens a PR bumping every version field and closing `[Unreleased]`. **Merging it publishes the
+release** — `release.yml` sees a version on `main` with no release yet, creates the tag, and
+publishes the `[0.3.0]` changelog section as the notes. No manual tagging.
 
-Never bump versions by hand — `scripts/release.sh` writes all four and CI fails the PR if they
-disagree.
+### How the version is chosen
+
+From the conventional commits since the last tag, so the number follows from the work:
+
+| in the range | bump |
+| --- | --- |
+| any `feat:` | minor |
+| any `!:` or `BREAKING CHANGE` | minor — 0.x, where semver allows anything to change |
+| anything else (`fix`, `perf`, `chore`, `docs`, `ci`) | patch |
+
+`scripts/release.sh --selftest` covers each path, including that `feat:` must be anchored at the
+start of the subject and that `perf:` is not a feature.
+
+### Deliberately not release-please or semantic-release
+
+Both generate the changelog from commit subjects. Here **the changelog is the release notes** —
+hand-written, and the only place the reasoning behind a change is recorded. v0.2.0's notes run to
+97 lines of *why*; the equivalent generated list would be a dozen commit titles. Deriving the
+version number is useful. Generating the prose would be a downgrade.
+
+### Escape hatch
+
+Pushing a `v*` tag by hand publishes too, and is checked against `package.json` first. Useful for
+re-cutting. Publishing is idempotent: the job runs on every push to `main` and does nothing —
+about ten seconds — when the version already has a release.
+
+Never bump versions by hand. `scripts/release.sh` writes all five fields (`package.json`,
+`plugin.json`, two in `marketplace.json`, and `package-lock.json`) and CI fails the PR if they
+disagree. `package-lock.json` sat at 0.1.0 through three releases before it was covered.

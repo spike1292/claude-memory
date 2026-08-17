@@ -9,6 +9,25 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **Merging the release PR now publishes the release.** `release.yml` also triggers on pushes to
+  `main` and publishes whenever `package.json` names a version with no release yet, so the manual
+  `git tag && git push` step is gone. One job creates the tag and the release together, because a
+  tag pushed by `GITHUB_TOKEN` does not start another workflow run — a "tag here, react there"
+  split would have created the tag and then silently never published. Idempotent: the job runs on
+  every push to `main` and is a ~10 s no-op when the version is already out. Pushing a `v*` tag by
+  hand still works as an escape hatch.
+- **`scripts/release.sh` derives the version from the conventional commits since the last tag** —
+  any `feat:` or `!:`/`BREAKING CHANGE` bumps the minor (0.x, where semver permits anything to
+  change), everything else the patch. Pass a version to override. `--selftest` covers each path,
+  including that `feat:` must be anchored at the start of a subject and that `perf:` is not a
+  feature. Not release-please or semantic-release: those generate the changelog from commit
+  subjects, and here the changelog *is* the release notes — deriving the number is useful,
+  generating the prose would be a downgrade.
+- The CI version check covers `package-lock.json` as well, which had silently sat at 0.1.0 through
+  three releases while the four manifest fields moved to 0.1.3.
+
 ## [0.2.0] - 2026-08-17
 
 ### Removed

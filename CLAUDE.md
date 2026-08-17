@@ -171,6 +171,7 @@ Three of those matter while you are still editing:
 
 - **`claude-review.yml`'s prompt carries this repo's invariants. When a rule here changes, change
   it there too.**
-- **Never bump versions by hand.** `scripts/release.sh` writes all four; CI fails on drift.
+- **Never bump versions by hand.** `scripts/release.sh` writes all five; CI fails on drift.
+- **Merging the release PR publishes.** There is no manual tagging step.
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
   release notes verbatim.

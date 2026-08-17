@@ -1,9 +1,16 @@
 name: Release
 
-# Tags are the trigger, not merges: a version bump lands on main through a PR like everything
-# else, and the tag is what says "this commit is the release".
+# Two ways in, and the merge is the normal one:
+#
+#   push to main  — publishes whenever package.json names a version that has no release yet.
+#                   scripts/release.sh opens the bump PR; merging it is the whole ceremony.
+#   push a v* tag — the manual escape hatch, for re-cutting or publishing out of band.
+#
+# Deliberately ONE job for both. A tag pushed by GITHUB_TOKEN does not start another workflow run,
+# so a "tag here, react over there" split would create the tag and then quietly never publish.
 on:
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
@@ -14,18 +21,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Tag must match the version in the manifests
+      - name: Resolve the version, and stop if it is already out
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          tag=${GITHUB_REF_NAME#v}
           pkg=$(jq -r .version package.json)
-          [ "$tag" = "$pkg" ] || {
-            echo "::error::tag v$tag does not match package.json $pkg"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            v=${GITHUB_REF_NAME#v}
+            [ "$v" = "$pkg" ] || {
+              echo "::error::tag v$v does not match package.json $pkg"; exit 1; }
+          else
+            v=$pkg
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          # Idempotent: every push to main runs this job, and all but the release commit are a
+          # ~10s no-op. Cheaper than diffing package.json against the previous commit, and it also
+          # makes a re-run or a manual tag on an already-published version harmless.
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$v is already released — nothing to do."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # The release notes ARE the changelog section. One source, so they cannot disagree.
       - name: Extract this version's changelog section
+        if: steps.v.outputs.publish == 'true'
         run: |
-          v=${GITHUB_REF_NAME#v}
+          v='${{ steps.v.outputs.value }}'
           awk -v v="$v" '
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
             on && /^## \[/         { exit }
@@ -35,7 +62,13 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $v"; exit 1; }
           cat notes.md
 
+      # `gh release create` creates the tag itself when it does not exist, so the branch-push path
+      # needs no separate git tag + push — and the tag-push path finds it already there.
       - name: Publish
+        if: steps.v.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+        run: |
+          v='${{ steps.v.outputs.value }}'
+          gh release create "v$v" --title "v$v" --notes-file notes.md --target "$GITHUB_SHA"
+          echo "::notice::published v$v"

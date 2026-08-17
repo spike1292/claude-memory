@@ -22,6 +22,10 @@ jobs:
       - name: Syntax-check every shell hook and script
         run: for f in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do bash -n "$f"; done
 
+      # The release version is derived from commit shape; a wrong branch ships the wrong number.
+      - name: Release version derivation
+        run: scripts/release.sh --selftest
+
       # A synthetic vault, never a real one. memory-semantic's self-test asserts against real
       # notes on purpose and hard-fails when it finds none — an empty run must not read as a pass.
       - name: Build a synthetic vault
@@ -66,7 +70,9 @@ jobs:
           v=$(jq -r .version package.json)
           for spec in '.claude-plugin/plugin.json:.version' \
                       '.claude-plugin/marketplace.json:.metadata.version' \
-                      '.claude-plugin/marketplace.json:.plugins[0].version'; do
+                      '.claude-plugin/marketplace.json:.plugins[0].version' \
+                      'package-lock.json:.version' \
+                      'package-lock.json:.packages[""].version'; do
             f=${spec%%:*}; q=${spec#*:}
             got=$(jq -r "$q" "$f")
             echo "$f $q = $got"
