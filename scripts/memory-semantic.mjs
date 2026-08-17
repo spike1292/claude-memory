@@ -75,6 +75,16 @@ const DB_PATH = path.join(DB_DIR, `semantic-${SLUG}-${MODEL_KEY}.db`);
 // model) is what a duplicate must not pay for.
 const SERVE_SOCK = path.join(paths.stateDir('run'), `search-${MODEL_KEY}.sock`);
 if (flag('--serve')) {
+  // --serve opens no project DB (see below), so every other mode would dereference a null handle
+  // and crash where it used to print usage. Unreachable from any hook — nothing passes both — but a
+  // crash is the wrong answer to a typo.
+  const alsoAsked = ['--index', '--coverage', '--dupes', '--clusters', '--check-embedding'].filter(
+    flag,
+  );
+  if (alsoAsked.length) {
+    console.log(`--serve cannot be combined with ${alsoAsked.join(' ')} — run them separately.`);
+    process.exit(1);
+  }
   if (await socketIsLive(SERVE_SOCK)) {
     console.log(`already serving ${MODEL_KEY} on ${SERVE_SOCK}`);
     process.exit(0);

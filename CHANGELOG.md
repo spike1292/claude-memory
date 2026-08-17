@@ -26,16 +26,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
   process alive, next query reloads in 800ms and answers correctly. Because the process is then
   ~150MB rather than ~1.4GB, `serveIdleMs` goes the other way, **5 min → 30 min**: it now guards a
   cheap process, and keeping the socket, indexes and BM25 tokens warm is worth more than the exit.
-- **One resident server total, not one per project, and it idles out in 5 minutes rather than 30.**
-  A warm `--serve` costs 800MB-1.4GB — node, onnxruntime and the q8 weights — and there was one per
-  indexed repo, so three projects meant ~2.4-4.2GB resident while you prompt in one of them. A
-  starting server now asks the others to quit over their own sockets (no pidfile, no lock, nothing
-  to leave stale); a server for the same project on a different model is left alone, since that is a
-  model change and every mode except `--index` already refuses it. Last-writer-wins with no
-  coordination: two servers for different projects starting in the same instant can evict each other
-  and both die, which costs one keyword-only recall and self-heals on the next prompt.
-  `MEMORY_SERVE_IDLE_MS` now also reads `serveIdleMs` from `config.json`, because hooks are what set
-  it and an env value written mid-session does not reach the session that wrote it.
+- **`serveIdleMs` is configurable, not env-only.** `MEMORY_SERVE_IDLE_MS` now also reads
+  `serveIdleMs` from `config.json`, because hooks are what set it and an env value written
+  mid-session does not reach the session that wrote it. Garbage and non-positive values fall back
+  rather than disabling the timer, which is how a 1.4GB process becomes permanent. (An intermediate
+  step in this release had one server per project evicting the others at a 5-minute process
+  timeout; the model-keyed server above replaced it, and 5 minutes is now the MODEL timer while the
+  process — cheap once the model unloads — waits 30.)
 
 - **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
   `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and
