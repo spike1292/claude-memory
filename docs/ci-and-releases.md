@@ -21,7 +21,7 @@ below is what stands in for a second reader — it comments, it never approves.
 - the self-tests on **Node 22** (the floor `engines` promises) **and 24**
 - `bash -n` over every shell file
 - **no Python dependency** — fails on any `.py` file or shell script calling `python`
-- **version agreement** across all four places it is written: `package.json`,
+- **version agreement** across every place it is written: `package.json`, `package-lock.json`,
   `.claude-plugin/plugin.json`, and both `.metadata.version` and `.plugins[0].version` in
   `.claude-plugin/marketplace.json`
 
@@ -48,17 +48,19 @@ Both authenticate with `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `A
 A workflow whose guard names a different secret than the action consumes will skip forever *and
 report success* — that happened here, and the skip guard hid it.
 
-### A PR that edits a workflow file does not get reviewed
+### A PR that edits `claude-review.yml` does not get reviewed
 
-`claude-code-action` runs only when the workflow is byte-identical to the copy on the default
-branch — otherwise a PR could rewrite the workflow and steal the token. On a mismatch it logs a
-warning and **exits success**, so the check is green and no review exists.
+`claude-code-action` runs only when **its own** workflow file is byte-identical to the copy on the
+default branch — otherwise a PR could rewrite the workflow and steal the token. On a mismatch it
+logs a warning and **exits success**, so the check is green and no review exists.
 
 Confirm with `Exiting due to workflow validation skip` in the job log before investigating anything
 else.
 
-Consequence worth planning around: **CI changes are exactly the changes that never get a second
-reader.** Review those by hand.
+**The check is per-file, not per-PR** — corrected 2026-08-17, having first been written down the
+broader way. Evidence: #2 and #4 both touched `claude-review.yml` and were skipped; #6 changed
+`ci.yml` and `release.yml`, did not touch the reviewer's own file, and got a full 3-minute review
+that found two real defects. So only changes to `claude-review.yml` itself go unreviewed.
 
 ## Releasing
 
@@ -67,14 +69,43 @@ Changelog format. The release notes are generated from that section verbatim, so
 place the story gets written.
 
 ```bash
-scripts/release.sh 0.1.4      # bumps all four versions, closes Unreleased, opens the PR
-# merge the PR, then:
-git switch main && git pull
-git tag v0.1.4 && git push origin v0.1.4
+scripts/release.sh          # version derived from the commits since the last tag
+scripts/release.sh 0.3.0    # or state it outright
 ```
 
-**The tag publishes, not the merge.** `.github/workflows/release.yml` checks the tag against
-`package.json`, extracts that version's changelog section, and creates the GitHub release from it.
+That opens a PR bumping every version field and closing `[Unreleased]`. **Merging it publishes the
+release** — `release.yml` sees a version on `main` with no release yet, creates the tag, and
+publishes the `[0.3.0]` changelog section as the notes. No manual tagging.
 
-Never bump versions by hand — `scripts/release.sh` writes all four and CI fails the PR if they
-disagree.
+### How the version is chosen
+
+From the conventional commits since the last tag, so the number follows from the work:
+
+| in the range | bump |
+| --- | --- |
+| any `!:` or `BREAKING CHANGE`, at 1.0 and above | major |
+| any `!:` or `BREAKING CHANGE`, below 1.0 | minor — semver lets 0.x change anything |
+| any `feat:` | minor |
+| anything else (`fix`, `perf`, `chore`, `docs`, `ci`) | patch |
+
+`scripts/release.sh --selftest` covers each path with throwaway git repos — 13 cases, including
+that `feat:` must be anchored at the start of a subject, that `perf:` is not a feature, that
+`0.2.10` bumps to `0.2.11` numerically rather than by string, and that the 0.x carve-out stops
+applying at 1.0 (`1.2.9` + a breaking change is `2.0.0`, not `1.3.0`).
+
+### Deliberately not release-please or semantic-release
+
+Both generate the changelog from commit subjects. Here **the changelog is the release notes** —
+hand-written, and the only place the reasoning behind a change is recorded. v0.2.0's notes run to
+97 lines of *why*; the equivalent generated list would be a dozen commit titles. Deriving the
+version number is useful. Generating the prose would be a downgrade.
+
+### Escape hatch
+
+Pushing a `v*` tag by hand publishes too, and is checked against `package.json` first. Useful for
+re-cutting. Publishing is idempotent: the job runs on every push to `main` and does nothing —
+about ten seconds — when the version already has a release.
+
+Never bump versions by hand. `scripts/release.sh` writes all five fields (`package.json`,
+`plugin.json`, two in `marketplace.json`, and `package-lock.json`) and CI fails the PR if they
+disagree. `package-lock.json` sat at 0.1.0 through three releases before it was covered.

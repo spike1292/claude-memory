@@ -149,9 +149,11 @@ fires SessionStart again.
 - Porting between the two runtimes is not mechanical. JS `\w` is ASCII-only where Python's is
   unicode-aware (so slugs need `\p{L}\p{N}` with the `u` flag), and `toISOString()` is UTC where
   `date.today()` is local — note filenames are dated, so that one is visible.
-- Version is written in four places — `package.json`, `.claude-plugin/plugin.json`, and both
-  `.metadata.version` and `.plugins[0].version` in `.claude-plugin/marketplace.json`. Never bump
-  them by hand; `scripts/release.sh` does all four and CI fails the PR if they disagree.
+- Version is written in five places — `package.json`, `package-lock.json`,
+  `.claude-plugin/plugin.json`, and both `.metadata.version` and `.plugins[0].version` in
+  `.claude-plugin/marketplace.json`. Never bump them by hand; `scripts/release.sh` writes all five
+  and CI fails the PR if they disagree. `package-lock.json` was the one that drifted, unnoticed,
+  through three releases.
 
 ## Working on this repo
 
@@ -163,14 +165,15 @@ git switch -c fix/short-description
 git push -u origin HEAD && gh pr create --fill
 ```
 
-Everything else — what CI checks, the two review workflows, why a PR that edits a workflow file
-never gets reviewed, and the release process — is in
+Everything else — what CI checks, the two review workflows, why a PR that edits `claude-review.yml`
+never gets reviewed (per-file, so `ci.yml` edits *are* reviewed), and the release process — is in
 [docs/ci-and-releases.md](docs/ci-and-releases.md).
 
 Three of those matter while you are still editing:
 
 - **`claude-review.yml`'s prompt carries this repo's invariants. When a rule here changes, change
   it there too.**
-- **Never bump versions by hand.** `scripts/release.sh` writes all four; CI fails on drift.
+- **Never bump versions by hand.** `scripts/release.sh` writes all five; CI fails on drift.
+- **Merging the release PR publishes.** There is no manual tagging step.
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
   release notes verbatim.

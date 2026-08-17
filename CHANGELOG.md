@@ -9,6 +9,33 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **Merging the release PR now publishes the release.** `release.yml` also triggers on pushes to
+  `main` and publishes whenever `package.json` names a version with no release yet, so the manual
+  `git tag && git push` step is gone. One job creates the tag and the release together, because a
+  tag pushed by `GITHUB_TOKEN` does not start another workflow run — a "tag here, react there"
+  split would have created the tag and then silently never published. Idempotent: the job runs on
+  every push to `main` and is a ~10 s no-op when the version is already out. Pushing a `v*` tag by
+  hand still works as an escape hatch.
+- **`scripts/release.sh` derives the version from the conventional commits since the last tag** —
+  a breaking marker (`!:` / `BREAKING CHANGE`) bumps the major, except below 1.0 where semver lets
+  anything change and it bumps the minor; any `feat:` bumps the minor; everything else the patch. Pass a version to override. `--selftest` covers each path,
+  including that `feat:` must be anchored at the start of a subject and that `perf:` is not a
+  feature. Not release-please or semantic-release: those generate the changelog from commit
+  subjects, and here the changelog *is* the release notes — deriving the number is useful,
+  generating the prose would be a downgrade.
+- Corrected the rule for when a PR goes unreviewed: it is **per workflow file**, not per PR. Only
+  a change to `claude-review.yml` itself blocks its review; editing `ci.yml` or `release.yml` is
+  reviewed normally. The broader claim was written down first and was wrong.
+- `release.yml` passes the resolved version through `env` rather than splicing `${{ }}` into the
+  script text, which is the standard Actions script-injection shape, and `scripts/release.sh
+  --selftest` moved out of the Node matrix (it is pure bash and was running twice per push).
+- `release.yml` runs under a `concurrency: release` group, so two release-worthy merges landing
+  seconds apart serialise instead of racing on `gh release create`.
+- The CI version check covers `package-lock.json` as well, which had silently sat at 0.1.0 through
+  three releases while the four manifest fields moved to 0.1.3.
+
 ## [0.2.0] - 2026-08-17
 
 ### Removed
