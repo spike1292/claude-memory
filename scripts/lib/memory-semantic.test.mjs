@@ -11,6 +11,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
@@ -25,6 +26,7 @@ import {
   fuseReserved,
   lexTokens,
   samefolderPairs,
+  socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
 
@@ -297,4 +299,30 @@ test('real notes chunk cleanly — and the check names the project it got', (t) 
   // 345-note check to 6 while still printing a pass. Coverage that depends on cwd must say which
   // cwd it got and how much it actually covered, or a shrunken run reads as a clean one.
   t.diagnostic(`chunk-checked ${checked} real notes in ${project}`);
+});
+
+// socketIsLive — the guard that keeps one bge-m3 per slug+model instead of six.
+//
+// Costs nothing to test and everything to get wrong in the safe direction: a false "dead" makes a
+// duplicate steal the socket and orphan a live server holding ~800MB.
+test('socketIsLive: live socket, stale file, and absent path', async () => {
+  const net = await import('node:net');
+  // Short base dir on purpose — macOS sun_path caps a unix socket path at 104 bytes, and the
+  // scratchpad paths this repo is usually tested from blow straight past it with EINVAL.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sock-'));
+  const sock = path.join(dir, 's');
+
+  assert.equal(await socketIsLive(path.join(dir, 'nope')), false, 'absent path is not live');
+
+  const server = net.createServer(() => {});
+  await new Promise((r) => server.listen(sock, r));
+  assert.equal(await socketIsLive(sock), true, 'a listening socket must read as live');
+
+  // Close the server but leave the file: exactly what a SIGKILLed serve leaves behind, and the
+  // only case that may be unlinked.
+  await new Promise((r) => server.close(r));
+  fs.writeFileSync(sock, ''); // close() removes it; recreate the leftover
+  assert.equal(await socketIsLive(sock), false, 'a socket file nobody is bound to is not live');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

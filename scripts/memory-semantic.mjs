@@ -40,6 +40,7 @@ import {
   lexTokens,
   bm25,
   fuseRRF,
+  socketIsLive,
 } from './lib/memory-semantic.mjs';
 
 // ---------------------------------------------------------------- setup
@@ -61,6 +62,21 @@ const VAULT = val('--vault') || paths.vault();
 const SLUG = val('--slug') || paths.projectKey(repo);
 const DB_DIR = paths.stateDir('db');
 const DB_PATH = path.join(DB_DIR, `semantic-${SLUG}-${MODEL_KEY}.db`);
+
+// Refuse to become a second server for this slug+model — see socketIsLive(). This sits above the
+// DB open on purpose: everything below it (index rows, then the model) is what a duplicate must
+// not pay for.
+const SERVE_SOCK = path.join(paths.stateDir('run'), `search-${SLUG}-${MODEL_KEY}.sock`);
+if (flag('--serve')) {
+  if (await socketIsLive(SERVE_SOCK)) {
+    console.log(`already serving ${SLUG} / ${MODEL_KEY} on ${SERVE_SOCK}`);
+    process.exit(0);
+  }
+  try {
+    fs.unlinkSync(SERVE_SOCK); // stale file from a server that died without its SIGTERM handler
+  } catch {}
+}
+
 const db = new DatabaseSync(DB_PATH);
 db.exec(`CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY, note TEXT, layer TEXT, file TEXT, mtime INTEGER,
@@ -97,9 +113,22 @@ async function embed(texts) {
   // so the eval harness (28 questions in one padded batch) computed different vectors than a live
   // session (one question). With batch 1 the padding is gone and both sides agree by construction.
   const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
+  // Clamp HERE for the same reason the batch is pinned here: both sides must embed identically.
+  // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3) but nothing capped a QUERY, and the
+  // recall hook embeds the user's whole prompt verbatim. A pasted stack trace went in at 57k chars
+  // — 32x longer than anything in the index, so it was also being compared against a length the
+  // index never contains.
+  //
+  // The memory cost is the sharp end. Attention is O(seq^2) per layer and bge-m3 accepts 8192
+  // tokens across 24 layers, so one long prompt allocates multi-GB activations — and onnxruntime's
+  // arena allocator keeps whatever high-water mark it reaches for the life of the process, which
+  // for --serve is 30 idle minutes. Measured 2026-08-17 on a 16GB machine: two resident servers
+  // holding 8.8G of dirty MALLOC_LARGE each, ~7.4G of it compressed; killing them returned it.
+  // A server that has only ever seen <=1800-char inputs stays at ~450M.
+  const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
   const vecs = [];
-  for (let i = 0; i < texts.length; i += B) {
-    const out = await embedder(texts.slice(i, i + B), {
+  for (let i = 0; i < clamped.length; i += B) {
+    const out = await embedder(clamped.slice(i, i + B), {
       pooling: PROFILE.pool ?? 'mean',
       normalize: true,
     });
@@ -544,10 +573,8 @@ function searchOne(q, qvec, k) {
 // daemon nobody remembers starting; the hook respawns it on demand.
 if (flag('--serve')) {
   const net = await import('node:net');
-  const sockPath = path.join(paths.stateDir('run'), `search-${SLUG}-${MODEL_KEY}.sock`);
-  try {
-    fs.unlinkSync(sockPath);
-  } catch {}
+  const sockPath = SERVE_SOCK; // probed and cleaned above; do NOT unlink again — by now another
+  // server may legitimately own the path, and stealing it is what made these multiply.
   const IDLE_MS = Number(process.env.MEMORY_SERVE_IDLE_MS ?? 30 * 60 * 1000);
   let idle = setTimeout(() => process.exit(0), IDLE_MS);
   const bump = () => {
@@ -597,6 +624,18 @@ if (flag('--serve')) {
       }
     });
     sock.on('error', () => {});
+  });
+  // The probe above closes the window to ~1ms, not to zero: loading the index takes seconds, and
+  // two hooks firing in that gap both get past it. Losing the bind race is not an error — the other
+  // server is serving. Without this the loser died on an unhandled 'error' event, and since it is
+  // spawned detached with stdio ignored, the stack trace went nowhere.
+  server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+      console.log(`already serving ${SLUG} / ${MODEL_KEY} (lost bind race)`);
+      process.exit(0);
+    }
+    console.error(`serve failed: ${e.message}`);
+    process.exit(1);
   });
   server.listen(sockPath, () =>
     console.log(

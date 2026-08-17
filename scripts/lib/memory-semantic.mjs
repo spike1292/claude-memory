@@ -40,9 +40,48 @@
 // ponytail: linear cosine scan over a few thousand 384-d vectors is ~5ms. No ANN index, no server.
 
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 import * as paths from '../../hooks/lib/paths.mjs';
+
+// Is something already listening on this unix socket?
+//
+// One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
+// SIX --serve processes at once, each holding a full model — 797MB-1.5GB phys_footprint apiece,
+// mostly swapped out, so they cost the machine without showing up in RSS.
+//
+// They pile up because --serve used to unlink the socket unconditionally and rebind. The previous
+// server kept running with a listening fd on an unlinked inode: reachable by nobody, exiting only
+// when its 30m idle timer fired. And a redundant spawn is the NORMAL case, not an edge one —
+// memory-recall.mjs spawns whenever it has no answer, which includes its 700ms timeout expiring
+// during the ~1.5s warm-up. Every prompt in that window forked another model.
+//
+// Probing costs ~1ms and has to happen BEFORE the index load and the warm-up, or a duplicate has
+// already paid for both by the time it discovers it is redundant.
+//
+// A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
+// might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
+// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
+export function socketIsLive(sockPath, timeoutMs = 1000) {
+  if (!fs.existsSync(sockPath)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const c = net.createConnection(sockPath);
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        c.destroy();
+      } catch {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(true), timeoutMs);
+    c.on('connect', () => done(true));
+    c.on('error', () => done(false));
+  });
+}
 
 // Model profiles. Embedding models are asymmetric in different ways — BGE-en wants an instruction
 // on the query only, E5 wants `query:`/`passage:` on both sides, bge-m3 wants neither. Getting the

@@ -9,6 +9,30 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
+  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
+  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
+  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
+  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
+  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
+  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
+  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
+  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
+  detached with stdio ignored, the stack trace went nowhere.
+- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
+  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but nothing capped a query, and
+  the recall hook embeds the user's whole prompt verbatim — a pasted stack trace went in at 57k
+  chars, 32x longer than anything in the index, so it was also being compared against a length the
+  index never contains. The memory cost is the sharp end: attention is O(seq²) per layer over 24
+  layers, and onnxruntime's arena keeps whatever high-water mark it reaches for the process
+  lifetime, which for `--serve` is 30 idle minutes. Two resident servers were each holding **8.8G of
+  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
+  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
+  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
+  that had 70MB free.
+
 ### Changed
 
 - **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
