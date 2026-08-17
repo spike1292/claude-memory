@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-17
+
 ### Removed
 
 - **The Python dependency.** `hooks/distill-session.py` is now `hooks/distill-session.mjs`. Node
@@ -139,7 +141,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/spike1292/claude-memory/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/spike1292/claude-memory/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/spike1292/claude-memory/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/spike1292/claude-memory/compare/v0.1.0...v0.1.1
