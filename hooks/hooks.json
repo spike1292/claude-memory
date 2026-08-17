@@ -11,13 +11,13 @@
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/insights-surface.sh\"",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/hooks/insights-surface.mjs\" || exit 0",
             "timeout": 10,
             "statusMessage": "Surfacing past mistakes"
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/memory-link-lint.sh\"",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/hooks/memory-link-lint.mjs\" || exit 0",
             "timeout": 10,
             "statusMessage": "Linting memory note graph"
           },
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/validate-note.sh\"",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/hooks/validate-note.mjs\" || exit 0",
             "timeout": 10
           }
         ]

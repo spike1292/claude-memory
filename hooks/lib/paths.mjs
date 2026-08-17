@@ -67,19 +67,164 @@ export function stateDir(name) {
 
 const keyCache = new Map();
 
-/** Stable per-project identifier. Delegates to vault-env.sh so there is one implementation. */
+/**
+ * Locate the git config that decides this dir's project key, for cache validation only.
+ *
+ * Returns the config path (cacheable, validated by its mtime), `undefined` when there is no repo
+ * at all (cacheable — the key is then a pure function of the path), or `null` when `.git` is a
+ * FILE, i.e. a worktree or submodule, whose config lives somewhere this walk cannot cheaply
+ * confirm (not cacheable — always ask the shell).
+ *
+ * This is NOT a second implementation of project_key: it never derives a key, only answers
+ * "has anything that could change the key been touched?". Getting it wrong costs a cache miss,
+ * never a wrong answer, because vault-env.sh remains the only thing that computes the key.
+ */
+function gitConfigFor(dir) {
+  let d = path.resolve(dir);
+  for (;;) {
+    const g = path.join(d, '.git');
+    try {
+      return fs.statSync(g).isDirectory() ? path.join(g, 'config') : null;
+    } catch { /* not here — walk up */ }
+    const parent = path.dirname(d);
+    if (parent === d) return undefined;
+    d = parent;
+  }
+}
+
+const KEY_CACHE_FILE = () => path.join(memoryHome(), 'cache', 'project-keys.json');
+
+function readKeyCache() {
+  try { return JSON.parse(fs.readFileSync(KEY_CACHE_FILE(), 'utf8')); } catch { return {}; }
+}
+
+function writeKeyCache(all) {
+  // Atomic: several hooks can fire at once, and a half-written cache must not become a parse
+  // error every session afterwards. A failed write is fine — it just costs the next lookup.
+  try {
+    const f = KEY_CACHE_FILE();
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = `${f}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(all));
+    fs.renameSync(tmp, f);
+  } catch { /* best effort */ }
+}
+
+/**
+ * Stable per-project identifier. Delegates to vault-env.sh so there is one implementation.
+ *
+ * That delegation costs a bash+git subprocess — measured 72ms on 2026-08-17, which was the single
+ * largest cost in the per-prompt recall hook and in the per-write validate-note hook, and three
+ * times what switching the whole runtime to Bun would have saved. Short-lived hooks cannot reuse
+ * the in-process Map, so the answer is cached on disk and validated against a stamp taken from the
+ * git config that determines it: `git remote set-url` rewrites that file, so a changed remote is a
+ * miss on the next call rather than a stale key forever.
+ *
+ * `hooks/lib/vault-env.sh` reads this same cache, which is why the stamp is a string both `stat`
+ * and `fs.statSync` can produce identically. See the stamp construction below.
+ */
 export function projectKey(dir = process.cwd()) {
   if (keyCache.has(dir)) return keyCache.get(dir);
+
+  const cfg = gitConfigFor(dir);
+  let stamp = null;                       // null => do not cache (worktree/submodule)
+  if (cfg === undefined) {
+    stamp = '0';                          // no repo: key is a pure function of the path
+  } else if (typeof cfg === 'string') {
+    // "<whole seconds>:<size>:<inode>", because vault-env.sh reads this same file and must compute
+    // the identical value: `stat` yields whole seconds on both BSD and GNU, and a float millisecond
+    // stamp would mismatch every time, silently making the shell side a permanent cache miss.
+    //
+    // Seconds alone are not enough, and the hole they leave is permanent rather than momentary: a
+    // `git remote set-url` in the same second as the cached stamp is never noticed, because nothing
+    // touches .git/config again afterwards. Size covers most of that; **inode covers the rest**,
+    // since git rewrites config atomically (temp file + rename) and so hands out a new inode on
+    // every write — verified 2026-08-17 for a same-second, byte-identical-length URL change, where
+    // mtime and size were both unchanged and the inode still moved.
+    try {
+      const st = fs.statSync(cfg);
+      stamp = `${Math.floor(st.mtimeMs / 1000)}:${st.size}:${st.ino}`;
+    } catch { stamp = null; }
+  }
+
+  const all = stamp === null ? null : readKeyCache();
+  const hit = all?.[dir];
+  if (hit && hit.stamp === stamp && typeof hit.key === 'string') {
+    keyCache.set(dir, hit.key);
+    return hit.key;
+  }
+
   const out = execFileSync('bash', ['-c', `. "$0"; project_key "$1"`, vaultEnvSh, dir], {
     encoding: 'utf8',
   }).trim();
   keyCache.set(dir, out);
+  if (all) writeKeyCache({ ...all, [dir]: { key: out, stamp } });
   return out;
 }
 
 /** Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after. */
 export function legacyKey(dir = process.cwd()) {
   return dir.replace(/\//g, '-');
+}
+
+// ---------------------------------------------------------------- selftest
+// `node hooks/lib/paths.mjs --selftest`. Guarded on argv[1] as well as the flag: this module is
+// imported by every hook, and a bare flag check would fire inside whatever invoked one.
+if (process.argv[1] && process.argv.includes('--selftest')
+    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const assert = await import('node:assert').then((m) => m.default);
+  const { execFileSync: run } = await import('node:child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paths-'));
+  process.env.CLAUDE_MEMORY_HOME = path.join(tmp, 'state');
+
+  // The shell is the oracle: every assertion compares the cache against vault-env.sh itself,
+  // never against a hard-coded string, so this cannot drift away from the implementation.
+  const shell = (d) => run('bash', ['-c', '. "$0"; project_key "$1"', vaultEnvSh, d],
+    { encoding: 'utf8' }).trim();
+  // A fresh process per call — short-lived hooks are the whole reason the disk cache exists,
+  // and an in-process Map would hide every bug this is meant to catch.
+  const fresh = (d) => run(process.execPath, ['--input-type=module', '-e',
+    `const p=await import(${JSON.stringify(fileURLToPath(import.meta.url))});`
+    + `console.log(p.projectKey(${JSON.stringify(d)}))`], { encoding: 'utf8', env: process.env }).trim();
+
+  const repo = path.join(tmp, 'repo');
+  fs.mkdirSync(repo);
+  run('git', ['init', '-q', repo]);
+  run('git', ['-C', repo, 'remote', 'add', 'origin', 'https://gitlab.example.com/Team/Alpha.git']);
+  assert.strictEqual(fresh(repo), shell(repo), 'cold lookup must match the shell');
+  assert.strictEqual(fresh(repo), shell(repo), 'cached lookup must match the shell');
+
+  // The one that matters: a changed remote changes the key, and the cache must not outlive it.
+  // This runs in the SAME SECOND as the write above, which is the point — whole-second mtime alone
+  // does not notice it, and would then never notice it, because nothing touches .git/config again.
+  // Size is what discriminates here. This assertion failed for real when the stamp was seconds-only.
+  run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beta.git']);
+  assert.strictEqual(fresh(repo), shell(repo), 'stale key served after the remote changed');
+  assert.ok(fresh(repo).endsWith('beta'), 'same-second remote change must invalidate');
+
+  // The nastiest shape: same second AND identical byte length, so neither mtime nor size moves.
+  // Only the inode does. This is the case a seconds-only stamp would have missed forever.
+  run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beto.git']);
+  assert.strictEqual(fresh(repo), shell(repo), 'shell and node must agree after a same-length change');
+  assert.ok(fresh(repo).endsWith('beto'),
+    'same-second, same-length remote change must invalidate — this is what the inode is for');
+
+  const sub = path.join(repo, 'a', 'b');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.strictEqual(fresh(sub), shell(sub), 'a subdirectory must key to the same project');
+
+  const plain = path.join(tmp, 'plain');
+  fs.mkdirSync(plain);
+  assert.strictEqual(fresh(plain), shell(plain), 'non-git dir must fall back to the path slug');
+
+  // A corrupt cache must degrade to the shell, never throw: this runs inside hooks.
+  const cf = path.join(process.env.CLAUDE_MEMORY_HOME, 'cache', 'project-keys.json');
+  fs.mkdirSync(path.dirname(cf), { recursive: true });
+  fs.writeFileSync(cf, '{ not json');
+  assert.strictEqual(fresh(repo), shell(repo), 'corrupt cache must fall back, not throw');
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+  console.log('selftest: 9 assertions passed (project-key cache vs vault-env.sh)');
 }
 
 /**

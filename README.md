@@ -45,48 +45,16 @@ distiller used, so on a stock Mac `Insights/` silently stopped being written.
 
 ### Optional integrations
 
-Both are separate tools with their own indexes. Neither is installed by this plugin, neither is
-required, and **the plugin's own retrieval path does not read from either.**
+Two separate tools, each with its own index. **Neither is installed by this plugin, neither is
+required, and neither is on the plugin's retrieval path.**
 
 | | What it adds | Without it |
 | --- | --- | --- |
-| [`context-mode`](#context-mode-ctx_search) CLI | `ctx_search` — a second, BM25/FTS5 index over the vault | `ctx_search` goes stale; `memory-semantic.mjs` is unaffected |
-| `codebase-memory-mcp` server | the L4 `Graph/` layer and `/memory:graph-report` | no L4 digest; L1–L3 are unaffected |
+| `context-mode` CLI | `ctx_search` — a second BM25/FTS5 index over the vault | `ctx_search` goes stale; recall unaffected |
+| `codebase-memory-mcp` server | the L4 `Graph/` layer and `/memory:graph-report` | no L4 digest; L1–L3 unaffected |
 
-#### context-mode (`ctx_search`)
-
-The SessionEnd distiller refreshes context-mode's index so notes written this session are
-searchable next session, and several commands (`/memory:health`, `/memory:challenge`,
-`/memory:eval`) use `ctx_search` as their keyword arm.
-
-It is **not** what powers recall. `scripts/memory-semantic.mjs` carries its own vector arm *and*
-its own BM25 arm in its own SQLite file, and that is the primary retrieval path. When
-`context-mode` is not on PATH the distiller falls back to refreshing that index instead, so the
-notes you just wrote are still retrievable — only `ctx_search` drifts.
-
-```bash
-npm i -g context-mode     # reinstall for the Node version you are now on
-/memory:prune             # rebuild the index to catch up what was missed
-```
-
-The CLI installs into the *current Node version's* bin dir, so an `fnm`/`nvm` version switch drops
-it from PATH. That used to fail silently; both `/memory:doctor` and the SessionStart hook now say
-so, and say precisely what is degraded rather than implying the vault went dark.
-
-#### codebase-memory-mcp (the `Graph/` layer)
-
-L4 is the only layer that is not written by this plugin. `/memory:graph-report` asks the
-`codebase-memory-mcp` MCP server for a structural digest of the *code* — architecture, call
-graphs, entry points, `search_graph` / `trace_path` / `get_architecture` — and writes it to
-`<vault>/Graph/<project>/GRAPH_REPORT.md`. `graph-staleness-check.sh` regenerates it in the
-background once the repo has commits newer than the report.
-
-Configure the server in your Claude Code MCP settings first; it is not a CLI, so nothing on PATH
-can detect it. If you never configure it, **skip L4 entirely** — no hook fails, `graph-staleness-check`
-stays silent because it never auto-generates a first report, and L1–L3 work exactly as documented.
-
-Generated bodies sit between `<!-- @generated -->` sentinels so hand-written notes under the
-trailing `## Notes` heading survive a regeneration.
+Setup, failure modes, and what each absence actually costs:
+**[docs/optional-integrations.md](docs/optional-integrations.md)**.
 
 ## Configuration
 
@@ -233,7 +201,7 @@ Isolate `HOME`, not just `CLAUDE_VAULT`, when testing.
 
 **Duplicate notes keep reappearing after you merge them.** The distiller reconciles on write
 (token-Jaccard ≥ 0.45, same folder) and updates the existing note instead of adding a near-duplicate.
-If it recurs, the two titles score below the threshold; `hooks/distill-session.py` has the knob and
+If it recurs, the two titles score below the threshold; `hooks/distill-session.mjs` has the knob and
 a self-test with real cases.
 
 ## Known gaps
@@ -287,8 +255,13 @@ node scripts/memory-eval.mjs     --selftest
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest
 node hooks/distill-session.mjs   --selftest
+node hooks/lib/paths.mjs         --selftest    # project-key cache, checked against vault-env.sh
 scripts/doctor.sh
 ```
+
+**Node only — Bun does not work here.** Bun has no `node:sqlite`, which the search engine and the
+recall hook are built on; the native deps load fine. Full evaluation with numbers:
+[docs/decisions/2026-08-17-bun.md](docs/decisions/2026-08-17-bun.md).
 
 Nothing resolves an absolute install path: bash uses `BASH_SOURCE` and node uses
 `import.meta.url`. So a dev checkout, a symlink, and the version-pinned plugin cache all work
@@ -299,23 +272,14 @@ SessionStart hook writes.
 ### Contributing
 
 `main` is protected — branch, push, open a PR. CI runs the self-tests on Node 22 and 24 against a
-generated synthetic vault (never a real one) and must be green to merge.
+generated synthetic vault (never a real one) and must be green to merge. Put a note under
+`## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md) in the same PR; that section becomes the
+release notes verbatim.
 
-Put a note under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md) in the same PR as the change.
-That section becomes the release notes verbatim, so it is the only place the change gets described.
+Branch protection, the two review workflows, why a PR that edits a workflow file never gets
+reviewed, and the release process: **[docs/ci-and-releases.md](docs/ci-and-releases.md)**.
 
-### Releasing
-
-```bash
-scripts/release.sh 0.1.4      # bumps every version field, closes Unreleased, opens the PR
-# merge it, then:
-git switch main && git pull
-git tag v0.1.4 && git push origin v0.1.4
-```
-
-The tag publishes the release, not the merge. Version lives in four places (`package.json`,
-`.claude-plugin/plugin.json`, and two fields in `.claude-plugin/marketplace.json`); the script
-writes all four and CI fails the PR if they ever drift apart.
+Design notes and decision records live in **[docs/](docs/)**.
 
 ## License
 

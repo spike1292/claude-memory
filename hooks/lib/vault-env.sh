@@ -87,8 +87,67 @@ memory_home() {
 # /Users/jane/code/Frontend both key to gitlab.example.com-team-frontend.
 # Falls back to the repo dir name, then to the legacy cwd-slug for non-git dirs.
 # Credentials embedded in a remote URL are stripped, never keyed on.
+# --- project key cache -------------------------------------------------------
+# `git remote get-url` forks, and that fork measured 40.2ms of vault-memory-sync.sh's 97.7ms —
+# paid again by every other shell hook, every session. paths.mjs already caches the answer in
+# $CLAUDE_MEMORY_HOME/cache/project-keys.json; this reads the SAME file so the shell side stops
+# paying for what Node already resolved.
+#
+# Validation matches paths.mjs exactly: "<whole-second mtime>:<size>:<inode>" of the .git/config
+# that decides the key, "0" when there is no repo at all, and no caching when .git is a FILE
+# (worktree/submodule), where the real config lives somewhere this cheap walk cannot confirm.
+#
+# All three, because seconds alone leave a PERMANENT hole rather than a one-second one: a
+# `git remote set-url` in the same second as the cached stamp is never noticed, since nothing
+# touches .git/config again afterwards. paths.mjs's self-test caught exactly that. Size closes most
+# of it and the inode closes the rest — git rewrites config atomically, so every write lands on a
+# new inode even when mtime and byte length are identical.
+#
+# Every failure path falls through to computing the key for real, so the worst case is a fork —
+# exactly what happened before this existed. jq only: it is already a hard requirement for hooks,
+# and hand-parsing nested JSON with sed to save a fork would be a poor trade.
+# Fork-free on purpose: `dirname` once per parent directory turned a cache lookup meant to AVOID a
+# fork into four of them. Parameter expansion walks the path with no subprocesses at all.
+_git_config_for() {
+  case "$1" in /*) _p=$1 ;; *) _p="$PWD/$1" ;; esac
+  _p=${_p%/}                                 # strip one trailing slash; "" means root
+  while :; do
+    if [ -e "${_p:-}/.git" ]; then
+      [ -d "${_p:-}/.git" ] || return 1      # .git is a file -> worktree/submodule, not cacheable
+      printf '%s' "${_p:-}/.git/config"; return 0
+    fi
+    [ -z "${_p:-}" ] && return 2             # reached root, no repo -> cacheable, stamp 0
+    _p=${_p%/*}
+  done
+}
+
+_stat_stamp() {
+  stat -f '%m:%z:%i' "$1" 2>/dev/null || stat -c '%Y:%s:%i' "$1" 2>/dev/null
+}
+
+# Echoes the cached key, or returns non-zero if there is no usable cache entry.
+project_key_cached() {
+  command -v jq >/dev/null 2>&1 || return 1
+  _cf="$(memory_home)/cache/project-keys.json"
+  [ -f "$_cf" ] || return 1
+  _cfg=$(_git_config_for "$1"); _rc=$?
+  case "$_rc" in
+    0) _want=$(_stat_stamp "$_cfg") || return 1 ;;
+    2) _want=0 ;;
+    *) return 1 ;;
+  esac
+  [ -n "$_want" ] || return 1
+  _got=$(jq -r --arg d "$1" '.[$d] | if type == "object" then "\(.stamp)\t\(.key)" else empty end' \
+    "$_cf" 2>/dev/null) || return 1
+  [ -n "$_got" ] || return 1
+  _stamp=${_got%%	*}; _key=${_got#*	}
+  [ "$_stamp" = "$_want" ] && [ -n "$_key" ] || return 1
+  printf '%s' "$_key"
+}
+
 project_key() {
   _d="${1:-$PWD}"
+  _c=$(project_key_cached "$_d") && [ -n "$_c" ] && { printf '%s' "$_c"; return; }
   _url=$(git -C "$_d" remote get-url origin 2>/dev/null || true)
   if [ -n "$_url" ]; then
     _k=$(printf '%s' "$_url" \

@@ -22,6 +22,10 @@ node scripts/memory-eval.mjs     --selftest    # 9 assertions
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest # 44 assertions
 node hooks/distill-session.mjs   --selftest    # 22 assertions
+node hooks/validate-note.mjs     --selftest    # 24 assertions
+node hooks/insights-surface.mjs  --selftest    # 13 assertions
+node hooks/memory-link-lint.mjs  --selftest    # 17 assertions
+node hooks/lib/paths.mjs         --selftest    # 7 assertions, project-key cache vs vault-env.sh
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
 
@@ -31,7 +35,7 @@ Exercising the real pipeline:
 node scripts/memory-semantic.mjs --index [dir]        # idempotent; --rebuild forces re-embed
 node scripts/memory-semantic.mjs --query "..." [-k 5]
 node scripts/memory-semantic.mjs --coverage | --dupes | --clusters | --check-embedding
-DISTILL_DRYRUN=1 python3 hooks/distill-session.py <transcript> <cwd>   # no LLM call
+DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd>    # no LLM call
 ```
 
 Never point a test at the real vault. Generate a deterministic synthetic one and pass
@@ -57,6 +61,11 @@ There is **no Python.** `distill-session.py` was ported to `distill-session.mjs`
 now imports `paths.mjs` rather than carrying a third copy of the resolution logic, and CI fails if
 a `.py` file or a shell script calling `python` reappears. Everything is bash + Node ≥ 22.5.
 
+**Node only — Bun cannot run this** (`node:sqlite` does not exist in Bun; the native deps are
+*not* the obstacle). Evaluated with numbers in
+[docs/decisions/2026-08-17-bun.md](docs/decisions/2026-08-17-bun.md) — do not re-litigate without
+new ones.
+
 **Settings resolve env → `$CLAUDE_MEMORY_HOME/config.json` → built-in default**, in that order, and
 are read *when the hook runs*. Do not move settings into `~/.claude/settings.json`'s `env` block: a
 value written there mid-session does not reach that session's hooks, and the SessionStart hook will
@@ -70,7 +79,7 @@ because transformers.js v4 ignores `HF_HOME`/`TRANSFORMERS_CACHE` and must be re
 its own `env.cacheDir`.
 
 **Nothing resolves an absolute install path**: bash uses `BASH_SOURCE`, Node uses
-`import.meta.url`, Python uses `__file__`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside
+`import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside
 `hooks/hooks.json` command strings; command bodies fall back to the `$CLAUDE_MEMORY_HOME/plugin-root`
 breadcrumb that `vault-memory-sync.sh` rewrites every session.
 
@@ -97,18 +106,32 @@ never wait on it. Its cosine gate (0.55) is separate from the BM25 gate; the ban
 errs toward abstaining.
 
 **Two optional integrations, neither installed by this plugin, neither on the retrieval path.**
-`context-mode` (a CLI) backs `ctx_search`, a *second* BM25/FTS5 index that `memory-semantic.mjs`
-never reads; when it is absent the distiller falls back to refreshing the plugin's own index, and
-only `ctx_search` freshness is lost. `codebase-memory-mcp` (an MCP server, so PATH cannot detect
-it) backs the L4 `Graph/` layer and `/memory:graph-report`; without it, skip L4 — nothing fails,
-and `graph-staleness-check.sh` stays silent because it never generates a first report.
+`context-mode` backs `ctx_search` (a second index `memory-semantic.mjs` never reads);
+`codebase-memory-mcp` backs the L4 `Graph/` layer. Details in
+[docs/optional-integrations.md](docs/optional-integrations.md).
 
 Do not write code that assumes either is present, and do not describe a missing one as breakage.
 State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
 `context-mode` was gone, which was never true.
 
+**Shell vs Node in hooks: fork count decides, not language.** bash's floor is ~5 ms and Node's
+~40 ms, but a fork costs ~3.5 ms *each*, so a hook that loops over notes belongs in Node while a
+**gate** that decides cheaply and spawns belongs in bash. Numbers, what is ported, and what must
+not be:
+[docs/decisions/2026-08-17-shell-vs-node-hooks.md](docs/decisions/2026-08-17-shell-vs-node-hooks.md).
+
+Three things from it that bite in the moment: **do not port `vault-memory-sync.sh`** (it moves
+files and repoints symlinks in a live vault, and has cost 24 notes once); **quote no timing without
+saying whether the vault was cloud-backed or pinned offline**, which alone moves a hook 166 ms vs
+131 ms; and **measure against a vault with real note counts** — the shell link lint looked like a
+74 ms hook in this repo, which has no L1 notes, while taking 10.9 s on a 49-note project.
+
+`vault-env.sh` reads the same project-key cache `paths.mjs` writes, so shell hooks no longer fork
+git for it. Both sides stamp with **whole-second** mtime; a float would make every shell lookup a
+silent miss.
+
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
-missing, `validate-note.sh` warns rather than blocking a write, and the heavy hooks
+missing, `validate-note.mjs` warns rather than blocking a write, and the heavy hooks
 (`distill-session`, `graph-staleness-check`, `semantic-index-refresh`) detach, debounce, and guard
 against recursing into themselves via a `*_CHILD` env var — they spawn headless `claude`, which
 fires SessionStart again.
@@ -132,50 +155,22 @@ fires SessionStart again.
 
 ## Working on this repo
 
-**`main` is protected. Never commit or push to it directly** — branch, push the branch, open a PR,
-merge it. This holds for force-pushes and for admins; GitHub will reject the push.
+**`main` is protected. Never commit or push to it directly** — branch, push, open a PR, merge.
+Enforced for admins and force-pushes.
 
 ```bash
 git switch -c fix/short-description
-# ... work, then:
 git push -u origin HEAD && gh pr create --fill
 ```
 
-CI (`.github/workflows/ci.yml`) runs the five self-tests on Node 22 and 24 against a **synthetic**
-vault built by `memory-synth-vault.mjs`, plus `bash -n` over every shell file and the version-drift
-check. It must be green to merge. `memory-semantic.mjs --selftest` hard-fails when it finds no
-notes rather than skipping, so CI always has to build that synthetic vault first.
+Everything else — what CI checks, the two review workflows, why a PR that edits a workflow file
+never gets reviewed, and the release process — is in
+[docs/ci-and-releases.md](docs/ci-and-releases.md).
 
-Two Claude workflows, deliberately not three:
+Three of those matter while you are still editing:
 
-- `claude-review.yml` reviews every PR — this repo requires zero approvals, so it is the only
-  second reader. Its prompt carries the repo's invariants; **when a rule here changes, change it
-  there too.** It skips fork PRs, which get no secrets on a `pull_request` trigger.
-- `claude.yml` answers `@claude` mentions on issues and PR comments. Complementary, not a reviewer.
-
-`/install-github-app` also generates `claude-code-review.yml`, a second auto-reviewer on the same
-`pull_request` trigger. It was deleted — two reviewers means two reviews on every PR. If you re-run
-the installer it will come back; delete it again, or delete `claude-review.yml` instead and accept
-a generic prompt.
-
-Both use `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `ANTHROPIC_API_KEY`. A workflow
-whose guard names a different secret than the action consumes will skip forever and report success.
-
-CI also fails if a Python dependency reappears — `.py` files and shell scripts calling `python`
-are both rejected.
-
-### Releasing
-
-Changelog entries land with the change, under `## [Unreleased]` in `CHANGELOG.md` — Keep a
-Changelog format, and the release notes are generated from that section, so it is the only place
-the story is written.
-
-```bash
-scripts/release.sh 0.1.4      # bumps all four versions, closes Unreleased, opens the PR
-# merge the PR, then:
-git switch main && git pull
-git tag v0.1.4 && git push origin v0.1.4
-```
-
-The tag — not the merge — is what publishes. `.github/workflows/release.yml` checks the tag against
-`package.json`, extracts that version's changelog section, and creates the GitHub release from it.
+- **`claude-review.yml`'s prompt carries this repo's invariants. When a rule here changes, change
+  it there too.**
+- **Never bump versions by hand.** `scripts/release.sh` writes all four; CI fails on drift.
+- **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
+  release notes verbatim.
