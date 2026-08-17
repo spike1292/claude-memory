@@ -16,9 +16,10 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Derived from the conventional commits since the last release, so the number is a consequence of
 # the work rather than a judgement call. Pass one explicitly to override.
 #
-# 0.x rule: a breaking change bumps the MINOR, per semver's "anything may change" for 0.x. That is
-# also what this project's changelog means by breaking — config keys, command names, vault layout,
-# $CLAUDE_MEMORY_HOME, or anything that forces a re-index or moves a note.
+# Below 1.0 a breaking change bumps the MINOR, per semver's "anything may change" for 0.x; at 1.0
+# and above it bumps the MAJOR. Breaking here means what this project's changelog means by it —
+# config keys, command names, vault layout, $CLAUDE_MEMORY_HOME, or anything that forces a re-index
+# or moves a note.
 #
 # NOT release-please or semantic-release, deliberately. Those generate the changelog from commit
 # subjects, and here the changelog IS the release notes — hand-written, and the only place the
@@ -33,13 +34,20 @@ next_version() {
   _major=${_cur%%.*}; _rest=${_cur#*.}; _minor=${_rest%%.*}; _patch=${_rest#*.}
   if printf '%s\n' "$_subjects" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
      || printf '%s\n' "$_bodies" | grep -q 'BREAKING CHANGE'; then
-    _why='a breaking change'; _bump=minor          # 0.x: breaking bumps the minor
+    # The 0.x carve-out is gated on the major actually being 0. Left ungated it would keep
+    # bumping the minor forever after 1.0, quietly shipping a breaking change as a feature.
+    if [ "$_major" -eq 0 ]; then
+      _why='a breaking change (0.x, so minor)'; _bump=minor
+    else
+      _why='a breaking change'; _bump=major
+    fi
   elif printf '%s\n' "$_subjects" | grep -qE '^feat(\([^)]*\))?:'; then
     _why='a feat'; _bump=minor
   else
     _why='fixes and chores only'; _bump=patch
   fi
   case "$_bump" in
+    major) _next="$((_major + 1)).0.0" ;;
     minor) _next="$_major.$((_minor + 1)).0" ;;
     patch) _next="$_major.$_minor.$((_patch + 1))" ;;
   esac
@@ -74,8 +82,12 @@ if [ "${1:-}" = "--selftest" ]; then
   _case 0.2.1 0.2.0 'fix: mentions feat: in the subject text'   # must anchor at the start
   _case 1.3.0 1.2.9 'feat: ten to eleven'
   _case 0.2.11 0.2.10 'fix: two-digit patch'              # string vs number bumping
+  # Past 1.0 the 0.x carve-out must stop applying, or a breaking change ships as a feature.
+  _case 2.0.0 1.2.9 'feat!: breaking'
+  _case 2.0.0 1.2.9 'fix: a thing' 'refactor(core)!: breaking'
+  _case 0.10.0 0.9.3 'feat!: breaking'                    # still minor below 1.0, two-digit minor
   rm -rf "$_t"
-  [ "$_fails" -eq 0 ] && { echo "selftest: 10 cases passed"; exit 0; }
+  [ "$_fails" -eq 0 ] && { echo "selftest: 13 cases passed"; exit 0; }
   echo "selftest: $_fails case(s) failed"; exit 1
 fi
 

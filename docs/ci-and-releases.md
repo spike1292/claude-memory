@@ -83,12 +83,15 @@ From the conventional commits since the last tag, so the number follows from the
 
 | in the range | bump |
 | --- | --- |
+| any `!:` or `BREAKING CHANGE`, at 1.0 and above | major |
+| any `!:` or `BREAKING CHANGE`, below 1.0 | minor — semver lets 0.x change anything |
 | any `feat:` | minor |
-| any `!:` or `BREAKING CHANGE` | minor — 0.x, where semver allows anything to change |
 | anything else (`fix`, `perf`, `chore`, `docs`, `ci`) | patch |
 
-`scripts/release.sh --selftest` covers each path, including that `feat:` must be anchored at the
-start of the subject and that `perf:` is not a feature.
+`scripts/release.sh --selftest` covers each path with throwaway git repos — 13 cases, including
+that `feat:` must be anchored at the start of a subject, that `perf:` is not a feature, that
+`0.2.10` bumps to `0.2.11` numerically rather than by string, and that the 0.x carve-out stops
+applying at 1.0 (`1.2.9` + a breaking change is `2.0.0`, not `1.3.0`).
 
 ### Deliberately not release-please or semantic-release
 

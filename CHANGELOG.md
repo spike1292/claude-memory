@@ -19,8 +19,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   every push to `main` and is a ~10 s no-op when the version is already out. Pushing a `v*` tag by
   hand still works as an escape hatch.
 - **`scripts/release.sh` derives the version from the conventional commits since the last tag** —
-  any `feat:` or `!:`/`BREAKING CHANGE` bumps the minor (0.x, where semver permits anything to
-  change), everything else the patch. Pass a version to override. `--selftest` covers each path,
+  a breaking marker (`!:` / `BREAKING CHANGE`) bumps the major, except below 1.0 where semver lets
+  anything change and it bumps the minor; any `feat:` bumps the minor; everything else the patch. Pass a version to override. `--selftest` covers each path,
   including that `feat:` must be anchored at the start of a subject and that `perf:` is not a
   feature. Not release-please or semantic-release: those generate the changelog from commit
   subjects, and here the changelog *is* the release notes — deriving the number is useful,
