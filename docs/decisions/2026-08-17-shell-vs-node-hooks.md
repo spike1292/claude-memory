@@ -86,10 +86,51 @@ failure. The intended fallback to the filename, on the very next line, was unrea
 
 Nothing in the real vault triggered it; a crafted differential case did. 13-assertion self-test.
 
+### `memory-link-lint.sh` → `memory-link-lint.mjs`
+
+Not a language problem — a **shape** problem. The shell version ran `grep -rlF` across the whole
+Memory *and* Insights tree **once per note**: O(N×(N+M)) file reads. The Node version reads each
+file once and indexes the links, O(N+M).
+
+| Memory notes | shell | node |
+| --- | --- | --- |
+| 5 | 248 ms | 59 ms |
+| 25 | 756 ms | 62 ms |
+| 60 | 1949 ms | 64 ms |
+| **49 (real project, 1006 Insights notes)** | **10905 ms** | **243 ms** |
+
+Node is flat; shell is quadratic. Identical output at every size.
+
+**This hook was timing out in production.** `hooks.json` allows it 10 s, and the real 49-note
+project measured 10.9 s — so on the largest vault the lint was being killed, silently, producing
+nothing. It looked like a 74 ms hook because it had only ever been measured in *this* repo, which
+has no L1 notes at all, so the loop never ran.
+
+## Shell hooks share the Node project-key cache
+
+`project_key` forked `git` in every shell hook — 40.2 ms of `vault-memory-sync.sh`'s 97.7 ms.
+`vault-env.sh` now reads the same `project-keys.json` that `paths.mjs` writes, so the fork is gone:
+**34.3 ms → 22.4 ms** per call, and `vault-memory-sync.sh` **97.7 ms → 70.9 ms** without being
+ported at all.
+
+The stamp is `"<whole-second mtime>:<size>:<inode>"` — a string both `stat` and `fs.statSync` can
+produce identically. Getting this right took three tries, and the self-test caught each one:
+
+- **float milliseconds** — `stat` gives whole seconds on BSD and GNU, so every shell lookup would
+  have missed silently, leaving the cache permanently useless on the side it was built for.
+- **whole seconds alone** — a `git remote set-url` in the same second as the cached stamp is never
+  noticed, and since nothing touches `.git/config` afterwards the stale key is *permanent*, not
+  momentary.
+- **seconds + size** — closes most of it, but not a same-second rename of identical byte length
+  (`Beta` → `Beto`).
+
+The inode closes the rest: git rewrites config atomically (temp file + rename), so every write
+lands on a new inode even when mtime and size are unchanged. Verified for exactly that case.
+
 ## Next, if continued
 
-`memory-link-lint.sh` (73.9 ms) is the last fork-heavy read-only hook. `vault-memory-sync.sh`
-(133.1 ms) is the largest single cost but is explicitly out of scope below.
+Nothing with a good ratio remains. `vault-memory-sync.sh` (70.9 ms) is the largest single hook and
+is deliberately out of scope below.
 
 ## Do not port
 

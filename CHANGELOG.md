@@ -32,15 +32,24 @@ what a user's setup depends on: config keys, command names, vault layout, and
   six `grep`s, `basename`, `sed`) to check one file; fork-per-operation, not the language, was the
   cost. Half the remaining win came from `memory-audit-checks.mjs` becoming import-safe, so its
   predicates run in-process instead of costing a second Node startup.
+- **`memory-link-lint.sh` is now `memory-link-lint.mjs`, and it had been timing out.** The shell
+  version ran `grep -rlF` over the whole Memory *and* Insights tree once per note — O(N×(N+M)) —
+  which measured **10.9 s on a real 49-note project** against the hook's **10 s timeout**, so on
+  the largest vault the lint was being killed silently and produced nothing. The Node version
+  indexes links in a single pass, O(N+M): **243 ms**, identical output, and flat as the vault grows
+  (60 notes: 1949 ms → 64 ms). It looked like a 74 ms hook only because it had been measured in a
+  repo with no L1 notes, where the loop never ran.
+- **Shell hooks now share the project-key cache** instead of forking `git` for it. `vault-env.sh`
+  reads the same `project-keys.json` that `paths.mjs` writes: `project_key` **34.3 ms → 22.4 ms**,
+  and `vault-memory-sync.sh` **97.7 ms → 70.9 ms** with no port. The stamp is
+  `"<second>:<size>:<inode>"` so `stat` and `fs.statSync` compute it identically — seconds alone
+  left a *permanent* stale-key hole when a remote changed within the cached second, and size alone
+  missed a same-length rename; git's atomic config rewrite makes the inode decisive.
 - **`insights-surface.sh` is now `insights-surface.mjs` — 124 ms → 52 ms**, and it **fixes a latent
   bug**: `t=$(grep -m1 '^title:' …)` exits non-zero for a note with no `title:` line, which under
   `set -e` aborted the `| while read` subshell. A single untitled note in `Mistakes/` silently
   dropped *every* bullet while still printing the header — so it read as "no past mistakes" rather
   than as a failure, and the intended filename fallback on the next line was unreachable.
-  Verified against the shell version across all **1172 notes in a real vault plus nine edge-case
-  payloads: identical output** (100 warnings emitted on each side, so the checks demonstrably
-  fire). The convention predicates are now pure functions with a 24-assertion self-test, where the
-  shell had none.
 - `scripts/memory-audit-checks.mjs` runs its vault-wide audit only when executed directly, and
   exports `checkFile()`. Importing it used to start an audit and exit the process. Verified by
   diffing the full audit, `--deferred`, and `--check-file` over all 1172 notes: identical.
@@ -48,8 +57,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `vault-env.sh` so there is one implementation of the key, but that costs a bash+git subprocess:
   72 ms in-process, the single largest cost in both the per-prompt recall hook and the per-write
   `validate-note` hook. The answer is now cached in `$CLAUDE_MEMORY_HOME/cache/project-keys.json`
-  and validated against the mtime of the git config that determines it, so `git remote set-url`
-  invalidates it rather than leaving a stale key. Measured in a fresh process: **98 ms → 49 ms**.
+  and validated against a `"<second>:<size>:<inode>"` stamp of the git config that determines it,
+  so `git remote set-url` invalidates it rather than leaving a stale key. Fresh process:
+  **98 ms → 49 ms**.
   `vault-env.sh` remains the only thing that computes a key; a cache miss is the worst failure.
 - **`context-mode` is documented as optional, and degrades instead of drifting.** When the CLI is
   absent the SessionEnd distiller now refreshes the plugin's own semantic index rather than

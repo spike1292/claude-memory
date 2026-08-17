@@ -116,9 +116,12 @@ function writeKeyCache(all) {
  * That delegation costs a bash+git subprocess — measured 72ms on 2026-08-17, which was the single
  * largest cost in the per-prompt recall hook and in the per-write validate-note hook, and three
  * times what switching the whole runtime to Bun would have saved. Short-lived hooks cannot reuse
- * the in-process Map, so the answer is cached on disk and validated against the mtime of the git
- * config that determines it: `git remote set-url` rewrites that file, so a changed remote is a
+ * the in-process Map, so the answer is cached on disk and validated against a stamp taken from the
+ * git config that determines it: `git remote set-url` rewrites that file, so a changed remote is a
  * miss on the next call rather than a stale key forever.
+ *
+ * `hooks/lib/vault-env.sh` reads this same cache, which is why the stamp is a string both `stat`
+ * and `fs.statSync` can produce identically. See the stamp construction below.
  */
 export function projectKey(dir = process.cwd()) {
   if (keyCache.has(dir)) return keyCache.get(dir);
@@ -126,9 +129,22 @@ export function projectKey(dir = process.cwd()) {
   const cfg = gitConfigFor(dir);
   let stamp = null;                       // null => do not cache (worktree/submodule)
   if (cfg === undefined) {
-    stamp = 0;                            // no repo: key is a pure function of the path
+    stamp = '0';                          // no repo: key is a pure function of the path
   } else if (typeof cfg === 'string') {
-    try { stamp = fs.statSync(cfg).mtimeMs; } catch { stamp = null; }
+    // "<whole seconds>:<size>:<inode>", because vault-env.sh reads this same file and must compute
+    // the identical value: `stat` yields whole seconds on both BSD and GNU, and a float millisecond
+    // stamp would mismatch every time, silently making the shell side a permanent cache miss.
+    //
+    // Seconds alone are not enough, and the hole they leave is permanent rather than momentary: a
+    // `git remote set-url` in the same second as the cached stamp is never noticed, because nothing
+    // touches .git/config again afterwards. Size covers most of that; **inode covers the rest**,
+    // since git rewrites config atomically (temp file + rename) and so hands out a new inode on
+    // every write — verified 2026-08-17 for a same-second, byte-identical-length URL change, where
+    // mtime and size were both unchanged and the inode still moved.
+    try {
+      const st = fs.statSync(cfg);
+      stamp = `${Math.floor(st.mtimeMs / 1000)}:${st.size}:${st.ino}`;
+    } catch { stamp = null; }
   }
 
   const all = stamp === null ? null : readKeyCache();
@@ -179,9 +195,19 @@ if (process.argv[1] && process.argv.includes('--selftest')
   assert.strictEqual(fresh(repo), shell(repo), 'cached lookup must match the shell');
 
   // The one that matters: a changed remote changes the key, and the cache must not outlive it.
+  // This runs in the SAME SECOND as the write above, which is the point — whole-second mtime alone
+  // does not notice it, and would then never notice it, because nothing touches .git/config again.
+  // Size is what discriminates here. This assertion failed for real when the stamp was seconds-only.
   run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beta.git']);
   assert.strictEqual(fresh(repo), shell(repo), 'stale key served after the remote changed');
-  assert.ok(fresh(repo).endsWith('beta'));
+  assert.ok(fresh(repo).endsWith('beta'), 'same-second remote change must invalidate');
+
+  // The nastiest shape: same second AND identical byte length, so neither mtime nor size moves.
+  // Only the inode does. This is the case a seconds-only stamp would have missed forever.
+  run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beto.git']);
+  assert.strictEqual(fresh(repo), shell(repo), 'shell and node must agree after a same-length change');
+  assert.ok(fresh(repo).endsWith('beto'),
+    'same-second, same-length remote change must invalidate — this is what the inode is for');
 
   const sub = path.join(repo, 'a', 'b');
   fs.mkdirSync(sub, { recursive: true });
@@ -198,7 +224,7 @@ if (process.argv[1] && process.argv.includes('--selftest')
   assert.strictEqual(fresh(repo), shell(repo), 'corrupt cache must fall back, not throw');
 
   fs.rmSync(tmp, { recursive: true, force: true });
-  console.log('selftest: 7 assertions passed (project-key cache vs vault-env.sh)');
+  console.log('selftest: 9 assertions passed (project-key cache vs vault-env.sh)');
 }
 
 /**

@@ -24,6 +24,7 @@ node scripts/memory-audit-checks.mjs --selftest # 44 assertions
 node hooks/distill-session.mjs   --selftest    # 22 assertions
 node hooks/validate-note.mjs     --selftest    # 24 assertions
 node hooks/insights-surface.mjs  --selftest    # 13 assertions
+node hooks/memory-link-lint.mjs  --selftest    # 17 assertions
 node hooks/lib/paths.mjs         --selftest    # 7 assertions, project-key cache vs vault-env.sh
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
@@ -119,10 +120,15 @@ State precisely what degrades — an earlier warning claimed the vault "stops be
 not be:
 [docs/decisions/2026-08-17-shell-vs-node-hooks.md](docs/decisions/2026-08-17-shell-vs-node-hooks.md).
 
-Two things from it that bite in the moment: **do not port `vault-memory-sync.sh`** (it moves files
-and repoints symlinks in a live vault, and has cost 24 notes once), and **quote no timing without
-saying whether the vault was cloud-backed or pinned offline** — the same hook measures 166 ms or
-131 ms on that difference alone.
+Three things from it that bite in the moment: **do not port `vault-memory-sync.sh`** (it moves
+files and repoints symlinks in a live vault, and has cost 24 notes once); **quote no timing without
+saying whether the vault was cloud-backed or pinned offline**, which alone moves a hook 166 ms vs
+131 ms; and **measure against a vault with real note counts** — the shell link lint looked like a
+74 ms hook in this repo, which has no L1 notes, while taking 10.9 s on a 49-note project.
+
+`vault-env.sh` reads the same project-key cache `paths.mjs` writes, so shell hooks no longer fork
+git for it. Both sides stamp with **whole-second** mtime; a float would make every shell lookup a
+silent miss.
 
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.mjs` warns rather than blocking a write, and the heavy hooks
