@@ -33,14 +33,22 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `/memory:prune`. Frontmatter, headings, alias lines and folded-in addenda are excluded from the
   comparison. A two-argument call is unchanged and reads no files.
 - **`hooks/distill-session.mjs` executed `main()` on import**, so importing any of its helpers ran
-  the whole hook — spawning a headless `claude`, writing notes, reindexing. The third copy of a
-  defect already fixed in `validate-note.mjs` and `memory-audit-checks.mjs`. Now guarded by an
-  entry-point check that compares **real** paths: `distill-session.sh` builds its path from
-  `BASH_SOURCE` and passes node a path still containing any symlinked directory, while
-  `import.meta.url` is already resolved, so the lexical `path.resolve()` comparison used elsewhere
-  would have been false whenever the plugin is reached through a symlink — and the distiller would
-  have gone silently dead, writing nothing, with no error. A selftest invokes the file through a
-  symlink and asserts on its output, because the exit status is 0 either way.
+  the whole hook — spawning a headless `claude`, writing notes, reindexing. It is now guarded, and
+  the guard is **one shared `paths.isEntryPoint(import.meta.url)`** rather than a sixth hand-rolled
+  copy: there were seven of them across six files, and they had started to diverge, which is the
+  mirror problem this repo keeps relearning.
+- **The entry-point guard was wrong everywhere it existed.** All the hand-rolled copies compared
+  `path.resolve(process.argv[1])` against `fileURLToPath(import.meta.url)` — a *textual* path against
+  an already symlink-resolved one, so they disagree whenever a file is reached through a symlinked
+  directory. `main()` then silently never runs and the hook does nothing, with no error: on macOS
+  `/var` is a symlink to `private/var`, so the old comparison was already false for anything under
+  `$TMPDIR`, and plugin roots are themselves symlinks (a version-pinned cache dir, or a checkout
+  linked into `~/.claude/plugins`). `distill-session.sh` makes it worst by passing node a
+  `BASH_SOURCE`-derived path that still contains the link. `isEntryPoint` compares **real** paths,
+  which fixes `validate-note.mjs`, `insights-surface.mjs`, `memory-link-lint.mjs`,
+  `memory-audit-checks.mjs` and `paths.mjs` along with the distiller. Covered by selftests that
+  invoke a module directly, through a symlinked directory, and by import — asserting on output,
+  since the exit status is 0 either way.
 
 ### Changed
 

@@ -20,8 +20,7 @@
 // vault-wide audit only when executed directly), so the predicates run in-process.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { vault } from './lib/paths.mjs';
+import { vault, isEntryPoint } from './lib/paths.mjs';
 import { checkFile } from '../scripts/memory-audit-checks.mjs';
 
 /** Frontmatter block: the lines between the opening fence on line 1 and the next `---`. */
@@ -131,8 +130,7 @@ function main() {
 
 // Nothing runs on import. This module exports its predicates, and an importer that got the hook
 // executed — reading stdin, spawning the audit — would be a nasty surprise; it briefly was one.
-const isMain = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isEntryPoint(import.meta.url);
 
 if (isMain && process.argv.includes('--selftest')) {
   const assert = await import('node:assert').then((m) => m.default);

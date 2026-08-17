@@ -25,7 +25,7 @@ node hooks/distill-session.mjs   --selftest    # 28 assertions
 node hooks/validate-note.mjs     --selftest    # 24 assertions
 node hooks/insights-surface.mjs  --selftest    # 13 assertions
 node hooks/memory-link-lint.mjs  --selftest    # 17 assertions
-node hooks/lib/paths.mjs         --selftest    # 9 assertions, project-key cache vs vault-env.sh
+node hooks/lib/paths.mjs         --selftest    # 13 assertions, project-key cache + isEntryPoint
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
 

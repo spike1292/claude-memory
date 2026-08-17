@@ -565,20 +565,9 @@ function main() {
 // findNearDuplicate, reconcile, transcriptToText, ...) and an importer that got the hook executed
 // instead — spawning a headless `claude`, writing notes, reindexing the vault — would be a nasty
 // surprise. It was one until 2026-08-17: `main()` was called unconditionally here, so merely
-// importing `findNearDuplicate` to check a pair printed the usage line and exited. Same defect
-// already fixed in validate-note.mjs and memory-audit-checks.mjs; this was the third copy.
+// importing `findNearDuplicate` to check a pair printed the usage line and exited.
 //
-// Compare REAL paths, not lexical ones. `distill-session.sh` builds `here` from `BASH_SOURCE` and
-// hands node a path that still contains any symlinked directory, while `import.meta.url` is already
-// resolved — so `path.resolve()` alone (what validate-note.mjs does) compares a symlinked path
-// against a real one, returns false, and the distiller stops writing notes with NO error anywhere.
-// Plugin roots are symlinked in practice: a version-pinned cache dir, or a checkout linked into
-// ~/.claude/plugins. Guarded by a selftest that invokes this file through a symlink.
-const isMain = (() => {
-  const arg = process.argv[1];
-  if (!arg) return false;
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-  return real(arg) === real(fileURLToPath(import.meta.url));
-})();
-
-if (isMain) main();
+// See paths.isEntryPoint for why it compares real paths and not lexically-resolved ones — it matters
+// most here, because distill-session.sh hands node a BASH_SOURCE-derived path that still contains
+// any symlinked directory. Covered by the symlink selftest above.
+if (paths.isEntryPoint(import.meta.url)) main();
