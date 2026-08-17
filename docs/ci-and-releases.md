@@ -18,7 +18,17 @@ below is what stands in for a second reader — it comments, it never approves.
 
 `.github/workflows/ci.yml`, required to merge:
 
-- the self-tests on **Node 22** (the floor `engines` promises) **and 24**
+- `node --test --test-concurrency=1` on **Node 22** (the floor `engines` promises) **and 24**.
+  Discovery, not a list — every `*.test.mjs` runs, so a new test file cannot be left out. Pinned to
+  one worker because the suites share `$CLAUDE_MEMORY_HOME` and one test needs two git writes inside
+  the same second; in parallel those pass for the wrong reason.
+- **`lib/` modules import without side effects** — each is imported in a bare subprocess and must
+  print nothing. A module that runs its hook on import turns any test that imports it into a live
+  hook run: reading stdin, spawning a headless `claude`, writing notes. That was a real bug three
+  times, which is why it is now a check rather than a convention.
+- **`node:test` is imported only by `*.test.mjs`** — a top-level `node:test` import prints the whole
+  test report to stdout even outside the runner, and Claude Code reads hook stdout.
+- `scripts/release.sh --selftest` (bash, 13 cases — `node --test` cannot run it)
 - `bash -n` over every shell file
 - **no Python dependency** — fails on any `.py` file or shell script calling `python`
 - **version agreement** across every place it is written: `package.json`, `package-lock.json`,
@@ -26,7 +36,7 @@ below is what stands in for a second reader — it comments, it never approves.
   `.claude-plugin/marketplace.json`
 
 CI builds a **synthetic** vault with `memory-synth-vault.mjs` first, never a real one. That is not
-optional: `memory-semantic.mjs --selftest` asserts against real notes on purpose and hard-fails
+optional: `scripts/lib/memory-semantic.test.mjs` asserts against real notes on purpose and hard-fails
 when it matches none, so an empty CI run would be an error rather than a skip.
 
 ## Review

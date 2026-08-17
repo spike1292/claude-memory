@@ -66,7 +66,7 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    unpredictable moment, and — if the cache dir were wrong — into the plugin dir, where the next
    `/plugin update` would discard it.
    ```bash
-   cd "$MEM" && node scripts/memory-semantic.mjs --selftest
+   cd "$MEM" && node --test scripts/lib/memory-semantic.test.mjs
    du -sh "$STATE/models"
    ```
    Report the size. If `$STATE/models` is empty but a model loaded, the cache redirect is broken —

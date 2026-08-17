@@ -14,20 +14,24 @@ case sets contain private content. See the Sharing section of `README.md`.
 
 ## Commands
 
-Everything is a self-test inside the file it tests; there is no test framework.
+Tests are `*.test.mjs` files beside the module they test; the runner is Node's built-in one, so
+there is no framework and no test dependency.
 
 ```bash
-node scripts/memory-semantic.mjs --selftest    # 52 assertions + chunk checks against real notes
-node scripts/memory-eval.mjs     --selftest    # 9 assertions
-node scripts/memory-synth-vault.mjs --selftest
-node scripts/memory-audit-checks.mjs --selftest # 44 assertions
-node hooks/distill-session.mjs   --selftest    # 28 assertions
-node hooks/validate-note.mjs     --selftest    # 24 assertions
-node hooks/insights-surface.mjs  --selftest    # 13 assertions
-node hooks/memory-link-lint.mjs  --selftest    # 17 assertions
-node hooks/lib/paths.mjs         --selftest    # 13 assertions, project-key cache + isEntryPoint
+node --test                                    # every *.test.mjs — this is what CI runs
+node --test --test-concurrency=1               # CI's exact form; see below for why
+node --test hooks/lib/distill-session.test.mjs # one file
+scripts/release.sh --selftest                  # still bash, 13 cases; node --test cannot run it
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
+
+**Concurrency is pinned to 1 in CI on purpose.** The suites share `$CLAUDE_MEMORY_HOME` (the
+project-key cache) and the per-model index, and `hooks/lib/paths.test.mjs` asserts that two git
+writes land in the *same second*. In parallel both become racy, and the failure mode is a test that
+passes for the wrong reason rather than one that fails.
+
+**Assertion counts are not written down anywhere.** The runner reports them. Four hand-maintained
+counts had already drifted by 2026-08-17 (`distill-session` claimed 22 against a real 21).
 
 Exercising the real pipeline:
 
@@ -51,6 +55,16 @@ node scripts/memory-eval.mjs --vault /tmp/bench --slug bench --run --cases /tmp/
 vault resolves to, so isolate `HOME`, not just `CLAUDE_VAULT`, when testing hooks.
 
 ## Architecture
+
+**Every Node hook and script is a thin entry over a `lib/` module.** `hooks/<name>.mjs` and
+`scripts/<name>.mjs` own argv, stdin and stdout and nothing else; the logic and its tests live in
+`hooks/lib/<name>.mjs` + `<name>.test.mjs`. `hooks/hooks.json` and `commands/*.md` name the entry
+paths, so those filenames are a contract — add logic to the `lib/` twin, not to the entry.
+
+A `lib/` module must import without side effects, and CI checks it: while the logic lived in the
+same file as the CLI, importing one helper ran the whole hook — spawning a headless `claude`,
+writing notes, reindexing — which happened three times and needed an entry-point guard to suppress.
+The split retired that guard entirely rather than making it more careful.
 
 **Two runtimes, two mirrors of the same resolution logic.** `hooks/lib/vault-env.sh` is the
 source of truth for vault path, `$CLAUDE_MEMORY_HOME`, recall arming, and `project_key`.

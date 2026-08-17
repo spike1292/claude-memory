@@ -1,92 +1,22 @@
 #!/usr/bin/env node
-// Reproducible retrieval eval for the vault. Generates a versioned case set once, then scores any
+// Reproducible retrieval eval — CLI entry. Generates a versioned case set once, then scores any
 // retrieval change against THE SAME cases.
 //
-// Why this exists: before it, every /memory:eval run hand-wrote a fresh set of questions. The
-// numbers moved between runs (0.60 → 1.00 on 2026-08-14) but the question set moved too, so the
-// comparison proved nothing — and the questions were written by someone who already knew the vault
-// and knew what had just been fixed. Borrowed wholesale from obsidian-second-brain's harness, whose
-// baseline states the rule plainly: **no retrieval change ships without before/after numbers on the
-// same cases.**
+// Thin on purpose: argv, files, stdout. The scoring helpers and their tests live in
+// lib/memory-eval.mjs.
 //
 // Usage:
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
 //   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--layer Memory] [--json]
-//   node memory-eval.mjs --selftest
 //
-// Cases live in ~/.claude/data/eval-cases-<slug>-<style>.jsonl and are GITIGNORED: they contain
-// vault content. Regenerate only with --force; a changed case set invalidates every past number.
-
+// Cases live in $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they contain vault content.
+// Regenerate only with --force; a changed case set invalidates every past number.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { activeModel } from './lib/model-default.mjs';
 import * as paths from '../hooks/lib/paths.mjs';
-
-const RECALL_KS = [1, 3, 5, 10];
-
-// ---------------------------------------------------------------- pure helpers (self-tested)
-
-export function titleTokens(stem) {
-  return new Set(stem.toLowerCase().replace(/^\d{4}-\d{2}-\d{2}-/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 3));
-}
-
-// Strip everything that would leak the answer's own vocabulary or isn't prose: frontmatter,
-// headings, code fences, wikilinks — and critically the `_Also asked as:` line, which is a list of
-// queries the note was written to match. Generating a question from it would score our own aliases.
-export function evalBody(raw) {
-  let t = raw.replace(/^---\n[\s\S]*?\n---\n?/, '');
-  t = t.replace(/```[\s\S]*?```/g, ' ');
-  t = t.replace(/^_Also asked as:[\s\S]*$/m, ' ');
-  t = t.replace(/^#{1,6} .*$/gm, ' ');
-  t = t.replace(/\[\[([^\]|]+)(\|[^\]]*)?\]\]/g, ' ');
-  t = t.replace(/`[^`]*`/g, ' ');
-  return t;
-}
-
-// A paraphrase question must not reuse the note's title words — that is the whole point of the
-// semantic style; otherwise it degenerates into a keyword lookup and every channel scores well.
-export function pickSentence(body, stem, style) {
-  const tt = titleTokens(stem);
-  const sents = body.split(/(?<=[.!?])\s+|\n{2,}/).map((s) => s.replace(/\s+/g, ' ').trim())
-    .filter((s) => s.length >= 40 && s.length <= 220 && /[a-z]/.test(s));
-  if (!sents.length) return null;
-  const score = (s) => {
-    const toks = new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3));
-    let overlap = 0;
-    for (const w of toks) if (tt.has(w)) overlap++;
-    return style === 'keyword' ? overlap : -overlap; // keyword wants the title words, semantic avoids them
-  };
-  return sents.sort((a, b) => score(b) - score(a) || b.length - a.length)[0];
-}
-
-export function metrics(perCase) {
-  const n = perCase.length || 1;
-  const recall = {};
-  for (const k of RECALL_KS) recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
-  const mrr = perCase.reduce((a, c) => a + (c.rank ? 1 / c.rank : 0), 0) / n;
-  return { recall, mrr };
-}
-
-if (process.argv.includes('--selftest')) {
-  const { strict: assert } = await import('node:assert');
-  // 'cap' is 3 chars and drops out — short tokens are noise, not identity
-  assert.deepEqual([...titleTokens('2026-08-14-cap-concurrency-with-literal')].sort(), ['concurrency', 'literal', 'with']);
-  const raw = '---\nname: x\n---\n## Head\nThe runner fleet gains vCPU without gaining RAM, so a percentage silently re-tunes upward.\n\n_Also asked as: should I use parallel 2, why fixed numbers._\n';
-  const b = evalBody(raw);
-  assert.ok(!b.includes('Also asked as'), 'alias line must never seed a question — it is a list of queries we wrote to match');
-  assert.ok(!b.includes('## Head'));
-  assert.ok(b.includes('runner fleet'));
-  const s = pickSentence(b, 'runner-fleet-vcpu', 'semantic');
-  assert.ok(s && s.length >= 40);
-  const m = metrics([{ rank: 1 }, { rank: 3 }, { rank: 0 }, { rank: 7 }]);
-  assert.equal(m.recall[1], 0.25);
-  assert.equal(m.recall[3], 0.5);
-  assert.equal(m.recall[10], 0.75);
-  assert.ok(Math.abs(m.mrr - (1 + 1 / 3 + 0 + 1 / 7) / 4) < 1e-9);
-  console.log('selftest: 9 assertions passed');
-  process.exit(0);
-}
+import { evalBody, pickSentence, metrics, RECALL_KS } from './lib/memory-eval.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -176,7 +106,7 @@ if (flag('--generate')) {
 
 // ---------------------------------------------------------------- run
 
-if (!flag('--run')) { console.log('usage: --generate N [--style semantic|keyword] | --run [--mode semantic|lexical] | --selftest'); process.exit(1); }
+if (!flag('--run')) { console.log('usage: --generate N [--style semantic|keyword] | --run [--mode semantic|lexical]'); process.exit(1); }
 if (!fs.existsSync(CASES)) { console.log(`no case set at ${CASES}. Generate one first: --generate 40`); process.exit(1); }
 const cases = fs.readFileSync(CASES, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const mode = val('--mode') || 'semantic';
