@@ -138,7 +138,10 @@ export function singleFlight(load) {
         borrowed--;
       }
     },
-    /** In use right now? `take()` refuses while it is, so callers can retry on their next tick. */
+    /**
+     * In use right now? `take()` refuses while it is. Callers own the retry — the server re-arms
+     * its idle timer on a refusal, because nothing else would: only a new connection re-arms it.
+     */
     busy() {
       return borrowed > 0;
     },

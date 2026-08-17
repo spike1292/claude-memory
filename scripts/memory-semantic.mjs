@@ -666,6 +666,11 @@ if (flag('--serve')) {
   const armModelIdle = () => {
     clearTimeout(modelIdle);
     modelIdle = setTimeout(async () => {
+      // A request still holding the session (see singleFlight.borrow) means the unload declines.
+      // Re-arm rather than give up: only a new connection calls bump(), so without this the model
+      // would sit loaded until the next request or the process exit — and the "retries on the next
+      // tick" this comment claims would simply not be true.
+      if (embedderCell.busy()) return armModelIdle();
       if (await unloadEmbedder())
         console.log(`unloaded model after ${MODEL_IDLE_MS / 60000}m idle`);
     }, MODEL_IDLE_MS);
@@ -680,10 +685,8 @@ if (flag('--serve')) {
   // Indexes are per project and loaded on demand — this is what lets ONE process serve every
   // project instead of one process per project. They are cheap next to the model (~15M of vectors
   // for 3400 chunks against ~1.3G of weights), so they are cached and never evicted; the process
-  // idle timer is the upper bound on how long they live.
-  // Indexes are per project and loaded on demand — this is what lets ONE process serve every
-  // project instead of one process per project. The staleness policy lives in mtimeCache(): the
-  // index changes under us as notes are written, and a stale one is answered from silently.
+  // idle timer is the upper bound on how long they live. The staleness policy lives in mtimeCache():
+  // the index changes under us as notes are written, and a stale one is answered from silently.
   const indexCache = mtimeCache((slug) => {
     const fresh = loadIndex(slug);
     console.log(`loaded index ${slug} (${fresh.rowsUsed.length} chunks)`);
