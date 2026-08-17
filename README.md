@@ -287,8 +287,15 @@ node scripts/memory-eval.mjs     --selftest
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest
 node hooks/distill-session.mjs   --selftest
+node hooks/lib/paths.mjs         --selftest    # project-key cache, checked against vault-env.sh
 scripts/doctor.sh
 ```
+
+**Node only — Bun does not work here.** Evaluated 2026-08-17 on Bun 1.3.14: `onnxruntime-node` and
+`@huggingface/transformers` both load fine, but Bun has no `node:sqlite` (it ships `bun:sqlite`
+with a different API), which is what the search engine and the recall hook are built on. Bun's
+measured advantage was ~20 ms per hook spawn; caching `projectKey()` removed ~50 ms without adding
+a runtime. See `CLAUDE.md` for the full numbers before proposing it again.
 
 Nothing resolves an absolute install path: bash uses `BASH_SOURCE` and node uses
 `import.meta.url`. So a dev checkout, a symlink, and the version-pinned plugin cache all work

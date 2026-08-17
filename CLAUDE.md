@@ -22,6 +22,7 @@ node scripts/memory-eval.mjs     --selftest    # 9 assertions
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest # 44 assertions
 node hooks/distill-session.mjs   --selftest    # 22 assertions
+node hooks/lib/paths.mjs         --selftest    # 7 assertions, project-key cache vs vault-env.sh
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
 
@@ -56,6 +57,34 @@ over git remote URLs stays single-implementation. Change one, check the other.
 There is **no Python.** `distill-session.py` was ported to `distill-session.mjs` on 2026-08-16; it
 now imports `paths.mjs` rather than carrying a third copy of the resolution logic, and CI fails if
 a `.py` file or a shell script calling `python` reappears. Everything is bash + Node ≥ 22.5.
+
+### Node only — why not Bun (evaluated 2026-08-17, Bun 1.3.14)
+
+**Bun cannot run this codebase**, and the reason is not the one people expect:
+
+| | |
+| --- | --- |
+| `onnxruntime-node` | loads fine under Bun |
+| `@huggingface/transformers` | loads fine under Bun |
+| **`node:sqlite`** | **does not exist in Bun** — `error: Could not resolve: "node:sqlite"` |
+
+Bun ships `bun:sqlite` with a different API. That blocks `scripts/memory-semantic.mjs` (the engine)
+and `hooks/memory-recall.mjs`, whose `DatabaseSync` import is top-level even though the socket
+happy path never touches it. Bun-clean today: the audit checks, the distiller, and the dev tools.
+
+Measured startup, 20 runs each: bare script 40 ms node vs 17 ms bun; `memory-audit-checks
+--check-file` 48 ms vs 30 ms. So Bun's ceiling is **~20 ms per hook spawn**, on the one hook it can
+run. Do not re-litigate this without new numbers, and do not assume the native deps are the
+obstacle — they are not.
+
+Declined because the cost is a second runtime that can be the wrong version on someone's machine,
+which is exactly why Python was removed the day before; unblocking the parts that matter needs a
+SQLite abstraction with two backends; and the CI matrix would double for engines that diverge
+silently (regex, `Intl`) in code whose failures are already silent by design.
+
+**The win was elsewhere.** `projectKey()` was spending 72 ms in-process on a bash+git subprocess —
+three times what Bun would have saved — on every prompt and every file write. Caching it took that
+to ~0. Measure where the time is before changing runtime.
 
 **Settings resolve env → `$CLAUDE_MEMORY_HOME/config.json` → built-in default**, in that order, and
 are read *when the hook runs*. Do not move settings into `~/.claude/settings.json`'s `env` block: a

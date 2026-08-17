@@ -26,6 +26,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **`projectKey()` is cached on disk — roughly 50 ms off every hook invocation.** It delegates to
+  `vault-env.sh` so there is one implementation of the key, but that costs a bash+git subprocess:
+  72 ms in-process, the single largest cost in both the per-prompt recall hook and the per-write
+  `validate-note` hook. The answer is now cached in `$CLAUDE_MEMORY_HOME/cache/project-keys.json`
+  and validated against the mtime of the git config that determines it, so `git remote set-url`
+  invalidates it rather than leaving a stale key. Measured in a fresh process: **98 ms → 49 ms**.
+  `vault-env.sh` remains the only thing that computes a key; a cache miss is the worst failure.
 - **`context-mode` is documented as optional, and degrades instead of drifting.** When the CLI is
   absent the SessionEnd distiller now refreshes the plugin's own semantic index rather than
   refreshing nothing, so notes written this session stay retrievable; only `ctx_search` goes
@@ -42,6 +49,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- A self-test for the project-key cache (`node hooks/lib/paths.mjs --selftest`), which asserts
+  against `vault-env.sh` itself rather than fixed strings, uses a fresh process per lookup, and
+  covers the failure that would matter: a changed git remote must not keep serving the old key.
+- Bun evaluated and declined, recorded in `CLAUDE.md` with the numbers. The blocker is that Bun
+  1.3.14 has no `node:sqlite`; `onnxruntime-node` and `@huggingface/transformers` both load fine.
 - Documentation for the two optional integrations — `context-mode` (backs `ctx_search`) and
   `codebase-memory-mcp` (backs the L4 `Graph/` layer and `/memory:graph-report`). Neither is
   installed by this plugin, neither is required, and neither is on the retrieval path. Because
