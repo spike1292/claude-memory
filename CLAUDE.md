@@ -163,8 +163,8 @@ git switch -c fix/short-description
 git push -u origin HEAD && gh pr create --fill
 ```
 
-Everything else — what CI checks, the two review workflows, why a PR that edits a workflow file
-never gets reviewed, and the release process — is in
+Everything else — what CI checks, the two review workflows, why a PR that edits `claude-review.yml`
+never gets reviewed (per-file, so `ci.yml` edits *are* reviewed), and the release process — is in
 [docs/ci-and-releases.md](docs/ci-and-releases.md).
 
 Three of those matter while you are still editing:

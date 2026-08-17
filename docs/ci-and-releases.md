@@ -48,17 +48,19 @@ Both authenticate with `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `A
 A workflow whose guard names a different secret than the action consumes will skip forever *and
 report success* — that happened here, and the skip guard hid it.
 
-### A PR that edits a workflow file does not get reviewed
+### A PR that edits `claude-review.yml` does not get reviewed
 
-`claude-code-action` runs only when the workflow is byte-identical to the copy on the default
-branch — otherwise a PR could rewrite the workflow and steal the token. On a mismatch it logs a
-warning and **exits success**, so the check is green and no review exists.
+`claude-code-action` runs only when **its own** workflow file is byte-identical to the copy on the
+default branch — otherwise a PR could rewrite the workflow and steal the token. On a mismatch it
+logs a warning and **exits success**, so the check is green and no review exists.
 
 Confirm with `Exiting due to workflow validation skip` in the job log before investigating anything
 else.
 
-Consequence worth planning around: **CI changes are exactly the changes that never get a second
-reader.** Review those by hand.
+**The check is per-file, not per-PR** — corrected 2026-08-17, having first been written down the
+broader way. Evidence: #2 and #4 both touched `claude-review.yml` and were skipped; #6 changed
+`ci.yml` and `release.yml`, did not touch the reviewer's own file, and got a full 3-minute review
+that found two real defects. So only changes to `claude-review.yml` itself go unreviewed.
 
 ## Releasing
 

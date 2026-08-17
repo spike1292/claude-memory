@@ -25,6 +25,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   feature. Not release-please or semantic-release: those generate the changelog from commit
   subjects, and here the changelog *is* the release notes — deriving the number is useful,
   generating the prose would be a downgrade.
+- Corrected the rule for when a PR goes unreviewed: it is **per workflow file**, not per PR. Only
+  a change to `claude-review.yml` itself blocks its review; editing `ci.yml` or `release.yml` is
+  reviewed normally. The broader claim was written down first and was wrong.
 - The CI version check covers `package-lock.json` as well, which had silently sat at 0.1.0 through
   three releases while the four manifest fields moved to 0.1.3.
 

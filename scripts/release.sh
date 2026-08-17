@@ -161,20 +161,16 @@ git commit -m "chore(release): $V" -m "$(awk -v v="$V" '
   $0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on {print}' CHANGELOG.md)"
 git push -u origin "$BRANCH"
 gh pr create --base main --head "$BRANCH" --title "chore(release): $V" \
-  --body "Version bump to \`$V\` and changelog. Merge, then tag the merge commit to publish:
+  --body "Version bump to \`$V\` and changelog.
 
-\`\`\`
-git switch main && git pull
-git tag v$V && git push origin v$V
-\`\`\`"
+**Merging this publishes the release.** \`.github/workflows/release.yml\` sees a version on
+\`main\` with no release yet, creates the \`v$V\` tag and publishes the \`[$V]\` section of
+CHANGELOG.md as the notes. Nothing to tag by hand."
 
 cat <<EOF
 
-Prepared $V. After the PR is merged:
+Prepared $V. Merging the PR publishes it — release.yml creates the v$V tag and
+publishes the [$V] section of CHANGELOG.md as the release notes.
 
-  git switch main && git pull
-  git tag v$V && git push origin v$V
-
-The tag triggers .github/workflows/release.yml, which publishes the release with the
-[$V] section of CHANGELOG.md as its notes.
+Nothing else to run.
 EOF
