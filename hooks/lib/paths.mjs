@@ -41,8 +41,11 @@ export function config() {
 
 /** Vault root. Mirrors resolve_vault(): env var, then config.json, then the default. */
 export function vault() {
-  return process.env.CLAUDE_VAULT || config().vault
-    || path.join(os.homedir(), 'Documents', 'ClaudeVault');
+  return (
+    process.env.CLAUDE_VAULT ||
+    config().vault ||
+    path.join(os.homedir(), 'Documents', 'ClaudeVault')
+  );
 }
 
 /** Per-prompt recall is off unless explicitly armed. Mirrors recall_enabled(). */
@@ -85,7 +88,9 @@ function gitConfigFor(dir) {
     const g = path.join(d, '.git');
     try {
       return fs.statSync(g).isDirectory() ? path.join(g, 'config') : null;
-    } catch { /* not here — walk up */ }
+    } catch {
+      /* not here — walk up */
+    }
     const parent = path.dirname(d);
     if (parent === d) return undefined;
     d = parent;
@@ -95,7 +100,11 @@ function gitConfigFor(dir) {
 const KEY_CACHE_FILE = () => path.join(memoryHome(), 'cache', 'project-keys.json');
 
 function readKeyCache() {
-  try { return JSON.parse(fs.readFileSync(KEY_CACHE_FILE(), 'utf8')); } catch { return {}; }
+  try {
+    return JSON.parse(fs.readFileSync(KEY_CACHE_FILE(), 'utf8'));
+  } catch {
+    return {};
+  }
 }
 
 function writeKeyCache(all) {
@@ -107,7 +116,9 @@ function writeKeyCache(all) {
     const tmp = `${f}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(all));
     fs.renameSync(tmp, f);
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 /**
@@ -127,9 +138,9 @@ export function projectKey(dir = process.cwd()) {
   if (keyCache.has(dir)) return keyCache.get(dir);
 
   const cfg = gitConfigFor(dir);
-  let stamp = null;                       // null => do not cache (worktree/submodule)
+  let stamp = null; // null => do not cache (worktree/submodule)
   if (cfg === undefined) {
-    stamp = '0';                          // no repo: key is a pure function of the path
+    stamp = '0'; // no repo: key is a pure function of the path
   } else if (typeof cfg === 'string') {
     // "<whole seconds>:<size>:<inode>", because vault-env.sh reads this same file and must compute
     // the identical value: `stat` yields whole seconds on both BSD and GNU, and a float millisecond
@@ -144,7 +155,9 @@ export function projectKey(dir = process.cwd()) {
     try {
       const st = fs.statSync(cfg);
       stamp = `${Math.floor(st.mtimeMs / 1000)}:${st.size}:${st.ino}`;
-    } catch { stamp = null; }
+    } catch {
+      stamp = null;
+    }
   }
 
   const all = stamp === null ? null : readKeyCache();

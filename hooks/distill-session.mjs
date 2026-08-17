@@ -12,4 +12,7 @@ if (argv.length < 2) {
 }
 
 const r = distill(argv[0], argv[1]);
-if (r) console.log(`distill: wrote ${r.written} note(s), merged ${r.merged} into existing, for ${r.slug}`);
+if (r)
+  console.log(
+    `distill: wrote ${r.written} note(s), merged ${r.merged} into existing, for ${r.slug}`,
+  );

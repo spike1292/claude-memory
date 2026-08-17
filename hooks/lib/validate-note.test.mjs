@@ -41,26 +41,48 @@ test('name mismatch, missing confidence and missing aliases each warn', () => {
 });
 
 test('Insights notes are exempt from name: and confidence:', () => {
-  const w2 = warnings(`${V}/Insights/p/Mistakes/a.md`, '---\ntitle: x\n---\n\nx\n\n_Also asked as: q._\n', V);
+  const w2 = warnings(
+    `${V}/Insights/p/Mistakes/a.md`,
+    '---\ntitle: x\n---\n\nx\n\n_Also asked as: q._\n',
+    V,
+  );
   assert.deepStrictEqual(w2, []);
 });
 
 test('missing fence and tabs in frontmatter warn', () => {
-  assert.ok(warnings(`${V}/Memory/p/a.md`, 'no fence at all\n\n_Also asked as: q._\n', V)
-    .some((w) => w.includes('no frontmatter fence')));
-  assert.ok(warnings(`${V}/Memory/p/a.md`, '---\nname: a\nconfidence: high\ntab:\there\n---\n\n_Also asked as: q._\n', V)
-    .some((w) => w.includes('tab inside frontmatter')));
+  assert.ok(
+    warnings(`${V}/Memory/p/a.md`, 'no fence at all\n\n_Also asked as: q._\n', V).some((w) =>
+      w.includes('no frontmatter fence'),
+    ),
+  );
+  assert.ok(
+    warnings(
+      `${V}/Memory/p/a.md`,
+      '---\nname: a\nconfidence: high\ntab:\there\n---\n\n_Also asked as: q._\n',
+      V,
+    ).some((w) => w.includes('tab inside frontmatter')),
+  );
 });
 
 test('prose "superseded" warns unless it names a date and target', () => {
-  const sup = '---\nname: a\nconfidence: high\n---\n\nThis is SUPERSEDED now.\n\n_Also asked as: q._\n';
-  assert.ok(warnings(`${V}/Memory/p/a.md`, sup, V).some((w) => w.includes('says superseded in prose')));
-  const supOk = '---\nname: a\nconfidence: high\n---\n\nGone (superseded 2026-08-01 by [[b]]).\n\n_Also asked as: q._\n';
+  const sup =
+    '---\nname: a\nconfidence: high\n---\n\nThis is SUPERSEDED now.\n\n_Also asked as: q._\n';
+  assert.ok(
+    warnings(`${V}/Memory/p/a.md`, sup, V).some((w) => w.includes('says superseded in prose')),
+  );
+  const supOk =
+    '---\nname: a\nconfidence: high\n---\n\nGone (superseded 2026-08-01 by [[b]]).\n\n_Also asked as: q._\n';
   assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, supOk, V), []);
 });
 
 test('regex metacharacters in a filename match literally', () => {
   assert.doesNotThrow(() => warnings(`${V}/Memory/p/a+b(c).md`, '---\nname: a+b(c)\n---\n', V));
-  assert.ok(!warnings(`${V}/Memory/p/a+b(c).md`, '---\nname: a+b(c)\nconfidence: low\n---\n\n_Also asked as: q._\n', V)
-    .some((w) => w.includes('name: must equal')), 'metacharacters must match literally');
+  assert.ok(
+    !warnings(
+      `${V}/Memory/p/a+b(c).md`,
+      '---\nname: a+b(c)\nconfidence: low\n---\n\n_Also asked as: q._\n',
+      V,
+    ).some((w) => w.includes('name: must equal')),
+    'metacharacters must match literally',
+  );
 });

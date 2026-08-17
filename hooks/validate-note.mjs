@@ -9,12 +9,16 @@ let file = '';
 try {
   const j = JSON.parse(await new Response(process.stdin).text());
   file = j?.tool_input?.file_path || j?.tool_input?.path || '';
-} catch { /* no or unparsable payload — nothing to check */ }
+} catch {
+  /* no or unparsable payload — nothing to check */
+}
 
 // A hook must never fail a write.
 if (file) {
   try {
     const text = report(file);
     if (text) console.log(text);
-  } catch { /* best effort, by design */ }
+  } catch {
+    /* best effort, by design */
+  }
 }

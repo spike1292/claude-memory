@@ -88,6 +88,20 @@ jobs:
           fi
           echo "no python dependency"
 
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Its own job, not a matrix step: formatting does not depend on the Node version, and the same
+      # mistake already cost `release.sh --selftest` two runs per push.
+      #
+      # Pinned, and via npx rather than a devDependency. Claude Code auto-runs `npm ci` on plugin
+      # install, which installs devDependencies, so a prettier devDependency would ship into every
+      # user's version-pinned plugin cache (already 381 MB) to format code they will never edit.
+      - name: Formatting
+        run: npx --yes prettier@3.6.2 --check .
+
   version:
     runs-on: ubuntu-latest
     steps:

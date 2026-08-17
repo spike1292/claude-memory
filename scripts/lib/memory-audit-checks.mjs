@@ -26,10 +26,11 @@ const STANDING = new RegExp(
   `\\b(?:never (?:${STATE_VERB})|(?:has|have|had|is|are|was|were) never|not yet (?:${STATE_VERB})|` +
     `no [a-z0-9 '\`*-]{0,25} yet\\b|(?:none|zero) (?:of )?[a-z0-9 '\`*-]{0,25}(?:traffic|usage|customers|requests)|` +
     `so far no|still no\\b|(?:has|have)(?:n't| not) (?:${STATE_VERB}))`,
-  'i'
+  'i',
 );
 // Imperative advice: the line's first words tell the reader what to do.
-const IMPERATIVE = /^[\s>*_#-]*(?:\*\*)?(?:never|do not|don't|avoid|always|prefer|use|treat|read|check|verify)\b/i;
+const IMPERATIVE =
+  /^[\s>*_#-]*(?:\*\*)?(?:never|do not|don't|avoid|always|prefer|use|treat|read|check|verify)\b/i;
 
 export function isStandingNegative(line) {
   const t = line.trim();
@@ -61,7 +62,10 @@ export function parseDeferred(text) {
     const h = line.match(/^##\s+(\d{4}-\d{2}-\d{2})\s*—\s*(\S+)/);
     if (h) entry = `${h[1]} ${h[2]}`;
     if (!line.startsWith('|')) continue;
-    const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+    const cells = line
+      .split('|')
+      .slice(1, -1)
+      .map((c) => c.trim());
     if (cells.length < 2) continue;
     const disposition = cells[cells.length - 1];
     if (/^\s*-+\s*$/.test(cells[0]) || /^disposition$/i.test(disposition)) continue; // header / separator
@@ -86,7 +90,8 @@ export function parseDeferred(text) {
 // `@integration/api-client-*`" and "redirects-poller superseded by the KVS pipeline" describe
 // software being replaced — true statements that will never need a marker. The house style for a
 // dead *claim* is line-initial and shouty: "⚠ SUPERSEDED …" or "**Superseded since …**".
-const SUPERSEDED_PROSE = /^[\s>*_#-]*(?:⚠\s*)?\**(?:SUPERSEDED\b|Superseded (?:since|on|by)\b|No longer true\b)/m;
+const SUPERSEDED_PROSE =
+  /^[\s>*_#-]*(?:⚠\s*)?\**(?:SUPERSEDED\b|Superseded (?:since|on|by)\b|No longer true\b)/m;
 // The load-bearing part is "superseded <date> by [[note]]" — it may sit anywhere inside a
 // parenthetical, e.g. "(measured 2026-08-12, superseded 2026-08-14 by [[x]])". Requiring the paren
 // to be adjacent rejected exactly the markers this convention produces.
@@ -112,13 +117,19 @@ export function supersessionState(raw) {
 // Precision over recall: the quantity must sit NEXT TO the volatile noun ("965 Insights notes",
 // "47 tasks"), not merely somewhere on the same line. A looser version reported 133 hits across 47
 // notes — mostly ticket ids like ATL-3317 and MR numbers — which is a backlog nobody reads.
-const VOLATILE = '(?:tasks?|jobs?|tickets?|issues?|notes?|projects?|libs?|apps?|services?|clusters?|instances?|stacks?|alarms?|errors?|events?|requests?|users?|members?|commits?|branches?|files?|pairs?|gaps?|duplicates?)';
-const COUNTED = new RegExp(`(?<![-#!\\w/.])(?:~|about\\s+)?\\d{1,6}(?:,\\d{3})*\\s*%?\\s+(?:\\w+\\s+){0,2}${VOLATILE}\\b`, 'i');
-const PAST = /\b(was|were|had|reached|hit|closed|shipped|merged|landed|dropped|ended|became|used to|previously|at the time)\b/i;
+const VOLATILE =
+  '(?:tasks?|jobs?|tickets?|issues?|notes?|projects?|libs?|apps?|services?|clusters?|instances?|stacks?|alarms?|errors?|events?|requests?|users?|members?|commits?|branches?|files?|pairs?|gaps?|duplicates?)';
+const COUNTED = new RegExp(
+  `(?<![-#!\\w/.])(?:~|about\\s+)?\\d{1,6}(?:,\\d{3})*\\s*%?\\s+(?:\\w+\\s+){0,2}${VOLATILE}\\b`,
+  'i',
+);
+const PAST =
+  /\b(was|were|had|reached|hit|closed|shipped|merged|landed|dropped|ended|became|used to|previously|at the time)\b/i;
 // Any ISO date on the line makes it a snapshot — "Measured **2026-08-08** … 501 projects" is a
 // dated observation whether or not the date sits in the parenthesised house style.
 const STAMPED = /\d{4}-\d{2}(-\d{2})?/;
-const POINTER = /\b(where truth lives|source of truth|read it from|query it|re-?run|check the MR|from the (?:API|dashboard))\b/i;
+const POINTER =
+  /\b(where truth lives|source of truth|read it from|query it|re-?run|check the MR|from the (?:API|dashboard))\b/i;
 
 export function isUnstampedVolatileClaim(line) {
   const t = line.trim();
@@ -147,13 +158,15 @@ export function isUnstampedVolatileClaim(line) {
 // about a measurement. First cut matched the word anywhere on a line containing any digit and was
 // ~80% false positives — the same over-loose first draft as FRESH-1 (133 hits) and the supersession
 // check (2 of 3). Assume a new check is miscalibrated until its output has been read line by line.
-const METRIC = /\b(recall(@\d+)?|precision|MRR|F1|accuracy|hit[- ]rate|error[- ]rate|p50|p90|p95|p99|latency|throughput|uptime)\b[^.;]{0,15}?\d|\d+(\.\d+)?\s*%?\s*(recall|precision|MRR|accuracy|uptime)\b/i;
+const METRIC =
+  /\b(recall(@\d+)?|precision|MRR|F1|accuracy|hit[- ]rate|error[- ]rate|p50|p90|p95|p99|latency|throughput|uptime)\b[^.;]{0,15}?\d|\d+(\.\d+)?\s*%?\s*(recall|precision|MRR|accuracy|uptime)\b/i;
 // A target is not a measurement: "SLO: p90 latency < 2s" states an objective, and objectives do not
 // need provenance — they need agreement.
 const TARGET = /\b(SLO|SLA|objective|target|budget|threshold|goal|aim for|must stay)\b/i;
 // Provenance = anything letting a reader re-run or locate the measurement: a script, a command, a
 // case set, a dated "measured/verified", or an explicit sample size.
-const PROVENANCE = /(`[^`]*(?:\.mjs|\.py|\.sh|\.jsonl|--run|--mode|--cases)[^`]*`|\b(?:measur\w+|verified|benchmark(?:ed)?|case set|sample|question set|over \d+ (?:cases|questions|notes)|n\s*=\s*\d+)\b|\d{4}-\d{2}-\d{2})/i;
+const PROVENANCE =
+  /(`[^`]*(?:\.mjs|\.py|\.sh|\.jsonl|--run|--mode|--cases)[^`]*`|\b(?:measur\w+|verified|benchmark(?:ed)?|case set|sample|question set|over \d+ (?:cases|questions|notes)|n\s*=\s*\d+)\b|\d{4}-\d{2}-\d{2})/i;
 
 // `context` is the line plus its neighbours: a claim and its provenance routinely straddle a wrap
 // ("On a versioned 28-case set:\n semantic **recall@5 46.4%**"), and flagging the second half of a
@@ -166,7 +179,11 @@ export function isUnprovenancedMetric(line, context = line) {
   if (TARGET.test(t)) return false;
   // Advice ABOUT metrics is not a claim OF one. "Store live metrics alongside the queries that
   // produced them" is the same lesson this check enforces — flagging it is pure noise.
-  if (IMPERATIVE.test(t) || /^[\s>*_#-]*(?:\*\*)?(?:comparing|storing|measuring|tracking|reporting)\b/i.test(t)) return false;
+  if (
+    IMPERATIVE.test(t) ||
+    /^[\s>*_#-]*(?:\*\*)?(?:comparing|storing|measuring|tracking|reporting)\b/i.test(t)
+  )
+    return false;
   return !PROVENANCE.test(context);
 }
 
@@ -208,10 +225,17 @@ export function checkFile(f) {
   const out = [];
   lines.forEach((l, n) => {
     const ctx = lines.slice(Math.max(0, n - 2), n + 2).join(' ');
-    if (isUnprovenancedMetric(l, ctx)) out.push(`  · line ${n + 1}: metric with no instrument named — cite the run, script, case set or date`);
+    if (isUnprovenancedMetric(l, ctx))
+      out.push(
+        `  · line ${n + 1}: metric with no instrument named — cite the run, script, case set or date`,
+      );
   });
-  for (const fr of freshnessFindings(raw)) out.push(`  · line ${fr.line}: volatile quantity, no stamp — make it timeless, a dated snapshot, or a pointer`);
+  for (const fr of freshnessFindings(raw))
+    out.push(
+      `  · line ${fr.line}: volatile quantity, no stamp — make it timeless, a dated snapshot, or a pointer`,
+    );
   const s = supersessionState(raw);
-  if (s.inProse && !s.marked && !s.declared) out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
+  if (s.inProse && !s.marked && !s.declared)
+    out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
   return out;
 }

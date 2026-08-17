@@ -23,7 +23,17 @@ node --test --test-concurrency=1               # CI's exact form; see below for 
 node --test hooks/lib/distill-session.test.mjs # one file
 scripts/release.sh --selftest                  # still bash, 13 cases; node --test cannot run it
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
+npm run format                                 # prettier --write .   (CI runs format:check)
 ```
+
+**Prettier is pinned and invoked via `npx`, never a devDependency.** Claude Code auto-runs `npm ci`
+on plugin install and that installs devDependencies, so a `prettier` entry there would ship into
+every user's version-pinned plugin cache — already 381 MB — to format code they will never edit.
+Bump the version in `package.json`'s scripts and in `.github/workflows/ci.yml` together.
+
+**It formats code only.** `.prettierignore` excludes `*.md`, `*.yml` and `package-lock.json`:
+CLAUDE.md and `commands/*.md` are read by Claude Code as instructions, the workflow comments record
+dated measurements, and Prettier reflows prose. Formatting a generated lockfile buys nothing.
 
 **Concurrency is pinned to 1 in CI on purpose.** The suites share `$CLAUDE_MEMORY_HOME` (the
 project-key cache) and the per-model index, and `hooks/lib/paths.test.mjs` asserts that two git

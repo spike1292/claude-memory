@@ -1,0 +1,14 @@
+node_modules/
+
+# Generated. Reformatting it makes `npm ci` diffs unreadable and buys nothing.
+package-lock.json
+
+# Markdown and YAML are hand-wrapped prose here, and much of it is load-bearing: CLAUDE.md and the
+# commands/ files are read by Claude Code as instructions, and the comments in .github/workflows/
+# record dated measurements. Prettier reflows both. Formatting is for code.
+*.md
+*.yml
+*.yaml
+
+# Machine-local Claude Code state, not repo content.
+.claude/

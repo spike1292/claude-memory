@@ -103,6 +103,9 @@ jobs:
             over-engineering. This codebase prefers the stdlib and the shortest thing that
             works; an abstraction with one caller is a finding.
 
+            Formatting is not a finding: prettier owns it and CI checks it. Do not comment on
+            line length, quoting, indentation or trailing commas.
+
             Be specific and short. Quote the line, say what breaks, say what to do instead.
             If the PR is clean, say so in one or two lines — do not manufacture findings,
             and do not restate what the diff already shows. Prefix anything you are not

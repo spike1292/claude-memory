@@ -41,7 +41,11 @@ export function mdFiles(dir) {
   const out = [];
   const walk = (d) => {
     let entries;
-    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const e of entries) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) walk(p);
@@ -58,9 +62,9 @@ export function mdFiles(dir) {
  */
 export function findOrphans(memDir, noteNames, corpus) {
   const moc = path.join(memDir, 'MEMORY.md');
-  const inbound = new Map();                       // target -> Set(linking file)
+  const inbound = new Map(); // target -> Set(linking file)
   for (const [file, text] of corpus) {
-    if (file === moc) continue;                    // the MOC does not count as a sibling
+    if (file === moc) continue; // the MOC does not count as a sibling
     for (const t of linkTargets(text)) {
       if (!inbound.has(t)) inbound.set(t, new Set());
       inbound.get(t).add(file);
@@ -111,28 +115,55 @@ export function findDrift(mocText, readNote) {
  */
 export function lint(cwd) {
   let slug;
-  try { slug = projectKey(cwd); } catch { slug = legacyKey(cwd); }
-  const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+  try {
+    slug = projectKey(cwd);
+  } catch {
+    slug = legacyKey(cwd);
+  }
+  const isDir = (p) => {
+    try {
+      return fs.statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
   let mem = path.join(vault(), 'Memory', slug);
-  if (!isDir(mem)) { slug = legacyKey(cwd); mem = path.join(vault(), 'Memory', slug); }
+  if (!isDir(mem)) {
+    slug = legacyKey(cwd);
+    mem = path.join(vault(), 'Memory', slug);
+  }
   if (!isDir(mem)) return '';
   const ins = path.join(vault(), 'Insights', slug);
 
   const corpus = [];
   for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
-    try { corpus.push([f, fs.readFileSync(f, 'utf8')]); } catch { /* unreadable - skip */ }
+    try {
+      corpus.push([f, fs.readFileSync(f, 'utf8')]);
+    } catch {
+      /* unreadable - skip */
+    }
   }
 
   let names;
   try {
-    names = fs.readdirSync(mem).filter((f) => f.endsWith('.md')).sort().map((f) => f.slice(0, -3));
-  } catch { return ''; }
+    names = fs
+      .readdirSync(mem)
+      .filter((f) => f.endsWith('.md'))
+      .sort()
+      .map((f) => f.slice(0, -3));
+  } catch {
+    return '';
+  }
 
   const out = [];
   const orphans = findOrphans(mem, names, corpus);
   if (orphans.length) {
-    out.push('MOC-only memory notes (in MEMORY.md but no inbound [[wikilink]] from any sibling — the note');
-    out.push('graph cannot reach them). Link each from a note someone would be reading when they need it:');
+    out.push(
+      'MOC-only memory notes (in MEMORY.md but no inbound [[wikilink]] from any sibling — the note',
+    );
+    out.push(
+      'graph cannot reach them). Link each from a note someone would be reading when they need it:',
+    );
     for (const n of orphans) out.push(`  - ${n}`);
   }
 
@@ -145,8 +176,12 @@ export function lint(cwd) {
   });
   if (drift.length) {
     out.push('');
-    out.push('MEMORY.md figure drift — a bolded number in the MOC hook is absent from the note it points');
-    out.push('at. Usually the note was corrected and the hook was not. Check the note, then fix the hook:');
+    out.push(
+      'MEMORY.md figure drift — a bolded number in the MOC hook is absent from the note it points',
+    );
+    out.push(
+      'at. Usually the note was corrected and the hook was not. Check the note, then fix the hook:',
+    );
     for (const d of drift) out.push(`  - [[${d.target}]] hook says ${d.n}, not found in the note`);
   }
   return out.join('\n');

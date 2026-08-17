@@ -22,8 +22,14 @@ import { evalBody, pickSentence, metrics, RECALL_KS } from './lib/memory-eval.mj
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
-const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
-const repo = argv.filter((a) => !a.startsWith('--')).find((a) => fs.existsSync(a) && fs.statSync(a).isDirectory()) || process.cwd();
+const val = (n) => {
+  const i = argv.indexOf(n);
+  return i >= 0 ? argv[i + 1] : null;
+};
+const repo =
+  argv
+    .filter((a) => !a.startsWith('--'))
+    .find((a) => fs.existsSync(a) && fs.statSync(a).isDirectory()) || process.cwd();
 // --vault/--slug point this at a generated benchmark vault instead of the real one, which is how
 // a retrieval change gets scored against a FIXED note set. Explicit flags, not CLAUDE_VAULT: an
 // env override once sent a relocating hook at a throwaway path and cost 24 notes.
@@ -37,7 +43,8 @@ const STYLE = val('--style') || 'semantic';
 // Case sets are generated FROM a real vault and contain its content, so they live in
 // machine-local state, never in the plugin (which is a public repo).
 const DATA = paths.stateDir('eval');
-const CASES = val('--cases') || val('--out') || path.join(DATA, `eval-cases-${SLUG}-${STYLE}.jsonl`);
+const CASES =
+  val('--cases') || val('--out') || path.join(DATA, `eval-cases-${SLUG}-${STYLE}.jsonl`);
 
 function allNotes() {
   const out = [];
@@ -49,7 +56,8 @@ function allNotes() {
     }
   };
   add(path.join(VAULT, 'Memory', SLUG), 'Memory');
-  for (const l of ['Patterns', 'Mistakes', 'Decisions']) add(path.join(VAULT, 'Insights', SLUG, l), l);
+  for (const l of ['Patterns', 'Mistakes', 'Decisions'])
+    add(path.join(VAULT, 'Insights', SLUG, l), l);
   // permanent/ is a retrieval target like any other — consolidated notes are often the BEST answer,
   // so leaving them out both hides misses and rejects valid gold notes.
   for (const d of ['', 'domain', 'tools']) add(path.join(VAULT, 'permanent', d), 'permanent');
@@ -64,14 +72,21 @@ function allNotes() {
 if (flag('--author')) {
   const known = new Set(allNotes().map((n) => n.note));
   const lines = fs.readFileSync(0, 'utf8').trim().split('\n').filter(Boolean);
-  const cases = [], bad = [];
+  const cases = [],
+    bad = [];
   for (const l of lines) {
     const c = JSON.parse(l);
     const missing = c.gold.filter((g) => !known.has(g));
-    if (missing.length) { bad.push(`${missing.join(', ')}  (Q: ${c.q.slice(0, 60)})`); continue; }
+    if (missing.length) {
+      bad.push(`${missing.join(', ')}  (Q: ${c.q.slice(0, 60)})`);
+      continue;
+    }
     cases.push({ ...c, style: c.style || 'semantic-authored' });
   }
-  if (bad.length) { console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`); process.exit(1); }
+  if (bad.length) {
+    console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`);
+    process.exit(1);
+  }
   fs.writeFileSync(CASES, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
   console.log(`${cases.length} authored cases → ${CASES}`);
   process.exit(0);
@@ -80,7 +95,9 @@ if (flag('--author')) {
 if (flag('--generate')) {
   const n = Number(val('--generate') || 40);
   if (fs.existsSync(CASES) && !flag('--force')) {
-    console.log(`${CASES} exists. Regenerating invalidates every past number — pass --force if that is what you want.`);
+    console.log(
+      `${CASES} exists. Regenerating invalidates every past number — pass --force if that is what you want.`,
+    );
     process.exit(1);
   }
   const notes = allNotes();
@@ -97,18 +114,35 @@ if (flag('--generate')) {
   fs.writeFileSync(CASES, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
   console.log(`${cases.length} cases (${STYLE}) → ${CASES}`);
   console.log('Gitignored by the deny-by-default rule: these contain vault content.');
-  console.log('\n⚠ These are EXTRACTED SENTENCES, not paraphrases — the note contains them verbatim,');
-  console.log('  so BM25 finds them trivially (measured: lexical recall@1 97.5% vs semantic 62.5%).');
-  console.log('  Useful as a lexical-recall floor and an index-coverage check; NOT a paraphrase test.');
+  console.log(
+    '\n⚠ These are EXTRACTED SENTENCES, not paraphrases — the note contains them verbatim,',
+  );
+  console.log(
+    '  so BM25 finds them trivially (measured: lexical recall@1 97.5% vs semantic 62.5%).',
+  );
+  console.log(
+    '  Useful as a lexical-recall floor and an index-coverage check; NOT a paraphrase test.',
+  );
   console.log('  For that, author real questions and pipe them to --author.');
   process.exit(0);
 }
 
 // ---------------------------------------------------------------- run
 
-if (!flag('--run')) { console.log('usage: --generate N [--style semantic|keyword] | --run [--mode semantic|lexical]'); process.exit(1); }
-if (!fs.existsSync(CASES)) { console.log(`no case set at ${CASES}. Generate one first: --generate 40`); process.exit(1); }
-const cases = fs.readFileSync(CASES, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+if (!flag('--run')) {
+  console.log('usage: --generate N [--style semantic|keyword] | --run [--mode semantic|lexical]');
+  process.exit(1);
+}
+if (!fs.existsSync(CASES)) {
+  console.log(`no case set at ${CASES}. Generate one first: --generate 40`);
+  process.exit(1);
+}
+const cases = fs
+  .readFileSync(CASES, 'utf8')
+  .trim()
+  .split('\n')
+  .filter(Boolean)
+  .map((l) => JSON.parse(l));
 const mode = val('--mode') || 'semantic';
 // A rank-window intervention (reserved slots, re-ranking) is invisible when the harness fetches a
 // wider window than a session does: promoted items sort to the bottom by score, so scoring @5 from
@@ -126,19 +160,35 @@ if (mode === 'semantic') {
   if (val('--vault')) args.push('--vault', val('--vault'));
   if (val('--slug')) args.push('--slug', val('--slug'));
   for (const c of cases) args.push('--query', c.q);
-  const out = execFileSync('node', [path.join(paths.scriptsDir, 'memory-semantic.mjs'), ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  ranked = out.trim().split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+  const out = execFileSync('node', [path.join(paths.scriptsDir, 'memory-semantic.mjs'), ...args], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  ranked = out
+    .trim()
+    .split('\n')
+    .filter((l) => l.startsWith('{'))
+    .map((l) => JSON.parse(l));
 } else {
   // Lexical arm: a local BM25 stand-in, NOT ctx_search. It exists so a retrieval change can be
   // compared against a keyword baseline on the same cases inside one process. It does not reproduce
   // context-mode's ranking, and a number from it is not a claim about ctx_search.
-  const notes = allNotes().map((n) => ({ ...n, toks: evalBody(fs.readFileSync(n.file, 'utf8')).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2) }));
+  const notes = allNotes().map((n) => ({
+    ...n,
+    toks: evalBody(fs.readFileSync(n.file, 'utf8'))
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2),
+  }));
   const df = new Map();
   for (const n of notes) for (const t of new Set(n.toks)) df.set(t, (df.get(t) || 0) + 1);
   const avgdl = notes.reduce((a, n) => a + n.toks.length, 0) / notes.length;
   const N = notes.length;
   ranked = cases.map((c) => {
-    const qt = c.q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+    const qt = c.q
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2);
     const scored = notes.map((n) => {
       const tf = new Map();
       for (const t of n.toks) tf.set(t, (tf.get(t) || 0) + 1);
@@ -147,11 +197,17 @@ if (mode === 'semantic') {
         const f = tf.get(t) || 0;
         if (!f) continue;
         const idf = Math.log(1 + (N - (df.get(t) || 0) + 0.5) / ((df.get(t) || 0) + 0.5));
-        s += idf * (f * 2.2) / (f + 1.2 * (1 - 0.75 + 0.75 * n.toks.length / avgdl));
+        s += (idf * (f * 2.2)) / (f + 1.2 * (1 - 0.75 + (0.75 * n.toks.length) / avgdl));
       }
       return { note: n.note, s };
     });
-    return { q: c.q, results: scored.sort((a, b) => b.s - a.s).slice(0, K).map((x) => ({ note: x.note })) };
+    return {
+      q: c.q,
+      results: scored
+        .sort((a, b) => b.s - a.s)
+        .slice(0, K)
+        .map((x) => ({ note: x.note })),
+    };
   });
 }
 
@@ -168,19 +224,34 @@ const buried = perCase.filter((c) => c.rank > 3);
 // recall figure without it is the provenance gap CLAIM-1 exists to catch.
 const model = mode === 'semantic' ? activeModel() : 'bm25';
 if (flag('--json')) {
-  console.log(JSON.stringify({ cases: CASES, mode, model, fetchK: K, n: perCase.length, recall, mrr: +mrr.toFixed(3) }, null, 2));
+  console.log(
+    JSON.stringify(
+      { cases: CASES, mode, model, fetchK: K, n: perCase.length, recall, mrr: +mrr.toFixed(3) },
+      null,
+      2,
+    ),
+  );
   process.exit(0);
 }
-console.log(`${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}${val('--layer') ? ` · layer ${val('--layer')}` : ''}`);
-for (const k of KS) console.log(`  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`);
+console.log(
+  `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}${val('--layer') ? ` · layer ${val('--layer')}` : ''}`,
+);
+for (const k of KS)
+  console.log(
+    `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,
+  );
 console.log(`  MRR      ${mrr.toFixed(3)}`);
-console.log(`  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`);
+console.log(
+  `  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`,
+);
 // What beat the gold note is the diagnosis: a keyword magnet, a near-duplicate, or a better answer.
 if (misses.length) {
   console.log('\nMisses — and what ranked #1 instead:');
-  for (const m of misses.slice(0, 10)) console.log(`  want ${m.gold}\n    got ${m.top1}\n    Q: ${m.q.slice(0, 90)}`);
+  for (const m of misses.slice(0, 10))
+    console.log(`  want ${m.gold}\n    got ${m.top1}\n    Q: ${m.q.slice(0, 90)}`);
 }
 if (buried.length) {
   console.log('\nBuried (found, but below rank 3):');
-  for (const b of buried.slice(0, 8)) console.log(`  rank ${b.rank}  ${b.gold}  (beaten by ${b.top1})`);
+  for (const b of buried.slice(0, 8))
+    console.log(`  rank ${b.rank}  ${b.gold}  (beaten by ${b.top1})`);
 }

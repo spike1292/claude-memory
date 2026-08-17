@@ -26,40 +26,67 @@ export function noteTitle(filename, raw) {
   const m = raw.match(/^title: *(.*)$/m);
   const t = m ? m[1].trim() : '';
   if (t) return t;
-  return filename.replace(/\.md$/, '').replace(/^[0-9-]*/, '').replace(/-/g, ' ');
+  return filename
+    .replace(/\.md$/, '')
+    .replace(/^[0-9-]*/, '')
+    .replace(/-/g, ' ');
 }
 
 /** Newest first. Filenames are date-prefixed, so a plain reverse sort is chronological. */
 export function orderNewestFirst(names) {
-  return names.filter((f) => f.endsWith('.md')).sort().reverse();
+  return names
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+    .reverse();
 }
 
 export function render(slug, files, read) {
   if (!files.length) return '';
-  const out = [`Past mistakes for this project (L3 memory — avoid repeating; full lessons in Insights/${slug}/Mistakes/ or via /memory:health):`];
+  const out = [
+    `Past mistakes for this project (L3 memory — avoid repeating; full lessons in Insights/${slug}/Mistakes/ or via /memory:health):`,
+  ];
   for (const f of files.slice(0, LIMIT)) out.push(`- ${noteTitle(f, read(f))}`);
   if (files.length > LIMIT) out.push(`(+${files.length - LIMIT} older)`);
   return out.join('\n');
 }
 
 function isDir(p) {
-  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** The text to surface for `cwd`, or '' when there is nothing to say. */
 export function surface(cwd) {
   let slug;
-  try { slug = projectKey(cwd); } catch { slug = legacyKey(cwd); }
+  try {
+    slug = projectKey(cwd);
+  } catch {
+    slug = legacyKey(cwd);
+  }
   const dirFor = (s) => path.join(vault(), 'Insights', s, 'Mistakes');
   let dir = dirFor(slug);
   // Tolerate a not-yet-migrated vault: vault-memory-sync.sh performs the rename, but SessionStart
   // hook order isn't guaranteed, so fall back for this one session.
-  if (!isDir(dir)) { slug = legacyKey(cwd); dir = dirFor(slug); }
+  if (!isDir(dir)) {
+    slug = legacyKey(cwd);
+    dir = dirFor(slug);
+  }
   if (!isDir(dir)) return '';
 
   let files;
-  try { files = orderNewestFirst(fs.readdirSync(dir)); } catch { return ''; }
+  try {
+    files = orderNewestFirst(fs.readdirSync(dir));
+  } catch {
+    return '';
+  }
   return render(slug, files, (f) => {
-    try { return fs.readFileSync(path.join(dir, f), 'utf8'); } catch { return ''; }
+    try {
+      return fs.readFileSync(path.join(dir, f), 'utf8');
+    } catch {
+      return '';
+    }
   });
 }

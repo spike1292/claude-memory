@@ -9,10 +9,14 @@ let cwd = process.cwd();
 try {
   const j = JSON.parse(await new Response(process.stdin).text());
   if (j?.cwd) cwd = j.cwd;
-} catch { /* no payload — fall back to cwd */ }
+} catch {
+  /* no payload — fall back to cwd */
+}
 
 // A SessionStart hook must never break a session.
 try {
   const text = lint(cwd);
   if (text) console.log(text);
-} catch { /* best effort, by design */ }
+} catch {
+  /* best effort, by design */
+}

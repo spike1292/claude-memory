@@ -64,11 +64,29 @@ export const MODELS = {
   // Mean, NOT cls — measured, against the model card. BGE-v1.5 is documented as CLS-pooled, but on
   // the 28-case EN set cls scores @1 21.4% / MRR 0.337 against mean's 32.1% / 0.415. Whatever the
   // Xenova q8 export does, it is not what the card describes. Do not "fix" this to cls.
-  'bge-small-en': { id: 'Xenova/bge-small-en-v1.5', dim: 384, maxChars: 1800, pool: 'mean', q: 'Represent this sentence for searching relevant passages: ', d: '', dupeMin: 0.86, clusterMin: 0.80 },
+  'bge-small-en': {
+    id: 'Xenova/bge-small-en-v1.5',
+    dim: 384,
+    maxChars: 1800,
+    pool: 'mean',
+    q: 'Represent this sentence for searching relevant passages: ',
+    d: '',
+    dupeMin: 0.86,
+    clusterMin: 0.8,
+  },
   // Multilingual, same 384 dims. Better Dutch at k>=3 (NL @5 66.7% vs bge's 40.0%) but a large
   // English regression (@1 10.7% vs 32.1%): its similarity band is compressed, so ranking barely
   // discriminates. Available for Dutch-heavy work; not the default.
-  'e5-multi': { id: 'Xenova/multilingual-e5-small', dim: 384, maxChars: 1600, pool: 'mean', q: 'query: ', d: 'passage: ', dupeMin: 0.95, clusterMin: 0.92 },
+  'e5-multi': {
+    id: 'Xenova/multilingual-e5-small',
+    dim: 384,
+    maxChars: 1600,
+    pool: 'mean',
+    q: 'query: ',
+    d: 'passage: ',
+    dupeMin: 0.95,
+    clusterMin: 0.92,
+  },
   // 1024-dim multilingual. The 2026-08-15 "disqualified on cost" verdict was measuring my own
   // chunking, not the model: maxChars was 4000 here against 1800 everywhere else, and m3 accepts
   // 8192 tokens where bge-small truncates at 512 — so m3 alone actually processed the long tail,
@@ -94,7 +112,16 @@ export const MODELS = {
   //
   // Two real duplicates in that set scored BELOW 0.70 and no threshold would have found them; they
   // were caught by reading. This scan proposes, the human judges — do not read a clean run as proof.
-  'bge-m3': { id: 'Xenova/bge-m3', dim: 1024, maxChars: 1800, d: '', q: '', pool: 'cls', dupeMin: 0.75, clusterMin: 0.72 },
+  'bge-m3': {
+    id: 'Xenova/bge-m3',
+    dim: 1024,
+    maxChars: 1800,
+    d: '',
+    q: '',
+    pool: 'cls',
+    dupeMin: 0.75,
+    clusterMin: 0.72,
+  },
 };
 // DEFAULT = bge-m3 since 2026-08-15, by measurement on both case sets (table at the top).
 //
@@ -114,7 +141,10 @@ export const MODELS = {
 // a one-off you keep, so a model can be re-litigated for the price of an eval run.
 export const MODEL_KEY = activeModel();
 export const PROFILE = MODELS[MODEL_KEY];
-if (!PROFILE) { console.log(`unknown MEMORY_SEMANTIC_MODEL — known: ${Object.keys(MODELS).join(', ')}`); process.exit(1); }
+if (!PROFILE) {
+  console.log(`unknown MEMORY_SEMANTIC_MODEL — known: ${Object.keys(MODELS).join(', ')}`);
+  process.exit(1);
+}
 export const MODEL = PROFILE.id;
 export const DIM = PROFILE.dim;
 export const MAX_CHARS = PROFILE.maxChars;
@@ -151,7 +181,14 @@ export function chunkNote(name, raw) {
   const alias = body.match(/^_Also asked as:([\s\S]*?)(?:\n\s*\n|(?![\s\S]))/m);
   // Led by the NAME only, not the description: the head line is ~260 chars of summary prose here and
   // would outweigh the questions it is supposed to introduce — the same dilution being fixed.
-  if (alias) out.push({ heading: '(aliases)', text: `${name} — questions this note answers:\n${alias[1].replace(/_\s*$/, '').trim()}`.slice(0, MAX_CHARS) });
+  if (alias)
+    out.push({
+      heading: '(aliases)',
+      text: `${name} — questions this note answers:\n${alias[1].replace(/_\s*$/, '').trim()}`.slice(
+        0,
+        MAX_CHARS,
+      ),
+    });
   for (const part of body.split(/^##\s+/m)) {
     const nl = part.indexOf('\n');
     if (nl === -1) continue; // no body under this heading
@@ -186,7 +223,10 @@ export function fuseReserved(sorted, K, reserve, isReserved) {
   let drop = promote.length;
   const kept = [];
   for (let i = top.length - 1; i >= 0; i--) {
-    if (drop > 0 && !isReserved(top[i])) { drop--; continue; }
+    if (drop > 0 && !isReserved(top[i])) {
+      drop--;
+      continue;
+    }
     kept.unshift(top[i]);
   }
   return [...kept, ...promote].sort((a, b) => b.s - a.s);
@@ -207,8 +247,12 @@ export function assertVectorWidth(rows, dim, label = 'index') {
   const bad = rows.filter((r) => r.vec.byteLength !== want);
   if (!bad.length) return rows;
   const widths = [...new Set(bad.map((r) => r.vec.byteLength))].join(', ');
-  console.log(`⚠ ${label}: ${bad.length}/${rows.length} vectors are ${widths} bytes, expected ${want} (${dim}-dim).`);
-  console.log('  The index mixes models — results would be silent nonsense. Run --index --rebuild.');
+  console.log(
+    `⚠ ${label}: ${bad.length}/${rows.length} vectors are ${widths} bytes, expected ${want} (${dim}-dim).`,
+  );
+  console.log(
+    '  The index mixes models — results would be silent nonsense. Run --index --rebuild.',
+  );
   process.exit(1);
 }
 
@@ -227,8 +271,18 @@ export function assertVectorWidth(rows, dim, label = 'index') {
 // rather than requiring every pair to be similar.
 export function clusterNotes(items, minScore) {
   const parent = items.map((_, i) => i);
-  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  const find = (i) => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  const union = (a, b) => {
+    const ra = find(a),
+      rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
   for (let i = 0; i < items.length; i++)
     for (let j = i + 1; j < items.length; j++)
       if (cosine(items[i].vec, items[j].vec) >= minScore) union(i, j);
@@ -277,8 +331,16 @@ export function samefolderPairs(items, minScore) {
 // silently per-model — today already produced four of those (pooling, dedup threshold, chunk size,
 // batch). RRF consumes RANKS, so it cannot be broken by a model with a compressed similarity band,
 // which is exactly how e5-multi failed. One knob: how much a vector rank outweighs a keyword rank.
-export const STOP = new Set('the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about have has had will'.split(' '));
-export const lexTokens = (s) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOP.has(w));
+export const STOP = new Set(
+  'the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about have has had will'.split(
+    ' ',
+  ),
+);
+export const lexTokens = (s) =>
+  s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && !STOP.has(w));
 
 // Textbook BM25 over the chunk texts already in the index — no second store, no extra dependency.
 export function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
@@ -294,7 +356,9 @@ export function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
       const f = tf.get(t) || 0;
       if (!f) continue;
       const n = df.get(t) || 0;
-      s += Math.log(1 + (N - n + 0.5) / (n + 0.5)) * (f * (k1 + 1)) / (f + k1 * (1 - b + b * d.toks.length / avgdl));
+      s +=
+        (Math.log(1 + (N - n + 0.5) / (n + 0.5)) * (f * (k1 + 1))) /
+        (f + k1 * (1 - b + (b * d.toks.length) / avgdl));
     }
     return s;
   });
@@ -331,8 +395,12 @@ export const DEFAULT_FUSE_W = 2;
 export const DEFAULT_FUSE_LEX = 'chunk';
 export function fuseRRF(semRanked, lexRanked, w, k) {
   const score = new Map();
-  const add = (list, weight) => list.forEach((note, i) => score.set(note, (score.get(note) || 0) + weight / (RRF_K + i + 1)));
+  const add = (list, weight) =>
+    list.forEach((note, i) => score.set(note, (score.get(note) || 0) + weight / (RRF_K + i + 1)));
   add(semRanked, w);
   add(lexRanked, 1);
-  return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, k).map(([note]) => note);
+  return [...score.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, k)
+    .map(([note]) => note);
 }

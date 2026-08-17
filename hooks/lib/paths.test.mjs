@@ -17,13 +17,21 @@ test('paths', async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paths-'));
   process.env.CLAUDE_MEMORY_HOME = path.join(tmp, 'state');
 
-  const shell = (d) => run('bash', ['-c', '. "$0"; project_key "$1"', vaultEnvSh, d],
-    { encoding: 'utf8' }).trim();
+  const shell = (d) =>
+    run('bash', ['-c', '. "$0"; project_key "$1"', vaultEnvSh, d], { encoding: 'utf8' }).trim();
   // A fresh process per call — short-lived hooks are the whole reason the disk cache exists,
   // and an in-process Map would hide every bug this is meant to catch.
-  const fresh = (d) => run(process.execPath, ['--input-type=module', '-e',
-    `const p=await import(${JSON.stringify(MODULE)});`
-    + `console.log(p.projectKey(${JSON.stringify(d)}))`], { encoding: 'utf8', env: process.env }).trim();
+  const fresh = (d) =>
+    run(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const p=await import(${JSON.stringify(MODULE)});` +
+          `console.log(p.projectKey(${JSON.stringify(d)}))`,
+      ],
+      { encoding: 'utf8', env: process.env },
+    ).trim();
 
   // ONE subtest on purpose, not four. The remote changes below must land in the SAME SECOND as the
   // write before them — that is the whole point, since whole-second mtime alone cannot see them.
@@ -33,22 +41,49 @@ test('paths', async (t) => {
     const repo = path.join(tmp, 'repo');
     fs.mkdirSync(repo);
     run('git', ['init', '-q', repo]);
-    run('git', ['-C', repo, 'remote', 'add', 'origin', 'https://gitlab.example.com/Team/Alpha.git']);
+    run('git', [
+      '-C',
+      repo,
+      'remote',
+      'add',
+      'origin',
+      'https://gitlab.example.com/Team/Alpha.git',
+    ]);
     assert.strictEqual(fresh(repo), shell(repo), 'cold lookup must match the shell');
     assert.strictEqual(fresh(repo), shell(repo), 'cached lookup must match the shell');
 
     // A changed remote changes the key, and the cache must not outlive it. Size is what
     // discriminates here; this assertion failed for real when the stamp was seconds-only.
-    run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beta.git']);
+    run('git', [
+      '-C',
+      repo,
+      'remote',
+      'set-url',
+      'origin',
+      'https://gitlab.example.com/Team/Beta.git',
+    ]);
     assert.strictEqual(fresh(repo), shell(repo), 'stale key served after the remote changed');
     assert.ok(fresh(repo).endsWith('beta'), 'same-second remote change must invalidate');
 
     // The nastiest shape: same second AND identical byte length, so neither mtime nor size moves.
     // Only the inode does. This is the case a seconds-only stamp would have missed forever.
-    run('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/Team/Beto.git']);
-    assert.strictEqual(fresh(repo), shell(repo), 'shell and node must agree after a same-length change');
-    assert.ok(fresh(repo).endsWith('beto'),
-      'same-second, same-length remote change must invalidate — this is what the inode is for');
+    run('git', [
+      '-C',
+      repo,
+      'remote',
+      'set-url',
+      'origin',
+      'https://gitlab.example.com/Team/Beto.git',
+    ]);
+    assert.strictEqual(
+      fresh(repo),
+      shell(repo),
+      'shell and node must agree after a same-length change',
+    );
+    assert.ok(
+      fresh(repo).endsWith('beto'),
+      'same-second, same-length remote change must invalidate — this is what the inode is for',
+    );
 
     const sub = path.join(repo, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
