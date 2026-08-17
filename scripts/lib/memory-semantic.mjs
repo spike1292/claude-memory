@@ -41,7 +41,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { activeModel } from './model-default.mjs';
 import * as paths from '../../hooks/lib/paths.mjs';
 

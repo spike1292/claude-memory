@@ -51,7 +51,9 @@ jobs:
         run: |
           for f in hooks/lib/*.mjs scripts/lib/*.mjs; do
             case "$f" in *.test.mjs) continue ;; esac
-            out=$(node --input-type=module -e "await import('./$f')" 2>&1)
+            # --disable-warning: Node's OWN warnings are version-dependent (node:sqlite is
+            # experimental on 22, stable on 24), and this check is about OUR output, not Node's.
+            out=$(node --disable-warning=ExperimentalWarning --input-type=module -e "await import('./$f')" 2>&1)
             if [ -n "$out" ]; then
               echo "::error file=$f::importing this module produced output — it is not side-effect free:"
               echo "$out"
