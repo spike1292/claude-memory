@@ -84,6 +84,50 @@ export function evictableSockets(names, ownName) {
 export const QUIT = { quit: 1 };
 
 /**
+ * A lazily-loaded value that is loaded AT MOST ONCE at a time, and can be taken back out.
+ *
+ * `if (!x) x = await load()` is a check-then-act across an await. It was unreachable while the model
+ * loaded once at startup and never went back to null; making it unloadable made it reachable, and
+ * then two requests arriving after an unload would both load, with the second assignment silently
+ * dropping the first ~1.3GB onnxruntime session — no dispose(), exactly the leak this file exists to
+ * prevent. In `lib/` rather than beside its one caller because a regression here is SILENT: it costs
+ * memory, not correctness, so nothing fails and no answer changes.
+ *
+ * - `get()` shares the in-flight promise, so N concurrent callers cause ONE load.
+ * - a rejected load clears the in-flight slot, so one failure does not poison every later call.
+ * - `take()` removes and returns the value for the caller to release; a `take()` while a load is
+ *   still in flight returns null and lets that load land. Bounded: the value then waits for the
+ *   next `take()`, and for the server that is the following idle tick.
+ */
+export function singleFlight(load) {
+  let value = null;
+  let inFlight = null;
+  return {
+    get() {
+      if (value) return Promise.resolve(value);
+      if (!inFlight)
+        inFlight = load().then(
+          (v) => {
+            value = v;
+            inFlight = null;
+            return v;
+          },
+          (e) => {
+            inFlight = null;
+            throw e;
+          },
+        );
+      return inFlight;
+    },
+    take() {
+      const v = value;
+      value = null;
+      return v;
+    },
+  };
+}
+
+/**
  * Documents for the keyword arm, tokenised once.
  *
  * Granularity is a real choice, not a detail. `chunk` keeps both arms scoring the same units.

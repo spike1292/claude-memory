@@ -25,6 +25,7 @@ import {
   fuseRRF,
   buildLexDocs,
   evictableSockets,
+  singleFlight,
   fuseReserved,
   lexTokens,
   samefolderPairs,
@@ -428,4 +429,72 @@ test('buildLexDocs: chunk mode keeps rows, note mode concatenates', () => {
   // Anything that is not exactly 'note' means chunk — the env var is free text.
   assert.equal(buildLexDocs(rows, undefined).length, 3);
   assert.equal(buildLexDocs([], 'note').length, 0, 'an empty index is not an error');
+});
+
+// singleFlight — the guard that stops a concurrent reload leaking a ~1.3GB onnxruntime session.
+// Tested here rather than through the server because a regression is SILENT: it costs memory, not
+// correctness, so no answer changes and nothing throws.
+test('singleFlight: N concurrent callers cause exactly one load', async () => {
+  let loads = 0;
+  let release;
+  const cell = singleFlight(() => {
+    loads++;
+    return new Promise((r) => (release = () => r({ id: loads })));
+  });
+
+  const all = [cell.get(), cell.get(), cell.get(), cell.get()];
+  assert.equal(loads, 1, 'four concurrent get()s must share ONE in-flight load');
+  release();
+  const got = await Promise.all(all);
+  assert.equal(loads, 1, 'still one after they resolve');
+  for (const g of got) assert.equal(g.id, 1, 'every caller gets the same instance');
+  assert.equal(new Set(got).size, 1, 'literally the same object — a second would be the leak');
+
+  // Cached: a later get() must not reload.
+  assert.equal((await cell.get()).id, 1);
+  assert.equal(loads, 1, 'a resolved value is reused, not reloaded');
+});
+
+test('singleFlight: take() hands the value over and the next get() reloads', async () => {
+  let loads = 0;
+  const cell = singleFlight(async () => ({ id: ++loads }));
+
+  const first = await cell.get();
+  const taken = cell.take();
+  assert.equal(taken, first, 'take() returns the live value so the caller can release it');
+  assert.equal(cell.take(), null, 'taking twice must not hand out the same value again');
+
+  const second = await cell.get();
+  assert.equal(second.id, 2, 'after a take() the next get() loads afresh');
+  assert.notEqual(second, first);
+});
+
+test('singleFlight: a failed load clears the slot instead of poisoning it', async () => {
+  let attempts = 0;
+  const cell = singleFlight(async () => {
+    if (++attempts === 1) throw new Error('cold start failed');
+    return { id: attempts };
+  });
+
+  await assert.rejects(() => cell.get(), /cold start failed/);
+  // The bug this guards: a rejected promise left in the slot would reject every later call forever,
+  // so recall would stay dead for the life of the process after one transient failure.
+  assert.equal((await cell.get()).id, 2, 'the next call retries rather than replaying the failure');
+});
+
+test('singleFlight: take() during an in-flight load lets that load land', async () => {
+  let loads = 0;
+  let release;
+  const cell = singleFlight(() => {
+    loads++;
+    return new Promise((r) => (release = () => r({ id: loads })));
+  });
+
+  const pending = cell.get();
+  assert.equal(cell.take(), null, 'nothing is loaded yet, so there is nothing to release');
+  release();
+  const v = await pending;
+  assert.equal(v.id, 1, 'the caller still gets its value');
+  assert.equal(await cell.get(), v, 'and the arrived value is now the cached one');
+  assert.equal(loads, 1, 'the take() must not have triggered a second load');
 });

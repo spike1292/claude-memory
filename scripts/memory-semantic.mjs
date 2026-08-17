@@ -41,6 +41,7 @@ import {
   bm25,
   fuseRRF,
   socketIsLive,
+  singleFlight,
   evictableSockets,
   buildLexDocs,
   QUIT,
@@ -98,8 +99,6 @@ const hasChunks = db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0;
 // vectors from the previous model while reporting the index as current.
 const modelChanged = hasChunks && storedModel !== MODEL;
 
-let embedder = null;
-
 // Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
 // `InferenceSession.release()` on each session, which is what actually returns the native memory —
 // dropping the JS reference alone would not, since the allocation lives on the native side.
@@ -108,9 +107,8 @@ let embedder = null;
 // indexes and the tokenised BM25 documents all survive, so a question after an unload costs a model
 // load (~1.5s) rather than a cold start, and one the keyword arm answers costs nothing.
 async function unloadEmbedder() {
-  if (!embedder) return false;
-  const e = embedder;
-  embedder = null; // clear FIRST: a request arriving mid-dispose must rebuild, not reuse a corpse
+  const e = embedderCell.take(); // out of the cell FIRST: a request arriving mid-dispose must
+  if (!e) return false; //          rebuild, not reuse a corpse
   try {
     await e.dispose();
   } catch {
@@ -138,37 +136,12 @@ async function loadEmbedder() {
   });
 }
 
-// In-flight load, shared. `if (!embedder) embedder = await load()` is a check-then-act across an
-// await, and it only became reachable when unloadEmbedder() made `embedder` go back to null
-// mid-life: two requests arriving after an unload would BOTH see null, both load, and the second
-// assignment would drop the first ~1.3GB session with no dispose(). That is precisely the leak this
-// file exists to prevent, reintroduced through the reload path. Plausible now that one server
-// answers for every project on the machine.
-//
-// ponytail: an unload that fires while a load is in flight simply declines (nothing is loaded yet),
-// so the arriving model stays until the next request re-arms the timer, or the process idles out.
-// That needs a >5min model load to happen at all.
-let embedderLoading = null;
-function getEmbedder() {
-  if (embedder) return Promise.resolve(embedder);
-  if (!embedderLoading) {
-    embedderLoading = loadEmbedder().then(
-      (e) => {
-        embedder = e;
-        embedderLoading = null;
-        return e;
-      },
-      (err) => {
-        embedderLoading = null; // a failed load must not poison every later request
-        throw err;
-      },
-    );
-  }
-  return embedderLoading;
-}
+// The check-then-act guard lives in lib/ with its tests — see singleFlight(). A regression in it
+// is silent: it costs a leaked ~1.3GB session, not a wrong answer, so nothing here would fail.
+const embedderCell = singleFlight(loadEmbedder);
 
 async function embed(texts) {
-  const model = await getEmbedder();
+  const model = await embedderCell.get();
   // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
   // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a
   // BGE model mean-pooled vectors still returns plausible cosines, so the loss never surfaces
