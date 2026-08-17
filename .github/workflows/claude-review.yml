@@ -2,6 +2,13 @@ name: Claude Review
 
 # main is protected with zero required approvals — a solo repo has no second reader.
 # This is that reader. It comments; it never approves and never merges.
+#
+# IT WILL NOT RUN ON A PR THAT EDITS THIS FILE. claude-code-action refuses to execute unless the
+# workflow file is byte-identical to the copy on the default branch — otherwise a PR could rewrite
+# the workflow and walk off with the token. On a mismatch it logs a warning and exits SUCCESS, so
+# the check goes green having reviewed nothing. Every PR up to and including the one that added
+# this file changed a workflow, so none of them were ever reviewed; that is expected, not a bug.
+# Look for "Exiting due to workflow validation skip" in the job log before debugging anything else.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

@@ -161,6 +161,13 @@ a generic prompt.
 Both use `CLAUDE_CODE_OAUTH_TOKEN` (a Claude subscription), not `ANTHROPIC_API_KEY`. A workflow
 whose guard names a different secret than the action consumes will skip forever and report success.
 
+**A PR that edits a workflow file does not get reviewed.** `claude-code-action` runs only when the
+workflow is byte-identical to the copy on the default branch — a PR could otherwise rewrite the
+workflow and steal the token. On a mismatch it warns and exits *success*, so the check is green
+and no review exists. Confirm with `Exiting due to workflow validation skip` in the job log before
+investigating anything else. Consequence worth planning around: CI changes are exactly the changes
+that never get a second reader, so review those by hand.
+
 CI also fails if a Python dependency reappears — `.py` files and shell scripts calling `python`
 are both rejected.
 
