@@ -22,9 +22,6 @@ jobs:
       - name: Syntax-check every shell hook and script
         run: for f in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do bash -n "$f"; done
 
-      # The release version is derived from commit shape; a wrong branch ships the wrong number.
-      - name: Release version derivation
-        run: scripts/release.sh --selftest
 
       # A synthetic vault, never a real one. memory-semantic's self-test asserts against real
       # notes on purpose and hard-fails when it finds none — an empty run must not read as a pass.
@@ -65,6 +62,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Pure bash, so it lives here rather than in the Node matrix, where it would run twice for
+      # no reason. The release version is derived from commit shape; a wrong branch ships a wrong
+      # number, and nothing downstream would notice.
+      - name: Release version derivation
+        run: scripts/release.sh --selftest
+
       - name: Version agrees everywhere it is written
         run: |
           v=$(jq -r .version package.json)

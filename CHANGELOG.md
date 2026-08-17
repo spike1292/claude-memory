@@ -28,6 +28,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Corrected the rule for when a PR goes unreviewed: it is **per workflow file**, not per PR. Only
   a change to `claude-review.yml` itself blocks its review; editing `ci.yml` or `release.yml` is
   reviewed normally. The broader claim was written down first and was wrong.
+- `release.yml` passes the resolved version through `env` rather than splicing `${{ }}` into the
+  script text, which is the standard Actions script-injection shape, and `scripts/release.sh
+  --selftest` moved out of the Node matrix (it is pure bash and was running twice per push).
 - `release.yml` runs under a `concurrency: release` group, so two release-worthy merges landing
   seconds apart serialise instead of racing on `gh release create`.
 - The CI version check covers `package-lock.json` as well, which had silently sat at 0.1.0 through
