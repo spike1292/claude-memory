@@ -598,7 +598,8 @@ export function fuseRRF(semRanked, lexRanked, w, k) {
 
 /**
  * A query-ready index bundle from raw chunk rows. No SQLite here — `lib/` must not import
- * node:sqlite (CI enforces it), so the entry reads the rows and this owns everything after.
+ * node:sqlite (CI enforces it — "node:sqlite is imported only by entry points"), so the entry
+ * reads the rows and this owns everything after.
  *
  * Split out for the reason singleFlight and mtimeCache were: the alias ablation and the card map
  * are both silent when wrong. Dropping alias chunks changes retrieval without erroring, and a

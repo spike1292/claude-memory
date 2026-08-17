@@ -201,12 +201,17 @@ async function embed(texts) {
 // Every mode except --index reads vectors it did not build; refuse if they came from another model
 // rather than returning scores that look plausible and mean nothing.
 //
-// --serve is exempt because this gate reads ONE index — the spawning project's, since
-// memory-recall.mjs spawns with a cwd and no --slug. That was the right check when a server served
-// exactly that project. Now it serves all of them, so a single stale index would exit(1) the shared
-// server and silently kill recall for every OTHER project too: the spawn is detached with stdio
-// ignored, so nothing surfaces. loadIndex() applies the same check per slug at request time and
-// throws instead, which keeps one stale index one failed request.
+// --serve must never reach this, and today it cannot twice over: `modelChanged` is false for it
+// because no DB is opened at all. The explicit `!flag('--serve')` stays as the one that states the
+// INTENT, since the other is a side effect of an unrelated decision and would evaporate the moment
+// anyone reopens that handle.
+//
+// The intent: this gate reads ONE index — the spawning project's, since memory-recall.mjs spawns
+// with a cwd and no --slug. Right when a server served exactly that project; wrong now that it
+// serves all of them, where a single stale index would exit(1) the shared server and silently kill
+// recall for every OTHER project (the spawn is detached with stdio ignored, so nothing surfaces).
+// loadIndex() applies the same check per slug at request time and throws, keeping one stale index
+// to one failed request.
 if (modelChanged && !flag('--index') && !flag('--serve')) {
   console.log(
     `index was built with ${storedModel}, but ${MODEL} is configured — run --index to rebuild.`,
