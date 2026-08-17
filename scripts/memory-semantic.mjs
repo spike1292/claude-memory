@@ -100,6 +100,12 @@ const hasChunks = db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0;
 // vectors from the previous model while reporting the index as current.
 const modelChanged = hasChunks && storedModel !== MODEL;
 
+// --serve reads nothing more from this handle: every query goes through loadIndex(), which opens
+// and closes its own per-slug handle. Leaving it open would hold an fd for the life of a 30-minute
+// process, for a project the server has no special relationship with — it is merely whichever one
+// happened to spawn it. Same rule loadIndex() follows; node:sqlite does not free on GC.
+if (flag('--serve')) db.close();
+
 // Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
 // `InferenceSession.release()` on each session, which is what actually returns the native memory —
 // dropping the JS reference alone would not, since the allocation lives on the native side.
@@ -785,7 +791,7 @@ if (flag('--serve')) {
       });
       if (done) evicted++;
     }
-    if (evicted) console.log(`evicted ${evicted} server(s) for other projects`);
+    if (evicted) console.log(`evicted ${evicted} stale server(s) — other model, or per-project`);
   });
   for (const sig of ['SIGINT', 'SIGTERM'])
     process.on(sig, () => {
