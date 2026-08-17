@@ -119,25 +119,56 @@ async function unloadEmbedder() {
   return true;
 }
 
-async function embed(texts) {
-  if (!embedder) {
-    const transformers = await import('@huggingface/transformers');
-    // Redirect the weights to $CLAUDE_MEMORY_HOME/models BEFORE the first pipeline() call.
-    // The default caches ~722 MB inside node_modules/@huggingface/transformers/.cache, which is
-    // the plugin's version-pinned dir and is discarded on every /plugin update.
-    paths.useModelCache(transformers);
-    embedder = await transformers.pipeline('feature-extraction', MODEL, {
-      dtype: 'q8',
-      // Do not let onnxruntime pool freed arena blocks. Its BFCArena grows to the largest shapes it
-      // has ever seen and never returns them, which is how a single long query left a resident
-      // server holding 8.8G of dirty MALLOC_LARGE (2026-08-17). The clamp below bounds the input;
-      // this bounds the ALLOCATOR, so a future model, a larger MAX_CHARS or an --index run over
-      // long notes cannot reintroduce the same failure by a different route.
-      // Costs per-inference allocation instead of pooled reuse — measured worth it, see the
-      // arena numbers in CHANGELOG.
-      session_options: { enableCpuMemArena: false },
-    });
+async function loadEmbedder() {
+  const transformers = await import('@huggingface/transformers');
+  // Redirect the weights to $CLAUDE_MEMORY_HOME/models BEFORE the first pipeline() call.
+  // The default caches ~722 MB inside node_modules/@huggingface/transformers/.cache, which is
+  // the plugin's version-pinned dir and is discarded on every /plugin update.
+  paths.useModelCache(transformers);
+  return transformers.pipeline('feature-extraction', MODEL, {
+    dtype: 'q8',
+    // Do not let onnxruntime pool freed arena blocks. Its BFCArena grows to the largest shapes it
+    // has ever seen and never returns them, which is how a single long query left a resident
+    // server holding 8.8G of dirty MALLOC_LARGE (2026-08-17). The clamp below bounds the input;
+    // this bounds the ALLOCATOR, so a future model, a larger MAX_CHARS or an --index run over
+    // long notes cannot reintroduce the same failure by a different route.
+    // Costs per-inference allocation instead of pooled reuse — measured worth it, see the
+    // arena numbers in CHANGELOG.
+    session_options: { enableCpuMemArena: false },
+  });
+}
+
+// In-flight load, shared. `if (!embedder) embedder = await load()` is a check-then-act across an
+// await, and it only became reachable when unloadEmbedder() made `embedder` go back to null
+// mid-life: two requests arriving after an unload would BOTH see null, both load, and the second
+// assignment would drop the first ~1.3GB session with no dispose(). That is precisely the leak this
+// file exists to prevent, reintroduced through the reload path. Plausible now that one server
+// answers for every project on the machine.
+//
+// ponytail: an unload that fires while a load is in flight simply declines (nothing is loaded yet),
+// so the arriving model stays until the next request re-arms the timer, or the process idles out.
+// That needs a >5min model load to happen at all.
+let embedderLoading = null;
+function getEmbedder() {
+  if (embedder) return Promise.resolve(embedder);
+  if (!embedderLoading) {
+    embedderLoading = loadEmbedder().then(
+      (e) => {
+        embedder = e;
+        embedderLoading = null;
+        return e;
+      },
+      (err) => {
+        embedderLoading = null; // a failed load must not poison every later request
+        throw err;
+      },
+    );
   }
+  return embedderLoading;
+}
+
+async function embed(texts) {
+  const model = await getEmbedder();
   // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
   // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a
   // BGE model mean-pooled vectors still returns plausible cosines, so the loss never surfaces
@@ -162,7 +193,7 @@ async function embed(texts) {
   const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
   const vecs = [];
   for (let i = 0; i < clamped.length; i += B) {
-    const out = await embedder(clamped.slice(i, i + B), {
+    const out = await model(clamped.slice(i, i + B), {
       pooling: PROFILE.pool ?? 'mean',
       normalize: true,
     });
@@ -525,17 +556,34 @@ const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
 function loadIndex(slug) {
   const dbPath = path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`);
   if (!fs.existsSync(dbPath)) throw new Error(`no index for ${slug} — run --index first`);
+  // Closed in the finally: `.all()` materialises every row, so nothing below needs the handle, and
+  // node:sqlite does NOT free it on GC. Measured 2026-08-17 — 200 unclosed DatabaseSync opens held
+  // 201 fds, unchanged after an explicit global.gc(). In a 30-minute server that reopens on every
+  // mtime bump, for every project, that is an fd leak ending in EMFILE. The same reason
+  // unloadEmbedder() calls dispose() rather than trusting the garbage collector.
   const idb = new DatabaseSync(dbPath);
-  // Same guard the CLI applies, per index: vectors from another model are noise that looks like a
-  // score, and in a multi-project server one stale index must not be answered from.
-  const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
-  const rows = layer
-    ? idb.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
-    : idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
-  if (rows.length && stored !== MODEL)
-    throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
-  if (!rows.length)
-    throw new Error(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
+  try {
+    // Same guard the CLI applies, per index: vectors from another model are noise that looks like a
+    // score, and in a multi-project server one stale index must not be answered from.
+    const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
+    const rows = layer
+      ? idb.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
+      : idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
+    if (rows.length && stored !== MODEL)
+      throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
+    if (!rows.length)
+      throw new Error(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
+    return buildBundle(slug, dbPath, rows);
+  } finally {
+    try {
+      idb.close();
+    } catch {
+      /* already closed, or never opened cleanly — nothing left to release */
+    }
+  }
+}
+
+function buildBundle(slug, dbPath, rows) {
   // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
   // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is
   // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)

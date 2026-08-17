@@ -35,6 +35,16 @@ what a user's setup depends on: config keys, command names, vault layout, and
   bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
   or an `--index` run over long notes cannot reintroduce the same failure by another route.
   Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
+- **A concurrent model reload no longer leaks a session.** `if (!embedder) embedder = await load()`
+  is a check-then-act across an `await`, and it only became reachable once the model could return to
+  `null` mid-life: two requests arriving after an unload both saw `null`, both loaded, and the second
+  assignment dropped the first ~1.3GB session with no `dispose()`. The in-flight load is now shared.
+  Measured: 4 concurrent requests into an unloaded server settle at `MALLOC_LARGE` 450.0M — one
+  session, not four — and all four answer in the same ~1000ms.
+- **`loadIndex()` closes its SQLite handle.** `node:sqlite` does not free it on GC: 200 unclosed
+  `DatabaseSync` opens held 201 fds, unchanged after an explicit `global.gc()`. Harmless in a
+  short-lived CLI, an fd leak ending in EMFILE in a 30-minute server that reopens on every mtime
+  bump for every project. Measured after the fix: 12 forced reloads, 0 handles held.
 - **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
   socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
   server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
