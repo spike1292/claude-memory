@@ -23,6 +23,7 @@ node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest # 44 assertions
 node hooks/distill-session.mjs   --selftest    # 22 assertions
 node hooks/validate-note.mjs     --selftest    # 24 assertions
+node hooks/insights-surface.mjs  --selftest    # 13 assertions
 node hooks/lib/paths.mjs         --selftest    # 7 assertions, project-key cache vs vault-env.sh
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```

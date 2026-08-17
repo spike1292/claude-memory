@@ -32,7 +32,7 @@ Synology Drive; pinning it permanently offline changed the numbers substantially
 | | cloud-backed | pinned offline |
 | --- | --- | --- |
 | `find` over vault (1172 notes) | 130 ms | **63 ms** |
-| SessionStart, all five hooks | 798 ms | **485 ms** |
+| SessionStart, all five hooks | 798 ms | **485 ms** (430 ms after the ports) |
 
 Per hook, SessionStart:
 
@@ -49,32 +49,47 @@ Per hook, SessionStart:
 
 ## Ported
 
-**`validate-note.sh` → `validate-note.mjs`** (PostToolUse, every Write/Edit). Was ~15 fork sites
-plus a Node subprocess.
+### `validate-note.sh` → `validate-note.mjs`
+
+PostToolUse, on every Write and Edit — the hottest hook in the system. Was ~15 fork sites plus a
+Node subprocess.
 
 | | cloud-backed | pinned offline |
 | --- | --- | --- |
-| shell | 165.9 ms | 130.6 ms |
-| node | 92.9 ms | **92.6 ms** |
+| shell | 165.9 ms | 132.3 ms |
+| node, audit spawned | 92.9 ms | 92.6 ms |
+| node, audit imported | — | **54.0 ms** |
 
-Verified by differential test, not inspection: both versions over **all 1172 notes in a real vault
-plus nine edge-case payloads** (empty stdin, malformed JSON, null path, outside the vault, missing
-file, a directory, non-`.md`, the `.path` alternate key) — identical output throughout, with 100
-warning lines emitted on each side, so it is a diff of two *working* checkers.
+The last row is the same hook after `memory-audit-checks.mjs` was made import-safe — it now runs
+its vault-wide audit only when executed directly, so the claim-level predicates run in-process
+instead of costing a second Node startup. That refactor was verified by diffing the full audit,
+`--deferred`, and `--check-file` across all 1172 notes (107 findings): identical before and after.
 
-It also gained a 24-assertion self-test. The shell version had none; its only coverage was
-`bash -n`, in a file whose entire job is catching mistakes.
+The hook itself was verified against the shell original across **all 1172 notes plus nine edge-case
+payloads** (empty stdin, malformed JSON, null path, outside the vault, missing file, a directory,
+non-`.md`, the `.path` alternate key) — identical output throughout, with 100 warning lines emitted
+on each side, so it is a diff of two *working* checkers rather than two silent ones.
+
+It gained a 24-assertion self-test. The shell version had none; its only coverage was `bash -n`, in
+a file whose entire job is catching mistakes.
+
+### `insights-surface.sh` → `insights-surface.mjs`
+
+SessionStart: **124 ms → 52 ms**. It forked `grep`+`sed` per note — up to 45 subprocesses to print
+15 lines.
+
+The port fixed a **latent bug the shell version had all along.** `t=$(grep -m1 '^title:' "$f")`
+returns non-zero for a note with no `title:` line, and under `set -e` a failing assignment aborts
+the `| while read` *subshell*. So one untitled note in `Mistakes/` silently dropped **every**
+bullet — while still printing the header, so it read as "no past mistakes" rather than as a
+failure. The intended fallback to the filename, on the very next line, was unreachable.
+
+Nothing in the real vault triggered it; a crafted differential case did. 13-assertion self-test.
 
 ## Next, if continued
 
-`insights-surface.sh` — a spike measured **160.3 ms → 47.9 ms** with byte-identical output. Best
-remaining ratio in the system.
-
-**`validate-note.mjs` is still 92.6 ms, of which ~48 ms is spawning
-`memory-audit-checks.mjs --check-file`.** A version importing those predicates instead measured
-**50.3 ms**. Doing it means making `memory-audit-checks.mjs` import-safe — today it runs a
-vault-wide audit at import time — which is a 542-line file `/memory:health` and `/memory:prune`
-depend on. Worth ~43 ms per write; not free.
+`memory-link-lint.sh` (73.9 ms) is the last fork-heavy read-only hook. `vault-memory-sync.sh`
+(133.1 ms) is the largest single cost but is explicitly out of scope below.
 
 ## Do not port
 
@@ -84,7 +99,8 @@ depend on. Worth ~43 ms per write; not free.
 
 ## Measurement discipline
 
-Three measurements in this evaluation were wrong before they were right. Each looked plausible:
+Five measurements in this evaluation were wrong before they were right. Every one of them was
+*fast*, which is what made them convincing:
 
 1. **Timing a script that never ran.** A copy of `validate-note.sh` in a scratch directory could
    not resolve `lib/vault-env.sh`, so it exited instantly. It reported 13.8 ms and briefly looked
@@ -94,6 +110,12 @@ Three measurements in this evaluation were wrong before they were right. Each lo
 3. **Timing both implementations at once.** A harness importing `validate-note.mjs` executed its
    `main()` on import, so the "imported, no subprocess" variant was still spawning the subprocess.
    This one exposed a real defect — the module now runs nothing on import.
+4. **Timing a command that never started.** A loop built the command in a variable; word-splitting
+   silently failed and `2>&1` swallowed it. Reported 11.4 ms for a hook whose runtime floor is
+   38.8 ms — below the floor is the tell.
+5. **Timing an excluded file.** The auto-picked note was `GRAPH_REPORT.md`, which the hook skips by
+   design, so both sides measured an early exit and the improvement vanished.
 
-**Before trusting a timing here: confirm the thing under test produced the output it should.** A
-fast number is more often a broken harness than a win.
+**Before trusting a timing here: assert that the thing under test produced the output it should,
+inside the timing loop.** Every measurement in this document that survived does so because the
+harness counted non-empty runs. A number below the runtime floor is not a result, it is a bug.

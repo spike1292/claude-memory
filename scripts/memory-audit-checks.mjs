@@ -13,6 +13,7 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as paths from '../hooks/lib/paths.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
@@ -201,7 +202,8 @@ export function buildSuffixIndex(paths) {
   return idx;
 }
 
-if (process.argv.includes('--selftest')) {
+if (process.argv[1] && process.argv.includes('--selftest')
+    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { strict: assert } = await import('node:assert');
   // standing negatives — real claims
   assert.ok(isStandingNegative('- **cra2 prod has never served traffic** — 0–3 requests/24h'));
@@ -283,31 +285,44 @@ if (process.argv.includes('--selftest')) {
   process.exit(0);
 }
 
-// --check-file <path>: run the per-line predicates against ONE file and print warnings. This is what
-// moves the checks to WRITE time instead of audit time — the inflated recall figure reached a public
-// README between two audits, and an audit-only check structurally cannot catch that.
-// Called by the validate-note.sh PostToolUse hook. Exits before any vault/git resolution so it stays
-// fast enough to run on every write.
-{
-  const i = process.argv.indexOf('--check-file');
-  if (i !== -1 && process.argv[i + 1]) {
-    const f = process.argv[i + 1];
-    if (!fs.existsSync(f)) process.exit(0);
-    const raw = fs.readFileSync(f, 'utf8');
-    const lines = raw.split('\n');
-    const out = [];
-    lines.forEach((l, n) => {
-      const ctx = lines.slice(Math.max(0, n - 2), n + 2).join(' ');
-      if (isUnprovenancedMetric(l, ctx)) out.push(`  · line ${n + 1}: metric with no instrument named — cite the run, script, case set or date`);
-    });
-    for (const fr of freshnessFindings(raw)) out.push(`  · line ${fr.line}: volatile quantity, no stamp — make it timeless, a dated snapshot, or a pointer`);
-    const s = supersessionState(raw);
-    if (s.inProse && !s.marked && !s.declared) out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
-    if (out.length) console.log(out.join('\n'));
-    process.exit(0);
-  }
+/**
+ * Run the per-line predicates against ONE file and return the warning lines.
+ *
+ * This is what moves the checks to WRITE time instead of audit time — an inflated recall figure
+ * reached a public README between two audits, and an audit-only check structurally cannot catch
+ * that. Exported so hooks/validate-note.mjs can call it in-process: spawning this file cost ~48ms
+ * of the hook's 93ms, on a hook that runs on every Write and Edit.
+ */
+export function checkFile(f) {
+  if (!fs.existsSync(f)) return [];
+  const raw = fs.readFileSync(f, 'utf8');
+  const lines = raw.split('\n');
+  const out = [];
+  lines.forEach((l, n) => {
+    const ctx = lines.slice(Math.max(0, n - 2), n + 2).join(' ');
+    if (isUnprovenancedMetric(l, ctx)) out.push(`  · line ${n + 1}: metric with no instrument named — cite the run, script, case set or date`);
+  });
+  for (const fr of freshnessFindings(raw)) out.push(`  · line ${fr.line}: volatile quantity, no stamp — make it timeless, a dated snapshot, or a pointer`);
+  const s = supersessionState(raw);
+  if (s.inProse && !s.marked && !s.declared) out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
+  return out;
 }
 
+// Everything below RUNS. It resolves the vault, scans git and prints — so it must not happen on
+// import, or a hook importing checkFile() would kick off a full audit and exit the process.
+const isMain = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain && process.argv.includes('--check-file')) {
+  const f = process.argv[process.argv.indexOf('--check-file') + 1];
+  if (f) {
+    const out = checkFile(f);
+    if (out.length) console.log(out.join('\n'));
+  }
+  process.exit(0);
+}
+
+if (isMain) {
 const repo = process.argv.slice(2).find((a) => !a.startsWith('--')) || process.cwd();
 // maxBuffer: `git ls-files` in this monorepo is ~2 MB; the 1 MB default fails with ENOBUFS.
 const sh = (c, cwd = repo) =>
@@ -540,3 +555,4 @@ section(
 );
 
 console.log('\ndone — every section above is a candidate, not a verdict.');
+}

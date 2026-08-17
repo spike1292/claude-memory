@@ -38,6 +38,7 @@ jobs:
           node scripts/memory-audit-checks.mjs --selftest
           node hooks/distill-session.mjs --selftest
           node hooks/validate-note.mjs --selftest
+          node hooks/insights-surface.mjs --selftest
           node hooks/lib/paths.mjs --selftest
 
       # There is no Python left. Fail if any creeps back in — the whole point of the port was

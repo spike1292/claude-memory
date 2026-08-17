@@ -26,16 +26,24 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
-- **`validate-note.sh` is now `validate-note.mjs`** — the hook that runs on every Write/Edit.
-  **166 ms → 93 ms** with the vault cloud-backed, **131 ms → 93 ms** with it pinned to local disk;
-  a hook timing means nothing without saying which. The shell version forked ~15 processes (`jq`,
-  `head`, `awk`, six `grep`s, `basename`, `sed`) to check one file; fork-per-operation, not the
-  language, was the cost.
+- **`validate-note.sh` is now `validate-note.mjs` — 132 ms → 54 ms** on the hook that runs on every
+  Write/Edit (vault pinned to local disk; it was 166 ms → 93 ms cloud-backed, and a hook timing
+  means nothing without saying which). The shell version forked ~15 processes (`jq`, `head`, `awk`,
+  six `grep`s, `basename`, `sed`) to check one file; fork-per-operation, not the language, was the
+  cost. Half the remaining win came from `memory-audit-checks.mjs` becoming import-safe, so its
+  predicates run in-process instead of costing a second Node startup.
+- **`insights-surface.sh` is now `insights-surface.mjs` — 124 ms → 52 ms**, and it **fixes a latent
+  bug**: `t=$(grep -m1 '^title:' …)` exits non-zero for a note with no `title:` line, which under
+  `set -e` aborted the `| while read` subshell. A single untitled note in `Mistakes/` silently
+  dropped *every* bullet while still printing the header — so it read as "no past mistakes" rather
+  than as a failure, and the intended filename fallback on the next line was unreachable.
   Verified against the shell version across all **1172 notes in a real vault plus nine edge-case
   payloads: identical output** (100 warnings emitted on each side, so the checks demonstrably
   fire). The convention predicates are now pure functions with a 24-assertion self-test, where the
-  shell had none. It still spawns `memory-audit-checks.mjs --check-file`, now the dominant
-  remaining cost — importing it needs that module to stop running a vault-wide audit at import.
+  shell had none.
+- `scripts/memory-audit-checks.mjs` runs its vault-wide audit only when executed directly, and
+  exports `checkFile()`. Importing it used to start an audit and exit the process. Verified by
+  diffing the full audit, `--deferred`, and `--check-file` over all 1172 notes: identical.
 - **`projectKey()` is cached on disk — roughly 50 ms off every hook invocation.** It delegates to
   `vault-env.sh` so there is one implementation of the key, but that costs a bash+git subprocess:
   72 ms in-process, the single largest cost in both the per-prompt recall hook and the per-write
@@ -75,8 +83,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   presence of an L4 digest instead of by looking on PATH.
 
 - `CLAUDE.md` — architecture and conventions for future Claude Code sessions.
-- CI on every pull request: the five self-tests on Node 22 and 24, `bash -n` over every shell
-  hook, and a check that the version agrees across all four places it is written.
+- CI on every pull request: the self-tests on Node 22 and 24, `bash -n` over every shell hook, and
+  a check that the version agrees across all four places it is written.
 - Release automation: pushing a `v*` tag publishes a GitHub release with that version's changelog
   section. `scripts/release.sh` prepares the version bump and opens the PR.
 - `main` is protected: no direct pushes, no force-pushes, CI must be green to merge.

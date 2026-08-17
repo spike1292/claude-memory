@@ -15,14 +15,14 @@
 // sed) plus a node subprocess, measured 165.9ms per edit. Language was never the cost; fork-per-
 // operation was. Verified against the shell version on every note in the vault: identical output.
 //
-// Still spawns `memory-audit-checks.mjs --check-file` rather than importing it. That module runs a
-// vault-wide audit at import time, so making it importable means restructuring a 542-line file
-// that /memory:health and /memory:prune depend on — a separate change, worth ~45ms more.
+// The claim-level checks are IMPORTED, not spawned. Spawning `memory-audit-checks.mjs
+// --check-file` cost ~48ms of the hook's 93ms; that module is now import-safe (it runs its
+// vault-wide audit only when executed directly), so the predicates run in-process.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { vault, scriptsDir } from './lib/paths.mjs';
+import { vault } from './lib/paths.mjs';
+import { checkFile } from '../scripts/memory-audit-checks.mjs';
 
 /** Frontmatter block: the lines between the opening fence on line 1 and the next `---`. */
 export function frontmatter(raw) {
@@ -120,17 +120,13 @@ function main() {
   // Claim-level checks (CLAIM-1 metric provenance, FRESH-1 staleness, prose-only supersession) run
   // from the tested predicates rather than being re-implemented here. This is the write-time half:
   // an inflated recall figure once reached a public README *between* two audits.
-  let claims = '';
-  try {
-    claims = execFileSync(process.execPath,
-      [path.join(scriptsDir, 'memory-audit-checks.mjs'), '--check-file', file],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\n+$/, '');
-  } catch { /* best effort — a failed audit must never break a write */ }
+  let claims = [];
+  try { claims = checkFile(file); } catch { /* best effort — never break a write */ }
 
-  if (!warn.length && !claims) return;
+  if (!warn.length && !claims.length) return;
   console.log(`note conventions — ${path.basename(file, '.md')}`);
   for (const w of warn) console.log(`  · ${w}`);
-  if (claims) console.log(claims);
+  if (claims.length) console.log(claims.join('\n'));
 }
 
 // Nothing runs on import. This module exports its predicates, and an importer that got the hook
