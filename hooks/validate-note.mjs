@@ -133,9 +133,12 @@ function main() {
   if (claims) console.log(claims);
 }
 
-// Guarded on argv[1] as well as the flag: this module exports predicates that a test could import.
-if (process.argv[1] && process.argv.includes('--selftest')
-    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Nothing runs on import. This module exports its predicates, and an importer that got the hook
+// executed — reading stdin, spawning the audit — would be a nasty surprise; it briefly was one.
+const isMain = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain && process.argv.includes('--selftest')) {
   const assert = await import('node:assert').then((m) => m.default);
   const V = '/v';
 
@@ -184,6 +187,6 @@ if (process.argv[1] && process.argv.includes('--selftest')
     .some((w) => w.includes('name: must equal')), 'metacharacters must match literally');
 
   console.log('selftest: 24 assertions passed');
-} else {
+} else if (isMain) {
   try { main(); } catch { /* a hook must never fail a write */ }
 }

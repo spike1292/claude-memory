@@ -26,9 +26,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
-- **`validate-note.sh` is now `validate-note.mjs` — 166 ms → 93 ms on the hook that runs on every
-  Write/Edit.** The shell version forked ~15 processes (`jq`, `head`, `awk`, six `grep`s,
-  `basename`, `sed`) to check one file; fork-per-operation, not the language, was the cost.
+- **`validate-note.sh` is now `validate-note.mjs`** — the hook that runs on every Write/Edit.
+  **166 ms → 93 ms** with the vault cloud-backed, **131 ms → 93 ms** with it pinned to local disk;
+  a hook timing means nothing without saying which. The shell version forked ~15 processes (`jq`,
+  `head`, `awk`, six `grep`s, `basename`, `sed`) to check one file; fork-per-operation, not the
+  language, was the cost.
   Verified against the shell version across all **1172 notes in a real vault plus nine edge-case
   payloads: identical output** (100 warnings emitted on each side, so the checks demonstrably
   fire). The convention predicates are now pure functions with a 24-assertion self-test, where the
@@ -60,8 +62,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - A self-test for the project-key cache (`node hooks/lib/paths.mjs --selftest`), which asserts
   against `vault-env.sh` itself rather than fixed strings, uses a fresh process per lookup, and
   covers the failure that would matter: a changed git remote must not keep serving the old key.
-- Bun evaluated and declined, recorded in `CLAUDE.md` with the numbers. The blocker is that Bun
-  1.3.14 has no `node:sqlite`; `onnxruntime-node` and `@huggingface/transformers` both load fine.
+- A `docs/` tree with an index, two dated decision records ([Bun](docs/decisions/2026-08-17-bun.md),
+  [shell vs Node in hooks](docs/decisions/2026-08-17-shell-vs-node-hooks.md)) and two guides
+  ([optional integrations](docs/optional-integrations.md),
+  [CI and releases](docs/ci-and-releases.md)). `CLAUDE.md` is loaded into context every session, so
+  detail that is read occasionally now lives in files opened on purpose — 231 → 169 lines, with the
+  removed material moved rather than dropped.
 - Documentation for the two optional integrations — `context-mode` (backs `ctx_search`) and
   `codebase-memory-mcp` (backs the L4 `Graph/` layer and `/memory:graph-report`). Neither is
   installed by this plugin, neither is required, and neither is on the retrieval path. Because
