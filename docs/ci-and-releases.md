@@ -28,6 +28,11 @@ below is what stands in for a second reader — it comments, it never approves.
   times, which is why it is now a check rather than a convention.
 - **`node:test` is imported only by `*.test.mjs`** — a top-level `node:test` import prints the whole
   test report to stdout even outside the runner, and Claude Code reads hook stdout.
+- **`node:sqlite` is imported only by entry points** — the entry owns the handle; a `lib/` module
+  that opens a database cannot be tested without one. The side-effect check above cannot catch this,
+  because it suppresses `ExperimentalWarning` precisely because `node:sqlite` emits one, so such an
+  import would pass silently. Matches the import, not the string: both `lib/` files mention
+  `node:sqlite` in prose.
 - `scripts/release.sh --selftest` (bash, 13 cases — `node --test` cannot run it)
 - `bash -n` over every shell file
 - **no Python dependency** — fails on any `.py` file or shell script calling `python`
