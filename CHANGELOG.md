@@ -36,9 +36,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   version ran `grep -rlF` over the whole Memory *and* Insights tree once per note — O(N×(N+M)) —
   which measured **10.9 s on a real 49-note project** against the hook's **10 s timeout**, so on
   the largest vault the lint was being killed silently and produced nothing. The Node version
-  indexes links in a single pass, O(N+M): **243 ms**, identical output, and flat as the vault grows
-  (60 notes: 1949 ms → 64 ms). It looked like a 74 ms hook only because it had been measured in a
-  repo with no L1 notes, where the loop never ran.
+  indexes links in a single pass, O(N+M): **243 ms**, and flat as the vault grows (60 notes:
+  1949 ms → 64 ms). Output matches the shell version on every note in a real vault and on generated
+  vaults up to 60 notes, with one deliberate exception: a final `MEMORY.md` line with no trailing
+  newline: `while read` dropped it, so the shell silently missed drift declared on that line.
+  It had looked like a 74 ms hook only because it was measured in a repo with no L1 notes, where
+  the loop never ran at all.
 - **Shell hooks now share the project-key cache** instead of forking `git` for it. `vault-env.sh`
   reads the same `project-keys.json` that `paths.mjs` writes: `project_key` **34.3 ms → 22.4 ms**,
   and `vault-memory-sync.sh` **97.7 ms → 70.9 ms** with no port. The stamp is

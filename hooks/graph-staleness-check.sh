@@ -25,7 +25,7 @@ cwd=$(cat | jq -r '.cwd // empty' 2>/dev/null || true)
 [ -z "${cwd:-}" ] && cwd="$PWD"
 slug=$(project_key "$cwd")
 report="$VAULT/Graph/$slug/GRAPH_REPORT.md"
-# Pre-migration fallback (see insights-surface.sh).
+# Pre-migration fallback (see insights-surface.mjs).
 [ -f "$report" ] || { slug=$(legacy_key "$cwd"); report="$VAULT/Graph/$slug/GRAPH_REPORT.md"; }
 
 [ -f "$report" ] || exit 0

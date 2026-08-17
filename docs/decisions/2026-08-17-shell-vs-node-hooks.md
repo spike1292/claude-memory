@@ -99,7 +99,11 @@ file once and indexes the links, O(N+M).
 | 60 | 1949 ms | 64 ms |
 | **49 (real project, 1006 Insights notes)** | **10905 ms** | **243 ms** |
 
-Node is flat; shell is quadratic. Identical output at every size.
+Node is flat; shell is quadratic. Output matches at every size tested, with one deliberate
+divergence: a final `MEMORY.md` line with **no trailing newline**. `while IFS= read -r` never runs
+its body for that line, so the shell silently missed any figure drift declared on it. Node reads
+it. Found while reviewing the diff, not by the differential tests — every fixture they generated
+ended in a newline.
 
 **This hook was timing out in production.** `hooks.json` allows it 10 s, and the real 49-note
 project measured 10.9 s — so on the largest vault the lint was being killed, silently, producing
