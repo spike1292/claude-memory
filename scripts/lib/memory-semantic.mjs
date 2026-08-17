@@ -102,6 +102,7 @@ export const QUIT = { quit: 1 };
 export function singleFlight(load) {
   let value = null;
   let inFlight = null;
+  let borrowed = 0;
   return {
     get() {
       if (value) return Promise.resolve(value);
@@ -119,11 +120,59 @@ export function singleFlight(load) {
         );
       return inFlight;
     },
+    /**
+     * Hold the value for the duration of `use`, so `take()` cannot pull it out mid-flight.
+     *
+     * singleFlight originally guarded concurrent LOADS. The mirror hazard is on the release side:
+     * an idle timer calling take() → dispose() while another request is still running inference on
+     * that same session frees it underneath native code. Rare — it needs an inference outlasting
+     * the idle timer — but it is the same class of bug, and the failure is a native crash rather
+     * than a wrong answer.
+     */
+    async borrow(use) {
+      const v = await this.get();
+      borrowed++;
+      try {
+        return await use(v);
+      } finally {
+        borrowed--;
+      }
+    },
+    /** In use right now? `take()` refuses while it is, so callers can retry on their next tick. */
+    busy() {
+      return borrowed > 0;
+    },
     take() {
+      if (borrowed > 0) return null;
       const v = value;
       value = null;
       return v;
     },
+  };
+}
+
+/**
+ * Per-key cache that reloads when the source has been written since it was loaded.
+ *
+ * Split out for the same reason as singleFlight: the staleness comparison is one expression whose
+ * failure modes are all silent. `mtimeMs <= entry.loadedAt` must be written in that direction so a
+ * NaN — which is what a failed stat gives — falls through to a RELOAD rather than serving a cached
+ * index forever. The other order (`mtimeMs > entry.loadedAt`) reads identically and is wrong.
+ *
+ * Entries are never evicted: an index is ~15MB of vectors against the ~1.3GB model, so the process
+ * idle timer is a good enough upper bound on how long they live.
+ */
+export function mtimeCache(load) {
+  const entries = new Map();
+  return {
+    get(key, mtimeMs) {
+      const have = entries.get(key);
+      if (have && mtimeMs <= have.loadedAt) return have;
+      const fresh = load(key);
+      entries.set(key, fresh);
+      return fresh;
+    },
+    size: () => entries.size,
   };
 }
 

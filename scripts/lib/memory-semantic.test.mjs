@@ -25,6 +25,7 @@ import {
   fuseRRF,
   buildLexDocs,
   evictableSockets,
+  mtimeCache,
   singleFlight,
   fuseReserved,
   lexTokens,
@@ -497,4 +498,62 @@ test('singleFlight: take() during an in-flight load lets that load land', async 
   assert.equal(v.id, 1, 'the caller still gets its value');
   assert.equal(await cell.get(), v, 'and the arrived value is now the cached one');
   assert.equal(loads, 1, 'the take() must not have triggered a second load');
+});
+
+test('singleFlight: take() refuses while the value is borrowed', async () => {
+  let loads = 0;
+  const cell = singleFlight(async () => ({ id: ++loads, disposed: false }));
+
+  let releaseWork;
+  const work = new Promise((r) => (releaseWork = r));
+  const inFlight = cell.borrow(async (v) => {
+    // The idle timer fires here, mid-inference. Disposing now would free the session underneath
+    // native code — a crash, not a wrong answer.
+    assert.equal(cell.busy(), true, 'the cell must report itself in use');
+    assert.equal(cell.take(), null, 'take() must refuse while borrowed');
+    await work;
+    return v.id;
+  });
+
+  releaseWork();
+  assert.equal(await inFlight, 1);
+  assert.equal(cell.busy(), false, 'no longer in use once the borrow returns');
+  assert.ok(cell.take(), 'and now it may be taken and disposed');
+});
+
+test('singleFlight: a throwing borrow still releases the value', async () => {
+  const cell = singleFlight(async () => ({ id: 1 }));
+  await assert.rejects(() =>
+    cell.borrow(async () => {
+      throw new Error('inference blew up');
+    }),
+  );
+  // Without the finally, one failed request would pin the session for the life of the process —
+  // the unload would refuse forever and the 1.3GB would never come back.
+  assert.equal(cell.busy(), false, 'a failed borrow must not leave the cell permanently busy');
+  assert.ok(cell.take(), 'so the idle timer can still reclaim it');
+});
+
+// mtimeCache — reload-when-written. One expression, and every way of getting it wrong is silent.
+test('mtimeCache: serves cached until the source is newer, and reloads on a failed stat', () => {
+  let loads = 0;
+  const cache = mtimeCache((key) => ({ key, id: ++loads, loadedAt: 1000 }));
+
+  const a = cache.get('projA', 999);
+  assert.equal(a.id, 1, 'first get loads');
+  assert.equal(cache.get('projA', 999).id, 1, 'not newer than loadedAt — cached');
+  assert.equal(cache.get('projA', 1000).id, 1, 'equal is not newer — still cached');
+  assert.equal(loads, 1);
+
+  assert.equal(cache.get('projA', 1001).id, 2, 'written since load — reloads');
+
+  // The direction that matters: a failed stat yields NaN, and NaN <= x is false, so it RELOADS.
+  // Written the other way round (`mtimeMs > loadedAt`) NaN would be false and serve a stale index
+  // forever, which reads identically and is wrong.
+  const before = loads;
+  cache.get('projA', NaN);
+  assert.equal(loads, before + 1, 'an unreadable source must reload, never serve stale silently');
+
+  cache.get('projB', 0);
+  assert.equal(cache.size(), 2, 'projects are cached independently');
 });

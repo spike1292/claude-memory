@@ -42,6 +42,7 @@ import {
   fuseRRF,
   socketIsLive,
   singleFlight,
+  mtimeCache,
   evictableSockets,
   buildLexDocs,
   QUIT,
@@ -107,6 +108,7 @@ const modelChanged = hasChunks && storedModel !== MODEL;
 // indexes and the tokenised BM25 documents all survive, so a question after an unload costs a model
 // load (~1.5s) rather than a cold start, and one the keyword arm answers costs nothing.
 async function unloadEmbedder() {
+  // take() returns null while a request is mid-inference; the next idle tick retries.
   const e = embedderCell.take(); // out of the cell FIRST: a request arriving mid-dispose must
   if (!e) return false; //          rebuild, not reuse a corpse
   try {
@@ -141,38 +143,41 @@ async function loadEmbedder() {
 const embedderCell = singleFlight(loadEmbedder);
 
 async function embed(texts) {
-  const model = await embedderCell.get();
-  // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
-  // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a
-  // BGE model mean-pooled vectors still returns plausible cosines, so the loss never surfaces
-  // as an error — only as rankings that are quietly worse than the model can do.
-  // Slice HERE, not in the callers, so the index path and the query path embed identically. They
-  // did not: indexing batched 8 while a query batched however many questions were asked at once —
-  // so the eval harness (28 questions in one padded batch) computed different vectors than a live
-  // session (one question). With batch 1 the padding is gone and both sides agree by construction.
-  const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
-  // Clamp HERE for the same reason the batch is pinned here: both sides must embed identically.
-  // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3) but nothing capped a QUERY, and the
-  // recall hook embeds the user's whole prompt verbatim. A pasted stack trace went in at 57k chars
-  // — 32x longer than anything in the index, so it was also being compared against a length the
-  // index never contains.
-  //
-  // The memory cost is the sharp end. Attention is O(seq^2) per layer and bge-m3 accepts 8192
-  // tokens across 24 layers, so one long prompt allocates multi-GB activations — and onnxruntime's
-  // arena allocator keeps whatever high-water mark it reaches for the life of the process, which
-  // for --serve is 30 idle minutes. Measured 2026-08-17 on a 16GB machine: two resident servers
-  // holding 8.8G of dirty MALLOC_LARGE each, ~7.4G of it compressed; killing them returned it.
-  // A server that has only ever seen <=1800-char inputs stays at ~450M.
-  const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
-  const vecs = [];
-  for (let i = 0; i < clamped.length; i += B) {
-    const out = await model(clamped.slice(i, i + B), {
-      pooling: PROFILE.pool ?? 'mean',
-      normalize: true,
-    });
-    for (const v of out.tolist()) vecs.push(Float32Array.from(v));
-  }
-  return vecs;
+  // borrow(), not get(): holds the session for the whole inference so the idle timer cannot
+  // dispose() it out from under native code. See singleFlight().
+  return embedderCell.borrow(async (model) => {
+    // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
+    // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a
+    // BGE model mean-pooled vectors still returns plausible cosines, so the loss never surfaces
+    // as an error — only as rankings that are quietly worse than the model can do.
+    // Slice HERE, not in the callers, so the index path and the query path embed identically. They
+    // did not: indexing batched 8 while a query batched however many questions were asked at once —
+    // so the eval harness (28 questions in one padded batch) computed different vectors than a live
+    // session (one question). With batch 1 the padding is gone and both sides agree by construction.
+    const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
+    // Clamp HERE for the same reason the batch is pinned here: both sides must embed identically.
+    // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3) but nothing capped a QUERY, and the
+    // recall hook embeds the user's whole prompt verbatim. A pasted stack trace went in at 57k chars
+    // — 32x longer than anything in the index, so it was also being compared against a length the
+    // index never contains.
+    //
+    // The memory cost is the sharp end. Attention is O(seq^2) per layer and bge-m3 accepts 8192
+    // tokens across 24 layers, so one long prompt allocates multi-GB activations — and onnxruntime's
+    // arena allocator keeps whatever high-water mark it reaches for the life of the process, which
+    // for --serve is 30 idle minutes. Measured 2026-08-17 on a 16GB machine: two resident servers
+    // holding 8.8G of dirty MALLOC_LARGE each, ~7.4G of it compressed; killing them returned it.
+    // A server that has only ever seen <=1800-char inputs stays at ~450M.
+    const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
+    const vecs = [];
+    for (let i = 0; i < clamped.length; i += B) {
+      const out = await model(clamped.slice(i, i + B), {
+        pooling: PROFILE.pool ?? 'mean',
+        normalize: true,
+      });
+      for (const v of out.tolist()) vecs.push(Float32Array.from(v));
+    }
+    return vecs;
+  });
 }
 
 // Every mode except --index reads vectors it did not build; refuse if they came from another model
@@ -670,25 +675,22 @@ if (flag('--serve')) {
   // project instead of one process per project. They are cheap next to the model (~15M of vectors
   // for 3400 chunks against ~1.3G of weights), so they are cached and never evicted; the process
   // idle timer is the upper bound on how long they live.
-  const indexes = new Map();
-  function indexFor(slug) {
-    const have = indexes.get(slug);
-    // The index changes under us as notes are written, and a stale one is answered from silently.
-    // mtime on the DB file is the cheap check — the same one the single-project server used, now
-    // per project and used to RELOAD rather than merely to warn.
-    if (have) {
-      let mtime = 0;
-      try {
-        mtime = fs.statSync(have.dbPath).mtimeMs;
-      } catch {
-        /* file vanished; fall through and let loadIndex report it */
-      }
-      if (mtime <= have.loadedAt) return have;
-    }
+  // Indexes are per project and loaded on demand — this is what lets ONE process serve every
+  // project instead of one process per project. The staleness policy lives in mtimeCache(): the
+  // index changes under us as notes are written, and a stale one is answered from silently.
+  const indexCache = mtimeCache((slug) => {
     const fresh = loadIndex(slug);
-    indexes.set(slug, fresh);
     console.log(`loaded index ${slug} (${fresh.rowsUsed.length} chunks)`);
     return fresh;
+  });
+  function indexFor(slug) {
+    let mtime = NaN; // a failed stat must RELOAD, not serve a cached index forever
+    try {
+      mtime = fs.statSync(path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`)).mtimeMs;
+    } catch {
+      /* gone or unreadable — let loadIndex() report it properly */
+    }
+    return indexCache.get(slug, mtime);
   }
 
   // Pay the model load now, not on the first real request. The hook only spawns this server because

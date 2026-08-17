@@ -35,6 +35,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
   or an `--index` run over long notes cannot reintroduce the same failure by another route.
   Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
+- **An idle unload can no longer dispose a session mid-inference.** `singleFlight` guarded
+  concurrent *loads*; the mirror hazard is on the release side, where the idle timer could
+  `dispose()` a session another request was still running inference on — freeing it underneath
+  native code, so a crash rather than a wrong answer. `embed()` now borrows the session for the
+  duration and `take()` refuses while borrowed, retrying on the next idle tick. Rare (it needs an
+  inference outlasting the 5-minute timer) but the same failure class as the load-side race.
 - **A concurrent model reload no longer leaks a session.** `if (!embedder) embedder = await load()`
   is a check-then-act across an `await`, and it only became reachable once the model could return to
   `null` mid-life: two requests arriving after an unload both saw `null`, both loaded, and the second
