@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Version agrees across all four manifest fields
+      - name: Version agrees everywhere it is written
         run: |
           v=$(jq -r .version package.json)
           for spec in '.claude-plugin/plugin.json:.version' \
@@ -80,4 +80,4 @@ jobs:
               echo "::error file=$f::version drift — $q is $got, package.json is $v. Use scripts/release.sh."
               exit 1; }
           done
-          echo "all four agree on $v"
+          echo "every version field agrees on $v"

@@ -16,6 +16,12 @@ on:
 permissions:
   contents: write
 
+# Two merges landing seconds apart would otherwise race on `gh release create`. The idempotency
+# check below makes that unlikely rather than impossible; serialising makes it neither.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest

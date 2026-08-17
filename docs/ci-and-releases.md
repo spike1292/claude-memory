@@ -21,7 +21,7 @@ below is what stands in for a second reader — it comments, it never approves.
 - the self-tests on **Node 22** (the floor `engines` promises) **and 24**
 - `bash -n` over every shell file
 - **no Python dependency** — fails on any `.py` file or shell script calling `python`
-- **version agreement** across all four places it is written: `package.json`,
+- **version agreement** across every place it is written: `package.json`, `package-lock.json`,
   `.claude-plugin/plugin.json`, and both `.metadata.version` and `.plugins[0].version` in
   `.claude-plugin/marketplace.json`
 

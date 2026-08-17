@@ -149,9 +149,11 @@ fires SessionStart again.
 - Porting between the two runtimes is not mechanical. JS `\w` is ASCII-only where Python's is
   unicode-aware (so slugs need `\p{L}\p{N}` with the `u` flag), and `toISOString()` is UTC where
   `date.today()` is local — note filenames are dated, so that one is visible.
-- Version is written in four places — `package.json`, `.claude-plugin/plugin.json`, and both
-  `.metadata.version` and `.plugins[0].version` in `.claude-plugin/marketplace.json`. Never bump
-  them by hand; `scripts/release.sh` does all four and CI fails the PR if they disagree.
+- Version is written in five places — `package.json`, `package-lock.json`,
+  `.claude-plugin/plugin.json`, and both `.metadata.version` and `.plugins[0].version` in
+  `.claude-plugin/marketplace.json`. Never bump them by hand; `scripts/release.sh` writes all five
+  and CI fails the PR if they disagree. `package-lock.json` was the one that drifted, unnoticed,
+  through three releases.
 
 ## Working on this repo
 

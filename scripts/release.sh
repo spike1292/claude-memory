@@ -6,8 +6,8 @@
 #   scripts/release.sh          # version derived from the conventional commits since the last tag
 #   scripts/release.sh 0.1.4    # or state it outright
 #
-# ponytail: sed over four known JSON fields rather than a bump tool. `npm version` only knows
-# package.json, and the other three are what Claude Code actually reads.
+# ponytail: jq over five known JSON fields rather than a bump tool. `npm version` only knows
+# package.json and would not touch the marketplace manifests Claude Code actually reads.
 set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
