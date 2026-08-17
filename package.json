@@ -13,5 +13,9 @@
   },
   "allowScripts": {
     "onnxruntime-node@1.24.3": true
+  },
+  "scripts": {
+    "format": "npx --yes prettier@3.6.2 --write .",
+    "format:check": "npx --yes prettier@3.6.2 --check ."
   }
 }

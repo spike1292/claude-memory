@@ -12,10 +12,14 @@ let cwd = process.cwd();
 try {
   const j = JSON.parse(await new Response(process.stdin).text());
   if (j?.cwd) cwd = j.cwd;
-} catch { /* no payload — fall back to cwd, as the shell version did */ }
+} catch {
+  /* no payload — fall back to cwd, as the shell version did */
+}
 
 // A SessionStart hook must never break a session.
 try {
   const text = surface(cwd);
   if (text) console.log(text);
-} catch { /* best effort, by design */ }
+} catch {
+  /* best effort, by design */
+}

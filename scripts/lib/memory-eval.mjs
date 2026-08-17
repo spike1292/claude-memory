@@ -29,7 +29,13 @@ export const RECALL_KS = [1, 3, 5, 10];
 // ---------------------------------------------------------------- pure helpers (self-tested)
 
 export function titleTokens(stem) {
-  return new Set(stem.toLowerCase().replace(/^\d{4}-\d{2}-\d{2}-/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 3));
+  return new Set(
+    stem
+      .toLowerCase()
+      .replace(/^\d{4}-\d{2}-\d{2}-/, '')
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 3),
+  );
 }
 
 // Strip everything that would leak the answer's own vocabulary or isn't prose: frontmatter,
@@ -49,11 +55,18 @@ export function evalBody(raw) {
 // semantic style; otherwise it degenerates into a keyword lookup and every channel scores well.
 export function pickSentence(body, stem, style) {
   const tt = titleTokens(stem);
-  const sents = body.split(/(?<=[.!?])\s+|\n{2,}/).map((s) => s.replace(/\s+/g, ' ').trim())
+  const sents = body
+    .split(/(?<=[.!?])\s+|\n{2,}/)
+    .map((s) => s.replace(/\s+/g, ' ').trim())
     .filter((s) => s.length >= 40 && s.length <= 220 && /[a-z]/.test(s));
   if (!sents.length) return null;
   const score = (s) => {
-    const toks = new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3));
+    const toks = new Set(
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 3),
+    );
     let overlap = 0;
     for (const w of toks) if (tt.has(w)) overlap++;
     return style === 'keyword' ? overlap : -overlap; // keyword wants the title words, semantic avoids them
@@ -64,7 +77,8 @@ export function pickSentence(body, stem, style) {
 export function metrics(perCase) {
   const n = perCase.length || 1;
   const recall = {};
-  for (const k of RECALL_KS) recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
+  for (const k of RECALL_KS)
+    recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
   const mrr = perCase.reduce((a, c) => a + (c.rank ? 1 / c.rank : 0), 0) / n;
   return { recall, mrr };
 }

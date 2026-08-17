@@ -43,13 +43,50 @@ TRANSCRIPT:
 // \p{L}\p{N} with the u flag, NOT \w: JS's \w is ASCII-only where Python's is unicode-aware, so
 // a plain port would silently strip accented characters out of every non-English title.
 export function slugify(text) {
-  const s = text.toLowerCase().replace(/[^\p{L}\p{N}_\s-]/gu, '').trim();
+  const s = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s-]/gu, '')
+    .trim();
   return s.replace(/[\s_]+/g, '-').slice(0, 60) || 'untitled';
 }
 
-const STOP = new Set(['the', 'a', 'an', 'of', 'for', 'in', 'to', 'with', 'and', 'or', 'not', 'is',
-  'are', 'be', 'as', 'on', 'at', 'by', 'from', 'into', 'via', 'when', 'then', 'its', 'this',
-  'that', 'must', 'should', 'can', 'do', 'does', 'dont', 'was', 'were', 'it']);
+const STOP = new Set([
+  'the',
+  'a',
+  'an',
+  'of',
+  'for',
+  'in',
+  'to',
+  'with',
+  'and',
+  'or',
+  'not',
+  'is',
+  'are',
+  'be',
+  'as',
+  'on',
+  'at',
+  'by',
+  'from',
+  'into',
+  'via',
+  'when',
+  'then',
+  'its',
+  'this',
+  'that',
+  'must',
+  'should',
+  'can',
+  'do',
+  'does',
+  'dont',
+  'was',
+  'were',
+  'it',
+]);
 
 // Jaccard over slug tokens above which a new note is treated as a restatement of an existing
 // one. 0.45 merges the known regressions (allow-failure/masks-child ~0.6, resource-group/
@@ -80,7 +117,7 @@ const RECONCILE_AT = 0.45;
 // a lesson but almost no wording. Upgrade path: embed the new note and compare against the semantic
 // index, which finds all 16 at cosine >= 0.75 — that means reindexing BEFORE this check instead of
 // after, so only do it if the miss rate ever outweighs added SessionEnd latency.
-const RECONCILE_BODY_AT = 0.40;
+const RECONCILE_BODY_AT = 0.4;
 
 /** Significant, lightly-singularised tokens of a slug — the reconciliation key. */
 export function tokens(slug) {
@@ -126,11 +163,16 @@ export function findNearDuplicate(dir, sl, body = '') {
   const nowBody = body ? bodyTokens(body) : new Set();
   if (!now.size && !nowBody.size) return null;
   let entries;
-  try { entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md')); } catch { return null; }
+  try {
+    entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+  } catch {
+    return null;
+  }
   // Each arm is divided by its OWN threshold, so both are expressed as "fraction of the bar" and a
   // single >= 1 gate compares them. Without that the two scales are not comparable and whichever
   // arm happens to run second wins.
-  let best = null, bestScore = 0;
+  let best = null,
+    bestScore = 0;
   for (const f of entries) {
     const file = path.join(dir, f);
     let score = 0;
@@ -138,16 +180,23 @@ export function findNearDuplicate(dir, sl, body = '') {
     if (old.size && now.size) {
       let inter = 0;
       for (const t of now) if (old.has(t)) inter++;
-      score = (inter / (now.size + old.size - inter)) / RECONCILE_AT;
+      score = inter / (now.size + old.size - inter) / RECONCILE_AT;
     }
     // Body arm only when a body was supplied — a 2-arg call reads no files and behaves exactly as
     // before. N reads per new note; the folder is the bound, and this runs detached at SessionEnd.
     if (nowBody.size) {
       let oldBody = null;
-      try { oldBody = bodyTokens(fs.readFileSync(file, 'utf8')); } catch { /* unreadable: skip */ }
+      try {
+        oldBody = bodyTokens(fs.readFileSync(file, 'utf8'));
+      } catch {
+        /* unreadable: skip */
+      }
       if (oldBody?.size) score = Math.max(score, containment(nowBody, oldBody) / RECONCILE_BODY_AT);
     }
-    if (score > bestScore) { best = file; bestScore = score; }
+    if (score > bestScore) {
+      best = file;
+      bestScore = score;
+    }
   }
   return bestScore >= 1 ? best : null;
 }
@@ -164,7 +213,9 @@ export function reconcile(file, title, body, aliasLine, today) {
     const m = text.match(/^_Also asked as: (.+)_\s*$/m);
     if (m) {
       const have = new Set(m[1].split(',').map((a) => a.trim().toLowerCase().replace(/\.+$/, '')));
-      const add = aliasLine.split(',').map((a) => a.trim())
+      const add = aliasLine
+        .split(',')
+        .map((a) => a.trim())
         .filter((a) => a && !have.has(a.toLowerCase().replace(/\.+$/, '')));
       if (add.length) {
         const merged = `_Also asked as: ${m[1].replace(/\.+$/, '')}, ${add.join(', ')}._`;
@@ -183,11 +234,18 @@ export function reconcile(file, title, body, aliasLine, today) {
 
 /** Pull the first JSON object out of a model response (tolerates fences/prose). */
 export function extractJson(raw) {
-  const cleaned = raw.trim().replace(/^```(?:json)?|```$/gm, '').trim();
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?|```$/gm, '')
+    .trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) return {};
-  try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return {}; }
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return {};
+  }
 }
 
 /** Flatten a JSONL transcript to role-tagged text + tool names. */
@@ -197,7 +255,11 @@ export function transcriptToText(file) {
     const t = line.trim();
     if (!t) continue;
     let obj;
-    try { obj = JSON.parse(t); } catch { continue; }
+    try {
+      obj = JSON.parse(t);
+    } catch {
+      continue;
+    }
     const msg = obj.message || {};
     const role = msg.role || obj.type || '';
     const content = msg.content;
@@ -210,7 +272,11 @@ export function transcriptToText(file) {
         else if (block.type === 'tool_use') out.push(`[${role}:tool] ${block.name ?? ''}`);
         else if (block.type === 'tool_result') {
           let r = block.content ?? '';
-          if (Array.isArray(r)) r = r.filter((b) => b && typeof b === 'object').map((b) => b.text ?? '').join(' ');
+          if (Array.isArray(r))
+            r = r
+              .filter((b) => b && typeof b === 'object')
+              .map((b) => b.text ?? '')
+              .join(' ');
           out.push(`[tool_result] ${String(r).slice(0, 400)}`);
         }
       }
@@ -234,14 +300,23 @@ function which(cmd) {
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
     const p = path.join(dir, cmd);
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* next */ }
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {
+      /* next */
+    }
   }
   return null;
 }
 
 function findClaude() {
-  for (const cand of [which('claude'), path.join(os.homedir(), '.claude/local/claude'),
-    '/opt/homebrew/bin/claude', '/usr/local/bin/claude']) {
+  for (const cand of [
+    which('claude'),
+    path.join(os.homedir(), '.claude/local/claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ]) {
     if (cand && fs.existsSync(cand)) return cand;
   }
   return null;
@@ -250,7 +325,11 @@ function findClaude() {
 /** project_key via vault-env.sh — one implementation. Falls back to the cwd-slug if bash or
  *  git is unavailable, which is what the shell version does too. */
 export function projectKey(cwd) {
-  try { return paths.projectKey(cwd); } catch { return paths.legacyKey(cwd); }
+  try {
+    return paths.projectKey(cwd);
+  } catch {
+    return paths.legacyKey(cwd);
+  }
 }
 
 function runExtractor(convo) {
@@ -286,7 +365,8 @@ function runExtractor(convo) {
 function writeNotes(insights, slug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
-  let written = 0, merged = 0;
+  let written = 0,
+    merged = 0;
 
   const emit = (folder, tag, title, body, aliases) => {
     const d = path.join(base, folder);
@@ -297,13 +377,20 @@ function writeNotes(insights, slug) {
     if (existing.some((f) => f.endsWith(`-${sl}.md`) || f.slice(0, -3) === sl)) return;
     // paraphrase aliases -> retrievable by meaning, not just keywords (maintains cheap recall)
     const line = Array.isArray(aliases)
-      ? aliases.filter((a) => typeof a === 'string' && a.trim()).map((a) => a.trim()).join(', ')
+      ? aliases
+          .filter((a) => typeof a === 'string' && a.trim())
+          .map((a) => a.trim())
+          .join(', ')
       : '';
     // Reconcile before appending: a restatement of an existing lesson updates that note rather
     // than spawning a near-duplicate. Without this the distiller keeps re-creating notes
     // /memory:prune has just merged away.
     const dup = findNearDuplicate(d, sl, body);
-    if (dup) { reconcile(dup, title, body, line, today); merged++; return; }
+    if (dup) {
+      reconcile(dup, title, body, line, today);
+      merged++;
+      return;
+    }
     const text = line ? `${body.replace(/\s+$/, '')}\n\n_Also asked as: ${line}._\n` : body;
     // YAML-safe: quote the title so colons/quotes in it don't break frontmatter
     const safeTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -313,15 +400,34 @@ function writeNotes(insights, slug) {
   };
 
   for (const it of insights.patterns || []) {
-    if (it?.title) emit('Patterns', 'pattern', it.title, `## ${it.title}\n\n${it.description ?? ''}\n`, it.aliases);
+    if (it?.title)
+      emit(
+        'Patterns',
+        'pattern',
+        it.title,
+        `## ${it.title}\n\n${it.description ?? ''}\n`,
+        it.aliases,
+      );
   }
   for (const it of insights.mistakes || []) {
-    if (it?.title) emit('Mistakes', 'mistake', it.title,
-      `## ${it.title}\n\n**Error:** ${it.error ?? ''}\n\n**Fix:** ${it.fix ?? ''}\n`, it.aliases);
+    if (it?.title)
+      emit(
+        'Mistakes',
+        'mistake',
+        it.title,
+        `## ${it.title}\n\n**Error:** ${it.error ?? ''}\n\n**Fix:** ${it.fix ?? ''}\n`,
+        it.aliases,
+      );
   }
   for (const it of insights.decisions || []) {
-    if (it?.title) emit('Decisions', 'decision', it.title,
-      `## ${it.title}\n\n**Decision:** ${it.decision ?? ''}\n\n**Why:** ${it.why ?? ''}\n`, it.aliases);
+    if (it?.title)
+      emit(
+        'Decisions',
+        'decision',
+        it.title,
+        `## ${it.title}\n\n**Decision:** ${it.decision ?? ''}\n\n**Why:** ${it.why ?? ''}\n`,
+        it.aliases,
+      );
   }
   return { written, merged };
 }
@@ -343,9 +449,11 @@ function reindex(cwd, slug) {
     // This CLI resolves out of an fnm/nvm multishell dir, so switching Node versions silently
     // drops it from PATH. Say what was lost precisely — the old message claimed the vault stops
     // being searchable, which was never true of the plugin's own index.
-    console.error('distill: context-mode not on PATH — ctx_search will drift behind the notes on '
-      + 'disk. The plugin\'s own index is unaffected and is being refreshed instead. '
-      + 'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).');
+    console.error(
+      'distill: context-mode not on PATH — ctx_search will drift behind the notes on ' +
+        "disk. The plugin's own index is unaffected and is being refreshed instead. " +
+        'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).',
+    );
     refreshOwnIndex(cwd);
     return;
   }
@@ -358,8 +466,11 @@ function reindex(cwd, slug) {
     const d = path.join(VAULT, layer, slug);
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
     try {
-      execFileSync(cm, ['index', d, '--project', cwd, '--source', label],
-        { encoding: 'utf8', timeout: 120_000, stdio: 'pipe' });
+      execFileSync(cm, ['index', d, '--project', cwd, '--source', label], {
+        encoding: 'utf8',
+        timeout: 120_000,
+        stdio: 'pipe',
+      });
     } catch (e) {
       console.error(`distill: reindex ${layer} failed: ${e.message}`);
     }
@@ -369,8 +480,11 @@ function reindex(cwd, slug) {
   const pdir = path.join(VAULT, 'permanent');
   if (fs.existsSync(pdir) && fs.statSync(pdir).isDirectory()) {
     try {
-      execFileSync(cm, ['index', pdir, '--project', cwd, '--source', 'vault-permanent'],
-        { encoding: 'utf8', timeout: 120_000, stdio: 'pipe' });
+      execFileSync(cm, ['index', pdir, '--project', cwd, '--source', 'vault-permanent'], {
+        encoding: 'utf8',
+        timeout: 120_000,
+        stdio: 'pipe',
+      });
     } catch (e) {
       console.error(`distill: reindex permanent failed: ${e.message}`);
     }
@@ -387,8 +501,11 @@ function refreshOwnIndex(cwd) {
   const script = path.join(paths.scriptsDir, 'memory-semantic.mjs');
   if (!fs.existsSync(script)) return;
   try {
-    execFileSync(process.execPath, [script, '--index', cwd],
-      { encoding: 'utf8', timeout: 600_000, stdio: 'pipe' });
+    execFileSync(process.execPath, [script, '--index', cwd], {
+      encoding: 'utf8',
+      timeout: 600_000,
+      stdio: 'pipe',
+    });
     console.error('distill: refreshed the plugin semantic index');
   } catch (e) {
     console.error(`distill: semantic index refresh failed: ${e.message}`);
@@ -407,8 +524,11 @@ export function distill(transcript, cwd) {
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
   const legacy = paths.legacyKey(cwd);
-  if (slug !== legacy && !fs.existsSync(path.join(VAULT, 'Insights', slug))
-      && fs.existsSync(path.join(VAULT, 'Insights', legacy))) {
+  if (
+    slug !== legacy &&
+    !fs.existsSync(path.join(VAULT, 'Insights', slug)) &&
+    fs.existsSync(path.join(VAULT, 'Insights', legacy))
+  ) {
     slug = legacy;
   }
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;

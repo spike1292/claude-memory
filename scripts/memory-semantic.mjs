@@ -17,18 +17,43 @@ import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../hooks/lib/paths.mjs';
 import {
-  MODELS, MODEL_KEY, PROFILE, MODEL, DIM, MAX_CHARS, MIN_SECTION, QUERY_PREFIX, DOC_PREFIX,
-  RRF_K, DEFAULT_FUSE_W, DEFAULT_FUSE_LEX,
-  stripFrontmatter, chunkNote, fuseReserved, cosine, assertVectorWidth, clusterNotes, centroid,
-  samefolderPairs, lexTokens, bm25, fuseRRF,
+  MODELS,
+  MODEL_KEY,
+  PROFILE,
+  MODEL,
+  DIM,
+  MAX_CHARS,
+  MIN_SECTION,
+  QUERY_PREFIX,
+  DOC_PREFIX,
+  RRF_K,
+  DEFAULT_FUSE_W,
+  DEFAULT_FUSE_LEX,
+  stripFrontmatter,
+  chunkNote,
+  fuseReserved,
+  cosine,
+  assertVectorWidth,
+  clusterNotes,
+  centroid,
+  samefolderPairs,
+  lexTokens,
+  bm25,
+  fuseRRF,
 } from './lib/memory-semantic.mjs';
 
 // ---------------------------------------------------------------- setup
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
-const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
-const repo = argv.filter((a) => !a.startsWith('-')).find((a) => fs.existsSync(a) && fs.statSync(a).isDirectory()) || process.cwd();
+const val = (n) => {
+  const i = argv.indexOf(n);
+  return i >= 0 ? argv[i + 1] : null;
+};
+const repo =
+  argv
+    .filter((a) => !a.startsWith('-'))
+    .find((a) => fs.existsSync(a) && fs.statSync(a).isDirectory()) || process.cwd();
 // --vault/--slug point this at a generated benchmark vault instead of the real one, which is how
 // a retrieval change gets scored against a FIXED note set. Explicit flags, not CLAUDE_VAULT: an
 // env override once sent a relocating hook at a throwaway path and cost 24 notes.
@@ -71,10 +96,13 @@ async function embed(texts) {
   // did not: indexing batched 8 while a query batched however many questions were asked at once —
   // so the eval harness (28 questions in one padded batch) computed different vectors than a live
   // session (one question). With batch 1 the padding is gone and both sides agree by construction.
-  const B = PROFILE.batch ?? 1;   // 1 = no padding. See --check-embedding; every model tested fails at >1.
+  const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
   const vecs = [];
   for (let i = 0; i < texts.length; i += B) {
-    const out = await embedder(texts.slice(i, i + B), { pooling: PROFILE.pool ?? 'mean', normalize: true });
+    const out = await embedder(texts.slice(i, i + B), {
+      pooling: PROFILE.pool ?? 'mean',
+      normalize: true,
+    });
     for (const v of out.tolist()) vecs.push(Float32Array.from(v));
   }
   return vecs;
@@ -83,10 +111,11 @@ async function embed(texts) {
 // Every mode except --index reads vectors it did not build; refuse if they came from another model
 // rather than returning scores that look plausible and mean nothing.
 if (modelChanged && !flag('--index')) {
-  console.log(`index was built with ${storedModel}, but ${MODEL} is configured — run --index to rebuild.`);
+  console.log(
+    `index was built with ${storedModel}, but ${MODEL} is configured — run --index to rebuild.`,
+  );
   process.exit(1);
 }
-
 
 // ---------------------------------------------------------------- coverage
 
@@ -97,7 +126,8 @@ function vaultSources() {
   // permanent/ is cross-project, not slug-scoped. Indexed here so --clusters can ask "is this topic
   // already consolidated?", and so promoted knowledge is searchable at all.
   out.push({ dir: path.join(VAULT, 'permanent'), layer: 'permanent' });
-  for (const sub of ['domain', 'tools']) out.push({ dir: path.join(VAULT, 'permanent', sub), layer: 'permanent' });
+  for (const sub of ['domain', 'tools'])
+    out.push({ dir: path.join(VAULT, 'permanent', sub), layer: 'permanent' });
   return out;
 }
 
@@ -106,24 +136,35 @@ function vaultSources() {
 // hides behind "retrieval is imperfect". obsidian-second-brain lists 100% index coverage as one of
 // its measured gains, which is what prompted checking ours: it was 1047 of 1048.
 if (flag('--coverage')) {
-  const onDisk = new Map();   // stem -> [paths]
+  const onDisk = new Map(); // stem -> [paths]
   for (const { dir } of vaultSources()) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md')))
       onDisk.set(f.slice(0, -3), [...(onDisk.get(f.slice(0, -3)) ?? []), path.join(dir, f)]);
   }
-  const indexed = new Set(db.prepare('SELECT DISTINCT note n FROM chunks').all().map((r) => r.n));
+  const indexed = new Set(
+    db
+      .prepare('SELECT DISTINCT note n FROM chunks')
+      .all()
+      .map((r) => r.n),
+  );
   const missing = [...onDisk.keys()].filter((n) => !indexed.has(n));
   // A stem that exists twice is worse than a missing note: the index keys by stem, so two files
   // MERGE into one entry, best-chunk scoring mixes their content, and an Obsidian [[wikilink]] to
   // that name is ambiguous too. It reads as full coverage while silently holding one note fewer.
   const collisions = [...onDisk.entries()].filter(([, paths]) => paths.length > 1);
   console.log(`project ${SLUG}`);
-  console.log(`  on disk ${onDisk.size} distinct names (${[...onDisk.values()].flat().length} files) · indexed ${indexed.size}`);
-  if (missing.length) console.log(`  MISSING from the index (${missing.length}):\n    ${missing.join('\n    ')}`);
+  console.log(
+    `  on disk ${onDisk.size} distinct names (${[...onDisk.values()].flat().length} files) · indexed ${indexed.size}`,
+  );
+  if (missing.length)
+    console.log(`  MISSING from the index (${missing.length}):\n    ${missing.join('\n    ')}`);
   for (const [stem, paths] of collisions)
-    console.log(`  NAME COLLISION "${stem}" — the index merges these into one entry:\n    ${paths.join('\n    ')}`);
-  if (!missing.length && !collisions.length) console.log('  OK — every note is indexed exactly once.');
+    console.log(
+      `  NAME COLLISION "${stem}" — the index merges these into one entry:\n    ${paths.join('\n    ')}`,
+    );
+  if (!missing.length && !collisions.length)
+    console.log('  OK — every note is indexed exactly once.');
   process.exit(missing.length || collisions.length ? 1 : 0);
 }
 
@@ -134,18 +175,22 @@ if (flag('--coverage')) {
 // ~0.001 apart. No model card mentions it. Ten seconds, and it re-checks the property for whatever
 // model is configured, instead of trusting that this one behaves like the last one.
 if (flag('--check-embedding')) {
-  const t = 'a representative note section about alarm thresholds, WAF rules and deployment controllers';
+  const t =
+    'a representative note section about alarm thresholds, WAF rules and deployment controllers';
   const [alone] = await embed([t]);
   const [again] = await embed([t]);
   const batched = (await embed([t, 'short', 'x'.repeat(1500)]))[0];
-  const self = cosine(alone, again), mixed = cosine(alone, batched);
-  console.log(`model ${MODEL}  batch=${PROFILE.batch ?? 1}`);   // must mirror embed(); a stale default here reports a batch size the code does not use
+  const self = cosine(alone, again),
+    mixed = cosine(alone, batched);
+  console.log(`model ${MODEL}  batch=${PROFILE.batch ?? 1}`); // must mirror embed(); a stale default here reports a batch size the code does not use
   console.log(`  same text twice        cosine ${self.toFixed(6)}`);
   console.log(`  alone vs in a batch    cosine ${mixed.toFixed(6)}`);
   const ok = self > 0.99999 && mixed > 0.99999;
-  console.log(ok
-    ? '  OK — embedding is stable; batch company does not change the vector.'
-    : `  FAIL — batch company shifts the vector by ${(1 - mixed).toFixed(4)}. Set batch: 1 for this model.`);
+  console.log(
+    ok
+      ? '  OK — embedding is stable; batch company does not change the vector.'
+      : `  FAIL — batch company shifts the vector by ${(1 - mixed).toFixed(4)}. Set batch: 1 for this model.`,
+  );
   process.exit(ok ? 0 : 1);
 }
 
@@ -158,15 +203,33 @@ if (flag('--index')) {
   // is now structurally impossible: the two models no longer share a file.)
   const lockDir = path.join(DB_DIR, `.index-${MODEL_KEY}.lock`);
   let locked = false;
-  try { fs.mkdirSync(lockDir); locked = true; } catch {
+  try {
+    fs.mkdirSync(lockDir);
+    locked = true;
+  } catch {
     const age = Date.now() - (fs.statSync(lockDir).mtimeMs || 0);
-    if (age < 30 * 60 * 1000) { console.log('another --index is running (lock held); skipping'); process.exit(0); }
+    if (age < 30 * 60 * 1000) {
+      console.log('another --index is running (lock held); skipping');
+      process.exit(0);
+    }
     fs.rmSync(lockDir, { recursive: true, force: true });
-    fs.mkdirSync(lockDir); locked = true;   // reclaim a lock left by a killed run
+    fs.mkdirSync(lockDir);
+    locked = true; // reclaim a lock left by a killed run
   }
-  const releaseLock = () => { if (locked) { try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch {} locked = false; } };
+  const releaseLock = () => {
+    if (locked) {
+      try {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      } catch {}
+      locked = false;
+    }
+  };
   process.on('exit', releaseLock);
-  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { releaseLock(); process.exit(1); });
+  for (const sig of ['SIGINT', 'SIGTERM'])
+    process.on(sig, () => {
+      releaseLock();
+      process.exit(1);
+    });
 
   const sources = vaultSources();
 
@@ -176,7 +239,12 @@ if (flag('--index')) {
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
       if (f === 'REFLECTIONS.md') continue; // an audit log, not a memory
       const full = path.join(dir, f);
-      files.push({ full, layer, note: f.slice(0, -3), mtime: Math.floor(fs.statSync(full).mtimeMs) });
+      files.push({
+        full,
+        layer,
+        note: f.slice(0, -3),
+        mtime: Math.floor(fs.statSync(full).mtimeMs),
+      });
     }
   }
 
@@ -184,23 +252,41 @@ if (flag('--index')) {
   // recorded the model without re-embedding leaves the DB claiming one model while holding another
   // model's vectors, and no automatic check can see that.
   if (modelChanged || flag('--rebuild')) {
-    console.log(`model changed ${storedModel ?? '(unrecorded)'} → ${MODEL}; rebuilding the whole index (vectors are not comparable across models)`);
+    console.log(
+      `model changed ${storedModel ?? '(unrecorded)'} → ${MODEL}; rebuilding the whole index (vectors are not comparable across models)`,
+    );
     db.exec('DELETE FROM chunks');
   }
-  db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('model', MODEL);
+  db.prepare(
+    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run('model', MODEL);
 
   // Incremental: re-embed only notes whose mtime moved; drop rows for deleted notes.
-  const known = new Map(db.prepare('SELECT file, MAX(mtime) AS mtime FROM chunks GROUP BY file').all().map((r) => [r.file, r.mtime]));
+  const known = new Map(
+    db
+      .prepare('SELECT file, MAX(mtime) AS mtime FROM chunks GROUP BY file')
+      .all()
+      .map((r) => [r.file, r.mtime]),
+  );
   const live = new Set(files.map((f) => f.full));
   let dropped = 0;
-  for (const f of known.keys()) if (!live.has(f)) { db.prepare('DELETE FROM chunks WHERE file = ?').run(f); dropped++; }
+  for (const f of known.keys())
+    if (!live.has(f)) {
+      db.prepare('DELETE FROM chunks WHERE file = ?').run(f);
+      dropped++;
+    }
   const stale = files.filter((f) => known.get(f.full) !== f.mtime);
 
   console.log(`${files.length} notes · ${stale.length} to (re)embed · ${dropped} removed`);
-  if (!stale.length) { console.log('index already current'); process.exit(0); }
+  if (!stale.length) {
+    console.log('index already current');
+    process.exit(0);
+  }
 
   const del = db.prepare('DELETE FROM chunks WHERE file = ?');
-  const ins = db.prepare('INSERT INTO chunks (note, layer, file, mtime, heading, text, vec) VALUES (?,?,?,?,?,?,?)');
+  const ins = db.prepare(
+    'INSERT INTO chunks (note, layer, file, mtime, heading, text, vec) VALUES (?,?,?,?,?,?,?)',
+  );
   const pending = [];
   for (const f of stale) {
     del.run(f.full);
@@ -208,16 +294,23 @@ if (flag('--index')) {
       pending.push({ ...c, note: f.note, layer: f.layer, file: f.full, mtime: f.mtime });
   }
 
-  const BATCH = PROFILE.batch ?? 1;    // embed() slices to the same size; keep them equal
+  const BATCH = PROFILE.batch ?? 1; // embed() slices to the same size; keep them equal
   const t0 = Date.now();
   for (let i = 0; i < pending.length; i += BATCH) {
     const batch = pending.slice(i, i + BATCH);
     const vecs = await embed(batch.map((b) => DOC_PREFIX + b.text));
-    batch.forEach((b, j) => ins.run(b.note, b.layer, b.file, b.mtime, b.heading, b.text, new Uint8Array(vecs[j].buffer)));
-    try { fs.utimesSync(lockDir, new Date(), new Date()); } catch {}  // heartbeat: a slow model's build outlives the 30-min stale window
-    if ((i / BATCH) % 10 === 0) console.log(`  ${Math.min(i + BATCH, pending.length)}/${pending.length} chunks`);
+    batch.forEach((b, j) =>
+      ins.run(b.note, b.layer, b.file, b.mtime, b.heading, b.text, new Uint8Array(vecs[j].buffer)),
+    );
+    try {
+      fs.utimesSync(lockDir, new Date(), new Date());
+    } catch {} // heartbeat: a slow model's build outlives the 30-min stale window
+    if ((i / BATCH) % 10 === 0)
+      console.log(`  ${Math.min(i + BATCH, pending.length)}/${pending.length} chunks`);
   }
-  console.log(`indexed ${pending.length} chunks from ${stale.length} notes in ${((Date.now() - t0) / 1000).toFixed(1)}s → ${DB_PATH}`);
+  console.log(
+    `indexed ${pending.length} chunks from ${stale.length} notes in ${((Date.now() - t0) / 1000).toFixed(1)}s → ${DB_PATH}`,
+  );
   process.exit(0);
 }
 
@@ -226,21 +319,36 @@ if (flag('--index')) {
 if (flag('--clusters')) {
   const min = Number(val('--min') || PROFILE.clusterMin);
   const minSize = Number(val('--size') || 4);
-  const cards = db.prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'").all()
-    .map((r) => ({ note: r.note, layer: r.layer, text: r.text, vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM) }));
-  if (!cards.length) { console.log('empty index — run --index first'); process.exit(1); }
+  const cards = db
+    .prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'")
+    .all()
+    .map((r) => ({
+      note: r.note,
+      layer: r.layer,
+      text: r.text,
+      vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+    }));
+  if (!cards.length) {
+    console.log('empty index — run --index first');
+    process.exit(1);
+  }
 
   const permanent = cards.filter((c) => c.layer === 'permanent');
   const working = cards.filter((c) => c.layer !== 'permanent');
   const clusters = clusterNotes(working, min).filter((g) => g.length >= minSize);
 
-  console.log(`${working.length} notes · ${permanent.length} permanent/ notes · clusters ≥${minSize} at ≥${min}: ${clusters.length}\n`);
+  console.log(
+    `${working.length} notes · ${permanent.length} permanent/ notes · clusters ≥${minSize} at ≥${min}: ${clusters.length}\n`,
+  );
   let gaps = 0;
   for (const g of clusters) {
     const c = centroid(g.map((x) => x.vec));
     // Is this topic already consolidated? Compare the cluster's average meaning to permanent/.
     let best = { note: null, s: 0 };
-    for (const p of permanent) { const s = cosine(c, p.vec); if (s > best.s) best = { note: p.note, s }; }
+    for (const p of permanent) {
+      const s = cosine(c, p.vec);
+      if (s > best.s) best = { note: p.note, s };
+    }
     // Absolute thresholds are meaningless here: E5 puts every pair in a narrow high band, so the
     // nearest permanent/ note scores ~0.91 against topics it has nothing to do with. Calibrate
     // against the cluster itself instead — a note that genuinely covers this topic should sit as
@@ -256,20 +364,29 @@ if (flag('--clusters')) {
     gaps++;
     if (gaps > Number(val('--top') || 8)) continue;
     const mix = g.reduce((m, x) => ((m[x.layer] = (m[x.layer] || 0) + 1), m), {});
-    console.log(`${g.length} notes — ${Object.entries(mix).map(([k, v]) => `${v} ${k}`).join(', ')}`);
-    console.log(best.s >= typical - 0.02
-      ? `   nearest permanent/: ${best.note} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)} — borderline; check whether it should absorb this`
-      : `   no permanent/ note covers this (best ${best.note ?? 'n/a'} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)})`);
+    console.log(
+      `${g.length} notes — ${Object.entries(mix)
+        .map(([k, v]) => `${v} ${k}`)
+        .join(', ')}`,
+    );
+    console.log(
+      best.s >= typical - 0.02
+        ? `   nearest permanent/: ${best.note} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)} — borderline; check whether it should absorb this`
+        : `   no permanent/ note covers this (best ${best.note ?? 'n/a'} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)})`,
+    );
     // /memory:synthesize needs the whole membership, not a preview — it must read every note.
     const showMembers = Number(val('--members') || 6);
     for (const x of g.slice(0, showMembers)) console.log(`   · [${x.layer}] ${x.note}`);
-    if (g.length > showMembers) console.log(`   · …and ${g.length - showMembers} more (--members 99)`);
+    if (g.length > showMembers)
+      console.log(`   · …and ${g.length - showMembers} more (--members 99)`);
     console.log('');
   }
   const shown = Math.min(gaps, Number(val('--top') || 8));
-  console.log(gaps
-    ? `${gaps} topic(s) with no consolidated note${gaps > shown ? ` (showing the ${shown} largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
-    : 'every cluster is covered by a permanent/ note.');
+  console.log(
+    gaps
+      ? `${gaps} topic(s) with no consolidated note${gaps > shown ? ` (showing the ${shown} largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
+      : 'every cluster is covered by a permanent/ note.',
+  );
   process.exit(0);
 }
 
@@ -280,17 +397,28 @@ if (flag('--dupes')) {
   // One vector per note: the '(card)' chunk carries title + description + the opening body, which
   // for a short Insight note is effectively the whole note. Comparing cards keeps this O(notes²)
   // (~165k pairs, well under a second) instead of O(chunks²).
-  const rawCards = db.prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'").all();
+  const rawCards = db
+    .prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'")
+    .all();
   assertVectorWidth(rawCards, DIM, 'dupes');
-  const cards = rawCards.map((r) => ({ note: r.note, layer: r.layer, text: r.text, vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM) }));
-  if (!cards.length) { console.log('empty index — run --index first'); process.exit(1); }
+  const cards = rawCards.map((r) => ({
+    note: r.note,
+    layer: r.layer,
+    text: r.text,
+    vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+  }));
+  if (!cards.length) {
+    console.log('empty index — run --index first');
+    process.exit(1);
+  }
   const pairs = samefolderPairs(cards, min);
   const byNote = new Map(cards.map((c) => [c.note, c]));
   console.log(`${cards.length} notes · same-folder pairs ≥ ${min}: ${pairs.length}`);
   console.log('(cross-folder pairs are complementary by design and are not reported)\n');
   for (const p of pairs.slice(0, Number(val('--top') || 30))) {
     console.log(`${p.s.toFixed(3)} [${p.layer}]`);
-    for (const n of [p.a, p.b]) console.log(`   ${n}\n      ${byNote.get(n).text.replace(/\s+/g, ' ').slice(0, 130)}…`);
+    for (const n of [p.a, p.b])
+      console.log(`   ${n}\n      ${byNote.get(n).text.replace(/\s+/g, ' ').slice(0, 130)}…`);
   }
   console.log('\nJudge each pair: merge when it adds coverage, keep when it only removes a file.');
   process.exit(0);
@@ -301,7 +429,9 @@ if (flag('--dupes')) {
 const loadedAt = Date.now();
 const queries = argv.filter((a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
 if (!queries.length && !flag('--serve')) {
-  console.log('usage: --index | --query "question" [--query "..."] [-k 5] | --serve | --coverage | --dupes | --clusters');
+  console.log(
+    'usage: --index | --query "question" [--query "..."] [-k 5] | --serve | --coverage | --dupes | --clusters',
+  );
   process.exit(1);
 }
 const K = Number(val('-k') || 5);
@@ -312,12 +442,16 @@ const layer = val('--layer');
 const rows = layer
   ? db.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
   : db.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
-if (!rows.length) { console.log(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first'); process.exit(1); }
+if (!rows.length) {
+  console.log(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
+  process.exit(1);
+}
 // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
 // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is exactly
 // how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after) and why it
 // could not be trusted. Query-time exclusion holds the note set fixed by construction.
-const rowsUsed = process.env.MEMORY_NO_ALIAS_CHUNKS === '1' ? rows.filter((r) => r.heading !== '(aliases)') : rows;
+const rowsUsed =
+  process.env.MEMORY_NO_ALIAS_CHUNKS === '1' ? rows.filter((r) => r.heading !== '(aliases)') : rows;
 assertVectorWidth(rowsUsed, DIM, 'query');
 
 // Tokenise once for all queries — df/idf does not change per question, so doing this inside the
@@ -329,14 +463,31 @@ assertVectorWidth(rowsUsed, DIM, 'query');
 // single chunk looks convincing. It also inflates df for the identity header repeated in every
 // chunk, though BM25 saturates term frequency so the effect is bounded. MEMORY_FUSE_LEX=note|chunk.
 const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
-const lexDocs = LEX_MODE === 'note'
-  ? [...rowsUsed.reduce((m, r) => {
-      const cur = m.get(r.note) ?? { note: r.note, layer: r.layer, heading: '(note)', text: '', toks: [] };
-      cur.text += ' ' + r.text;
-      m.set(r.note, cur);
-      return m;
-    }, new Map()).values()].map((d) => ({ ...d, toks: lexTokens(d.text) }))
-  : rowsUsed.map((r) => ({ note: r.note, layer: r.layer, heading: r.heading, text: r.text, toks: lexTokens(r.text) }));
+const lexDocs =
+  LEX_MODE === 'note'
+    ? [
+        ...rowsUsed
+          .reduce((m, r) => {
+            const cur = m.get(r.note) ?? {
+              note: r.note,
+              layer: r.layer,
+              heading: '(note)',
+              text: '',
+              toks: [],
+            };
+            cur.text += ' ' + r.text;
+            m.set(r.note, cur);
+            return m;
+          }, new Map())
+          .values(),
+      ].map((d) => ({ ...d, toks: lexTokens(d.text) }))
+    : rowsUsed.map((r) => ({
+        note: r.note,
+        layer: r.layer,
+        heading: r.heading,
+        text: r.text,
+        toks: lexTokens(r.text),
+      }));
 
 // One query, factored out so the CLI and the socket server cannot drift apart. A server that
 // re-implemented ranking would eventually answer differently from the eval harness, and the whole
@@ -361,8 +512,16 @@ function searchOne(q, qvec, k) {
       lexDocs.forEach((d, i) => {
         if (!bestLex.has(d.note) || bestLex.get(d.note) < scores[i]) bestLex.set(d.note, scores[i]);
       });
-      const lexRanked = [...bestLex.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([n]) => n);
-      const order = fuseRRF(sorted.map((x) => x.r.note), lexRanked, FUSE_W, k);
+      const lexRanked = [...bestLex.entries()]
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([n]) => n);
+      const order = fuseRRF(
+        sorted.map((x) => x.r.note),
+        lexRanked,
+        FUSE_W,
+        k,
+      );
       const byNote = new Map(sorted.map((x) => [x.r.note, x]));
       // A note the keyword arm found but the vector arm ranked below the window still needs a row
       // to display; pull it from the chunk table rather than dropping it.
@@ -386,17 +545,24 @@ function searchOne(q, qvec, k) {
 if (flag('--serve')) {
   const net = await import('node:net');
   const sockPath = path.join(paths.stateDir('run'), `search-${SLUG}-${MODEL_KEY}.sock`);
-  try { fs.unlinkSync(sockPath); } catch {}
+  try {
+    fs.unlinkSync(sockPath);
+  } catch {}
   const IDLE_MS = Number(process.env.MEMORY_SERVE_IDLE_MS ?? 30 * 60 * 1000);
   let idle = setTimeout(() => process.exit(0), IDLE_MS);
-  const bump = () => { clearTimeout(idle); idle = setTimeout(() => process.exit(0), IDLE_MS); };
+  const bump = () => {
+    clearTimeout(idle);
+    idle = setTimeout(() => process.exit(0), IDLE_MS);
+  };
 
   await embed(['warm up so the first real request is not the one that pays for the model load']);
 
   // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win the
   // match often (that is their job) but their text is a list of questions — as a one-line brief it
   // reads as noise. Match on any chunk, describe with the card.
-  const cardByNote = new Map(rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]));
+  const cardByNote = new Map(
+    rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
+  );
 
   const server = net.createServer((sock) => {
     bump();
@@ -404,7 +570,8 @@ if (flag('--serve')) {
     sock.on('data', async (d) => {
       buf += d;
       if (!buf.includes('\n')) return;
-      const line = buf.slice(0, buf.indexOf('\n')); buf = '';
+      const line = buf.slice(0, buf.indexOf('\n'));
+      buf = '';
       try {
         const { q, k = 5 } = JSON.parse(line);
         // The index changes under us as notes are written; mtime on the DB is the cheap check.
@@ -412,36 +579,56 @@ if (flag('--serve')) {
         const stale = stat.mtimeMs > loadedAt;
         const [qv] = await embed([QUERY_PREFIX + q]);
         const top = searchOne(q, qv, k);
-        sock.end(JSON.stringify({
-          results: top.map(({ r, s }) => ({
-            note: r.note, layer: r.layer, heading: r.heading,
-            text: cardByNote.get(r.note) ?? r.text, matched: r.heading, score: +s.toFixed(4),
-          })),
-          stale,   // caller decides; a slightly stale brief beats a 3s stall
-        }) + '\n');
+        sock.end(
+          JSON.stringify({
+            results: top.map(({ r, s }) => ({
+              note: r.note,
+              layer: r.layer,
+              heading: r.heading,
+              text: cardByNote.get(r.note) ?? r.text,
+              matched: r.heading,
+              score: +s.toFixed(4),
+            })),
+            stale, // caller decides; a slightly stale brief beats a 3s stall
+          }) + '\n',
+        );
       } catch (e) {
         sock.end(JSON.stringify({ error: String(e.message ?? e) }) + '\n');
       }
     });
     sock.on('error', () => {});
   });
-  server.listen(sockPath, () => console.log(`serving ${SLUG} / ${MODEL_KEY} on ${sockPath} (${rowsUsed.length} chunks, idle exit ${IDLE_MS / 60000}m)`));
+  server.listen(sockPath, () =>
+    console.log(
+      `serving ${SLUG} / ${MODEL_KEY} on ${sockPath} (${rowsUsed.length} chunks, idle exit ${IDLE_MS / 60000}m)`,
+    ),
+  );
   for (const sig of ['SIGINT', 'SIGTERM'])
-    process.on(sig, () => { try { fs.unlinkSync(sockPath); } catch {} process.exit(0); });
+    process.on(sig, () => {
+      try {
+        fs.unlinkSync(sockPath);
+      } catch {}
+      process.exit(0);
+    });
 } else {
-
-const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
-queries.forEach((q, qi) => {
-  const top = searchOne(q, qvecs[qi], K);
-  // --json: one machine-readable line per query, so the eval harness can score a whole case set in
-  // a single process (the model loads once, not once per question).
-  if (flag('--json')) {
-    console.log(JSON.stringify({ q, results: top.map(({ r, s }) => ({ note: r.note, layer: r.layer, score: +s.toFixed(4) })) }));
-    return;
-  }
-  console.log(`\n## ${q}`);
-  for (const { r, s } of top)
-    console.log(`  ${s.toFixed(3)} [${r.layer}] ${r.note} — ${r.heading}\n      ${r.text.replace(/\s+/g, ' ').slice(0, 150)}…`);
-});
-
+  const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
+  queries.forEach((q, qi) => {
+    const top = searchOne(q, qvecs[qi], K);
+    // --json: one machine-readable line per query, so the eval harness can score a whole case set in
+    // a single process (the model loads once, not once per question).
+    if (flag('--json')) {
+      console.log(
+        JSON.stringify({
+          q,
+          results: top.map(({ r, s }) => ({ note: r.note, layer: r.layer, score: +s.toFixed(4) })),
+        }),
+      );
+      return;
+    }
+    console.log(`\n## ${q}`);
+    for (const { r, s } of top)
+      console.log(
+        `  ${s.toFixed(3)} [${r.layer}] ${r.note} — ${r.heading}\n      ${r.text.replace(/\s+/g, ' ').slice(0, 150)}…`,
+      );
+  });
 }

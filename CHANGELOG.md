@@ -26,6 +26,24 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Prettier, pinned at 3.6.2 and run through `npx`.** `npm run format` / `format:check`, plus a CI
+  job of its own — formatting does not vary by Node version, and putting it in the matrix would run
+  it twice per push, which is the mistake `release.sh --selftest` already made. Deliberately **not**
+  a devDependency: Claude Code auto-runs `npm ci` on plugin install and that installs dev deps, so
+  it would ship into every user's version-pinned plugin cache (already 381 MB) to format code they
+  never edit.
+
+  Scope is code only. `.prettierignore` excludes `*.md`, `*.yml` and `package-lock.json` — CLAUDE.md
+  and `commands/*.md` are instructions Claude Code reads, the workflow comments carry dated
+  measurements, and Prettier reflows prose.
+
+  The one-time reformat touches 27 files (+1968/−628) and is mostly one idiom: this codebase writes
+  `try { … } catch { /* why */ }` on a single line throughout, and Prettier expands each to four or
+  five. Verified formatting-only rather than assumed — every entry point's output is byte-identical
+  before and after, `memory-synth-vault` still produces a byte-identical vault for the same seed,
+  and the suite passes 47/47 on Node 22 and 24.
+
+
 - Two CI checks that turn conventions into failures: **every `lib/` module must import with no
   output** (a module that runs its hook on import makes any importing test a live hook run — reading
   stdin, spawning a headless `claude`, writing notes; it happened three times), and **`node:test`
