@@ -28,20 +28,48 @@ jobs:
       - name: Build a synthetic vault
         run: node scripts/memory-synth-vault.mjs --out "$RUNNER_TEMP/vault" --notes 60 --seed 7
 
-      - name: Self-tests
+      # Discovery, not a list: `node --test` finds every *.test.mjs, so a new test file cannot be
+      # forgotten here. That list used to be nine hand-maintained lines.
+      #
+      # --test-concurrency=1 on purpose. The suites share $CLAUDE_MEMORY_HOME (the project-key cache)
+      # and the per-model index, and paths.test.mjs asserts that two git writes land in the SAME
+      # SECOND. Running files in parallel makes both of those racy, and the failure mode is a test
+      # that passes for the wrong reason. Revisit only with a per-file CLAUDE_MEMORY_HOME.
+      - name: Tests
+        env:
+          CLAUDE_VAULT: ${{ runner.temp }}/vault
+          CLAUDE_MEMORY_HOME: ${{ runner.temp }}/memory-home
+        run: node --test --test-concurrency=1
+
+      # Every top-level hook/script must be a thin entry over a lib/ module. Importing one must be
+      # side-effect free, or a test file that imports it runs the hook: reading stdin, spawning a
+      # headless `claude`, writing notes. That was a real bug three times.
+      - name: lib/ modules import without side effects
         env:
           CLAUDE_VAULT: ${{ runner.temp }}/vault
           CLAUDE_MEMORY_HOME: ${{ runner.temp }}/memory-home
         run: |
-          node scripts/memory-semantic.mjs --selftest
-          node scripts/memory-eval.mjs --selftest
-          node scripts/memory-synth-vault.mjs --selftest
-          node scripts/memory-audit-checks.mjs --selftest
-          node hooks/distill-session.mjs --selftest
-          node hooks/validate-note.mjs --selftest
-          node hooks/insights-surface.mjs --selftest
-          node hooks/memory-link-lint.mjs --selftest
-          node hooks/lib/paths.mjs --selftest
+          for f in hooks/lib/*.mjs scripts/lib/*.mjs; do
+            case "$f" in *.test.mjs) continue ;; esac
+            out=$(node --input-type=module -e "await import('./$f')" 2>&1)
+            if [ -n "$out" ]; then
+              echo "::error file=$f::importing this module produced output — it is not side-effect free:"
+              echo "$out"
+              exit 1
+            fi
+          done
+          echo "all lib/ modules import cleanly"
+
+      # A top-level `node:test` import prints the whole test report to STDOUT even outside the
+      # runner, and Claude Code reads hook stdout. It belongs only in *.test.mjs.
+      - name: node:test is imported only by test files
+        run: |
+          bad=$(grep -rln "from 'node:test'" --include='*.mjs' hooks scripts | grep -v '\.test\.mjs$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::node:test imported outside a test file: $bad"
+            exit 1
+          fi
+          echo "node:test confined to test files"
 
       # There is no Python left. Fail if any creeps back in — the whole point of the port was
       # that a second runtime is a second thing to be the wrong version on someone's machine.

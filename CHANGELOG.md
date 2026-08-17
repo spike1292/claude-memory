@@ -9,6 +9,33 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
+  `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and
+  `scripts/<name>.mjs` keep their paths — `hooks.json` and `commands/*.md` name them — and own argv,
+  stdin and stdout only; the logic moved to `hooks/lib/<name>.mjs` / `scripts/lib/<name>.mjs`. The
+  `--selftest` flag is gone from every `.mjs` (`scripts/release.sh --selftest` stays: it is bash).
+  CI is now `node --test --test-concurrency=1`, which is discovery rather than a hand-maintained
+  list of nine invocations — a new test file cannot be forgotten. Concurrency is pinned because the
+  suites share `$CLAUDE_MEMORY_HOME` and one test needs two git writes inside the same second.
+  47 tests, each named, so a failure says which case broke instead of printing a bare assertion.
+- **Assertion counts are no longer written down.** The runner reports them. Four hand-maintained
+  counts had drifted (`distill-session.mjs` claimed 22 against a real 21 before the change that made
+  it 28; `paths.mjs` claimed 7 against 9), which is the third recurrence of that class in this repo.
+- **Removed `paths.isEntryPoint` and `paths.runningSelftest`.** The split retired them: an entry
+  always runs and a `lib/` module never does, so there is nothing left to guard. This supersedes the
+  fix that added `isEntryPoint` — the better answer to "the guard was wrong in six files" turned out
+  to be having no guard.
+
+### Added
+
+- Two CI checks that turn conventions into failures: **every `lib/` module must import with no
+  output** (a module that runs its hook on import makes any importing test a live hook run — reading
+  stdin, spawning a headless `claude`, writing notes; it happened three times), and **`node:test`
+  must not be imported outside a `*.test.mjs`** (a top-level import prints the full test report to
+  stdout, which Claude Code reads from hooks).
+
 ### Fixed
 
 - **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried

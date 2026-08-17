@@ -26,7 +26,8 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
 
    It prints the snapshot size and every candidate for: notes missing from the MOC, dangling wikilinks (resolved against `permanent/` too), MOC-only notes, missing/mismatched frontmatter, repo paths that are absent **or abbreviated to a suffix**, standing-negative claims a later event may have reversed, and same-folder near-duplicates ≥0.45. Everything it prints is a candidate, not a verdict — steps 2-6 are where you judge.
 
-   Three audits hand-wrote these checks and two got the same two wrong: `confidence:` is nested under `metadata:` (a `^confidence:` grep reports every note as missing it), and a path regex swallows the `…/` in abbreviated prose paths (15 of 24 "missing" paths in the 2026-08-14 audit). Both are encoded and covered by `--selftest`. If you extend the script, add an assertion.
+   Three audits hand-wrote these checks and two got the same two wrong: `confidence:` is nested under `metadata:` (a `^confidence:` grep reports every note as missing it), and a path regex swallows the `…/` in abbreviated prose paths (15 of 24 "missing" paths in the 2026-08-14 audit). Both are encoded in `scripts/lib/memory-audit-checks.mjs` and covered by
+   `scripts/lib/memory-audit-checks.test.mjs`. If you extend the checks, add an assertion.
 
 1. **Gather.** First read `Insights/<slug>/REFLECTIONS.md` if it exists — the log of every prior audit. It tells you what was already found, what was fixed, and what was deliberately declined, so you don't re-report a closed item as new. Then read `Memory/<slug>/MEMORY.md` (the MOC) and every note under `Memory/<slug>/*.md` and `Insights/<slug>/{Patterns,Mistakes,Decisions}/*.md`. For large sets use `ctx_execute_file` / `ctx_search` so raw bytes stay out of context.
 
