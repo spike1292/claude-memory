@@ -85,9 +85,13 @@ jobs:
                silently rather than erroring. A threshold copied between model profiles is
                a defect even when every test passes: bge-m3 carried e5-multi's 0.95 and so
                reported zero duplicates on a vault holding sixteen.
-            7. Non-trivial logic with no self-test. Tests here are `--selftest` blocks inside
-               the file they test; there is no framework. Also flag a test that can pass
-               while verifying nothing.
+            7. Non-trivial logic with no test. Tests are `*.test.mjs` files beside the
+               module they test, run by `node --test`; there is no framework. Every top-level
+               hook/script is a thin entry over a `lib/` module, so logic belongs in `lib/`
+               where it can be imported and tested — flag new logic added to an entry point.
+               A `lib/` module must import without side effects, and `node:test` must never be
+               imported outside a `*.test.mjs` (it prints its report to stdout, which hooks
+               use). Also flag a test that can pass while verifying nothing.
             8. A user-visible change with no `## [Unreleased]` entry in CHANGELOG.md, since
                that section becomes the release notes verbatim.
             9. Portability: bash + POSIX (BSD sed on macOS has no `\|`, so `sed -E`) and

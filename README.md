@@ -250,12 +250,8 @@ run measure the questions, not the retrieval.
 ## Development
 
 ```bash
-node scripts/memory-semantic.mjs --selftest    # 52 assertions + real-note chunk checks
-node scripts/memory-eval.mjs     --selftest
-node scripts/memory-synth-vault.mjs --selftest
-node scripts/memory-audit-checks.mjs --selftest
-node hooks/distill-session.mjs   --selftest
-node hooks/lib/paths.mjs         --selftest    # project-key cache, checked against vault-env.sh
+node --test                     # every *.test.mjs beside the module it tests
+node --test hooks/lib/paths.test.mjs   # one file
 scripts/doctor.sh
 ```
 

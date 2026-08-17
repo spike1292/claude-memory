@@ -9,6 +9,29 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
+  `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and
+  `scripts/<name>.mjs` keep their paths — `hooks.json` and `commands/*.md` name them — and own argv,
+  stdin and stdout only; the logic moved to `hooks/lib/<name>.mjs` / `scripts/lib/<name>.mjs`. The
+  `--selftest` flag is gone from every `.mjs` (`scripts/release.sh --selftest` stays: it is bash).
+  CI is now `node --test --test-concurrency=1`, which is discovery rather than a hand-maintained
+  list of nine invocations — a new test file cannot be forgotten. Concurrency is pinned because the
+  suites share `$CLAUDE_MEMORY_HOME` and one test needs two git writes inside the same second.
+  47 tests, each named, so a failure says which case broke instead of printing a bare assertion.
+- **Assertion counts are no longer written down.** The runner reports them. Four hand-maintained
+  counts had drifted (`distill-session.mjs` claimed 22 against a real 21 before the change that made
+  it 28; `paths.mjs` claimed 7 against 9), which is the third recurrence of that class in this repo.
+
+### Added
+
+- Two CI checks that turn conventions into failures: **every `lib/` module must import with no
+  output** (a module that runs its hook on import makes any importing test a live hook run — reading
+  stdin, spawning a headless `claude`, writing notes; it happened three times), and **`node:test`
+  must not be imported outside a `*.test.mjs`** (a top-level import prints the full test report to
+  stdout, which Claude Code reads from hooks).
+
 ### Fixed
 
 - **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried
@@ -32,25 +55,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
   scores 0.286, and a false merge deletes a distinct lesson while a miss only leaves work for
   `/memory:prune`. Frontmatter, headings, alias lines and folded-in addenda are excluded from the
   comparison. A two-argument call is unchanged and reads no files.
-- **`hooks/distill-session.mjs` executed `main()` on import**, so importing any of its helpers ran
-  the whole hook — spawning a headless `claude`, writing notes, reindexing. It is now guarded, and
-  the guard is **one shared `paths.isEntryPoint(import.meta.url)`** rather than a sixth hand-rolled
-  copy: there were seven of them across six files, and they had started to diverge, which is the
-  mirror problem this repo keeps relearning.
-- **The entry-point guard was wrong everywhere it existed.** All the hand-rolled copies compared
-  `path.resolve(process.argv[1])` against `fileURLToPath(import.meta.url)` — a *textual* path against
-  an already symlink-resolved one, so they disagree whenever a file is reached through a symlinked
-  directory. `main()` then silently never runs and the hook does nothing, with no error: on macOS
-  `/var` is a symlink to `private/var`, so the old comparison was already false for anything under
-  `$TMPDIR`, and plugin roots are themselves symlinks (a version-pinned cache dir, or a checkout
-  linked into `~/.claude/plugins`). `distill-session.sh` makes it worst by passing node a
-  `BASH_SOURCE`-derived path that still contains the link. `isEntryPoint` compares **real** paths,
-  which fixes `validate-note.mjs`, `insights-surface.mjs`, `memory-link-lint.mjs`,
-  `memory-audit-checks.mjs` and `paths.mjs` along with the distiller. Covered by selftests that
-  invoke a module directly, through a symlinked directory, and by import — asserting on output,
-  since the exit status is 0 either way.
+- **Importing a hook module ran the hook.** `hooks/distill-session.mjs` called `main()`
+  unconditionally, so importing one helper spawned a headless `claude`, wrote notes and reindexed
+  the vault. Six other files suppressed the same problem with a hand-rolled entry-point guard —
+  seven copies in all — and **every copy was wrong**: they compared `path.resolve(process.argv[1])`,
+  a purely textual path, against the already symlink-resolved `fileURLToPath(import.meta.url)`. Those
+  disagree whenever a file is reached through a symlinked directory, and then `main()` silently never
+  runs and the hook does nothing with no error. On macOS `/var` is a symlink to `private/var`, so the
+  comparison was already false for anything under `$TMPDIR`; plugin roots are symlinks too, and
+  `distill-session.sh` passes node a `BASH_SOURCE`-derived path that still contains the link.
 
-### Changed
+  Fixed structurally rather than defensively: the CLI/logic split above means an entry always runs
+  and a `lib/` module never does, so **the guard is gone entirely** along with
+  `paths.isEntryPoint` and `paths.runningSelftest`. A guard that does not exist cannot be wrong in
+  six files. CI now enforces the property the guard was standing in for — every `lib/` module must
+  import with no output.
 
 - **Merging the release PR now publishes the release.** `release.yml` also triggers on pushes to
   `main` and publishes whenever `package.json` names a version with no release yet, so the manual
