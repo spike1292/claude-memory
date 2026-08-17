@@ -35,6 +35,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **One resident server total, not one per project, and it idles out in 5 minutes rather than 30.**
+  A warm `--serve` costs 800MB-1.4GB — node, onnxruntime and the q8 weights — and there was one per
+  indexed repo, so three projects meant ~2.4-4.2GB resident while you prompt in one of them. A
+  starting server now asks the others to quit over their own sockets (no pidfile, no lock, nothing
+  to leave stale); a server for the same project on a different model is left alone, since that is a
+  model change and every mode except `--index` already refuses it. Last-writer-wins with no
+  coordination: two servers for different projects starting in the same instant can evict each other
+  and both die, which costs one keyword-only recall and self-heals on the next prompt.
+  `MEMORY_SERVE_IDLE_MS` now also reads `serveIdleMs` from `config.json`, because hooks are what set
+  it and an env value written mid-session does not reach the session that wrote it.
+
 - **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
   `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and
   `scripts/<name>.mjs` keep their paths — `hooks.json` and `commands/*.md` name them — and own argv,

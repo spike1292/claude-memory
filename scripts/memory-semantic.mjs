@@ -41,6 +41,8 @@ import {
   bm25,
   fuseRRF,
   socketIsLive,
+  evictableSockets,
+  QUIT,
 } from './lib/memory-semantic.mjs';
 
 // ---------------------------------------------------------------- setup
@@ -575,11 +577,17 @@ if (flag('--serve')) {
   const net = await import('node:net');
   const sockPath = SERVE_SOCK; // probed and cleaned above; do NOT unlink again — by now another
   // server may legitimately own the path, and stealing it is what made these multiply.
-  const IDLE_MS = Number(process.env.MEMORY_SERVE_IDLE_MS ?? 30 * 60 * 1000);
-  let idle = setTimeout(() => process.exit(0), IDLE_MS);
+  const IDLE_MS = paths.serveIdleMs();
+  const quit = () => {
+    try {
+      fs.unlinkSync(sockPath);
+    } catch {}
+    process.exit(0);
+  };
+  let idle = setTimeout(quit, IDLE_MS);
   const bump = () => {
     clearTimeout(idle);
-    idle = setTimeout(() => process.exit(0), IDLE_MS);
+    idle = setTimeout(quit, IDLE_MS);
   };
 
   await embed(['warm up so the first real request is not the one that pays for the model load']);
@@ -600,7 +608,14 @@ if (flag('--serve')) {
       const line = buf.slice(0, buf.indexOf('\n'));
       buf = '';
       try {
-        const { q, k = 5 } = JSON.parse(line);
+        const msg = JSON.parse(line);
+        // A newer server for another project has taken over — see evictableSockets(). Acknowledge
+        // first so it is not left waiting on a socket that vanishes mid-write.
+        if (msg.quit) {
+          sock.end(JSON.stringify({ quitting: SLUG }) + '\n', quit);
+          return;
+        }
+        const { q, k = 5 } = msg;
         // The index changes under us as notes are written; mtime on the DB is the cheap check.
         const stat = fs.statSync(DB_PATH);
         const stale = stat.mtimeMs > loadedAt;
@@ -637,11 +652,40 @@ if (flag('--serve')) {
     console.error(`serve failed: ${e.message}`);
     process.exit(1);
   });
-  server.listen(sockPath, () =>
+  server.listen(sockPath, async () => {
     console.log(
       `serving ${SLUG} / ${MODEL_KEY} on ${sockPath} (${rowsUsed.length} chunks, idle exit ${IDLE_MS / 60000}m)`,
-    ),
-  );
+    );
+    // Take over from the other projects' servers. AFTER listen, so a failed bind never evicts the
+    // server that beat us to it. Best-effort throughout: a sibling that ignores us dies on its own
+    // idle timer, which is the whole safety net here.
+    const runDir = path.dirname(sockPath);
+    const own = path.basename(sockPath);
+    let evicted = 0;
+    for (const name of evictableSockets(fs.readdirSync(runDir), own)) {
+      const done = await new Promise((resolve) => {
+        const c = net.createConnection(path.join(runDir, name));
+        const fin = (v) => {
+          try {
+            c.destroy();
+          } catch {}
+          resolve(v);
+        };
+        const t = setTimeout(() => fin(false), 1000);
+        c.on('connect', () => c.write(JSON.stringify(QUIT) + '\n'));
+        c.on('data', () => {
+          clearTimeout(t);
+          fin(true);
+        });
+        c.on('error', () => {
+          clearTimeout(t);
+          fin(false); // nobody home; its own startup probe unlinks the leftover
+        });
+      });
+      if (done) evicted++;
+    }
+    if (evicted) console.log(`evicted ${evicted} server(s) for other projects`);
+  });
   for (const sig of ['SIGINT', 'SIGTERM'])
     process.on(sig, () => {
       try {

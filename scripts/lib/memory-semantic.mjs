@@ -63,6 +63,28 @@ import * as paths from '../../hooks/lib/paths.mjs';
 // A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
 // might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
 // Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
+// Which sibling servers should this one evict?
+//
+// One warm server is 800MB-1.4GB, and a server exists per PROJECT — three indexed repos meant up to
+// three of them resident at once for 30 minutes each. You are prompting in one repo at a time, so
+// the other two are pure cost. A starting server takes over: it lists the sibling sockets in run/
+// and asks each to quit.
+//
+// Sockets are the registry — no pidfile, no lock, nothing to leave stale. The name carries both
+// halves of the identity, and only the slug may differ: a server for the SAME project on a
+// different model is not a sibling to evict, it is a model change, which every mode except --index
+// already refuses.
+//
+// ponytail: last-writer-wins, no coordination. Two servers for different projects starting in the
+// same instant can evict each other and both die; the next prompt respawns one, so it self-heals at
+// the cost of one keyword-only recall. Needs a lock only if that is ever observed, which takes two
+// sessions prompting simultaneously in different repos.
+export function evictableSockets(names, ownName) {
+  return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
+}
+
+export const QUIT = { quit: 1 };
+
 export function socketIsLive(sockPath, timeoutMs = 1000) {
   if (!fs.existsSync(sockPath)) return Promise.resolve(false);
   return new Promise((resolve) => {
