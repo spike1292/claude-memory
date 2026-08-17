@@ -35,9 +35,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
   bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
   or an `--index` run over long notes cannot reintroduce the same failure by another route.
   Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
-
-### Fixed
-
 - **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
   socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
   server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
