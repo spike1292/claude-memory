@@ -21,8 +21,7 @@
 // notes at all, so the loop never ran.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { vault, projectKey, legacyKey } from './lib/paths.mjs';
+import { vault, projectKey, legacyKey, isEntryPoint } from './lib/paths.mjs';
 
 /**
  * Every wikilink target in one note's text.
@@ -152,8 +151,7 @@ function main() {
 }
 
 // Nothing runs on import.
-const isMain = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isEntryPoint(import.meta.url);
 
 if (isMain && process.argv.includes('--selftest')) {
   const assert = await import('node:assert').then((m) => m.default);

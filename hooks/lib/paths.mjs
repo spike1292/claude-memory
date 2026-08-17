@@ -167,11 +167,41 @@ export function legacyKey(dir = process.cwd()) {
   return dir.replace(/\//g, '-');
 }
 
+/**
+ * Is `moduleUrl` the process entry point (`node thatfile.mjs`) rather than an import?
+ *
+ * Every hook and script here needs this: they all export pure helpers AND run something when
+ * invoked directly, so an importer that got `main()` executed — reading stdin, spawning a headless
+ * `claude`, writing notes, printing a full audit — would be a nasty surprise. It has been one three
+ * times. Pass `import.meta.url`; call it once and store the result.
+ *
+ * There were SEVEN hand-rolled copies of this across six files on 2026-08-17, and they had begun to
+ * diverge, which is the mirror problem this repo keeps relearning. This is the one implementation.
+ *
+ * It compares REAL paths, not lexically-resolved ones, and that distinction is the whole reason the
+ * function exists rather than being a one-liner at each site. `path.resolve()` is purely textual
+ * while `import.meta.url` is already symlink-resolved, so the two disagree whenever a file is
+ * reached through a symlinked directory — which is normal here: `distill-session.sh` derives its
+ * path from `BASH_SOURCE` and passes node a path that still contains the link, and plugin roots are
+ * themselves symlinks (a version-pinned cache dir, or a checkout linked into ~/.claude/plugins).
+ * A textual compare returns false there, `main()` silently never runs, and the hook writes nothing
+ * with no error anywhere. Covered by a selftest that invokes a file through a symlink.
+ *
+ * No shell counterpart in vault-env.sh, and none is needed — bash hooks are never imported. This
+ * sits beside useModelCache() as a Node-only helper, so the "change one, check the other" mirror
+ * rule does not apply to it.
+ */
+export function isEntryPoint(moduleUrl) {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(arg) === real(fileURLToPath(moduleUrl));
+}
+
 // ---------------------------------------------------------------- selftest
-// `node hooks/lib/paths.mjs --selftest`. Guarded on argv[1] as well as the flag: this module is
-// imported by every hook, and a bare flag check would fire inside whatever invoked one.
-if (process.argv[1] && process.argv.includes('--selftest')
-    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// `node hooks/lib/paths.mjs --selftest`. Guarded on the entry point as well as the flag: this module
+// is imported by every hook, and a bare flag check would fire inside whatever invoked one.
+if (isEntryPoint(import.meta.url) && process.argv.includes('--selftest')) {
   const assert = await import('node:assert').then((m) => m.default);
   const { execFileSync: run } = await import('node:child_process');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paths-'));
@@ -186,6 +216,28 @@ if (process.argv[1] && process.argv.includes('--selftest')
   const fresh = (d) => run(process.execPath, ['--input-type=module', '-e',
     `const p=await import(${JSON.stringify(fileURLToPath(import.meta.url))});`
     + `console.log(p.projectKey(${JSON.stringify(d)}))`], { encoding: 'utf8', env: process.env }).trim();
+
+  // isEntryPoint: true when run directly, false when imported, and — the case it exists for — still
+  // true through a symlinked directory, where a lexical path.resolve() compare is false and the
+  // caller's main() would silently never run. Asserted on OUTPUT, since either way exits 0.
+  assert.ok(isEntryPoint(import.meta.url), 'running directly must be the entry point');
+  const probeDir = path.join(tmp, 'probe');
+  fs.mkdirSync(probeDir);
+  const probe = path.join(probeDir, 'probe.mjs');
+  fs.writeFileSync(probe, 'import { isEntryPoint } from '
+    + `${JSON.stringify(fileURLToPath(import.meta.url))};\n`
+    + "if (isEntryPoint(import.meta.url)) console.log('RAN');\n"
+    + "export const x = 1;\n");
+  const probeOut = (p) => run(process.execPath, [p], { encoding: 'utf8' }).trim();
+  assert.strictEqual(probeOut(probe), 'RAN', 'direct invocation must run');
+  const linked = path.join(tmp, 'linked');
+  fs.symlinkSync(probeDir, linked, 'dir');
+  assert.strictEqual(probeOut(path.join(linked, 'probe.mjs')), 'RAN',
+    'invocation through a symlinked dir must still run — this is what realpath buys');
+  assert.strictEqual(
+    run(process.execPath, ['--input-type=module', '-e',
+      `await import(${JSON.stringify(probe)}); console.log('IMPORTED')`], { encoding: 'utf8' }).trim(),
+    'IMPORTED', 'an imported module must NOT be the entry point');
 
   const repo = path.join(tmp, 'repo');
   fs.mkdirSync(repo);
@@ -224,7 +276,7 @@ if (process.argv[1] && process.argv.includes('--selftest')
   assert.strictEqual(fresh(repo), shell(repo), 'corrupt cache must fall back, not throw');
 
   fs.rmSync(tmp, { recursive: true, force: true });
-  console.log('selftest: 9 assertions passed (project-key cache vs vault-env.sh)');
+  console.log('selftest: 13 assertions passed (project-key cache vs vault-env.sh, entry-point guard)');
 }
 
 /**

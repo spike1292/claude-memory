@@ -13,7 +13,6 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import * as paths from '../hooks/lib/paths.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
@@ -202,8 +201,7 @@ export function buildSuffixIndex(paths) {
   return idx;
 }
 
-if (process.argv[1] && process.argv.includes('--selftest')
-    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (paths.isEntryPoint(import.meta.url) && process.argv.includes('--selftest')) {
   const { strict: assert } = await import('node:assert');
   // standing negatives — real claims
   assert.ok(isStandingNegative('- **cra2 prod has never served traffic** — 0–3 requests/24h'));
@@ -310,8 +308,7 @@ export function checkFile(f) {
 
 // Everything below RUNS. It resolves the vault, scans git and prints — so it must not happen on
 // import, or a hook importing checkFile() would kick off a full audit and exit the process.
-const isMain = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = paths.isEntryPoint(import.meta.url);
 
 if (isMain && process.argv.includes('--check-file')) {
   const f = process.argv[process.argv.indexOf('--check-file') + 1];

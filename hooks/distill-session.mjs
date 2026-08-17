@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as paths from './lib/paths.mjs';
 
 // DISTILL_VAULT stays supported for dry runs against a throwaway vault; otherwise this is
@@ -56,6 +57,31 @@ const STOP = new Set(['the', 'a', 'an', 'of', 'for', 'in', 'to', 'with', 'and', 
 // vocabulary.
 const RECONCILE_AT = 0.45;
 
+// Second arm, on the BODY, because the slug arm cannot see a restatement that reuses none of the
+// title's words. A /memory:health audit on 2026-08-17 found 16 same-lesson pairs in this vault that
+// the slug arm had let through — and only the 6 whose slugs happened to overlap ever got an
+// addendum. Measured against those 16 pairs plus 7 the audit judged complementary (must NOT merge):
+//
+//   arm                        caught   false merges
+//   slug Jaccard      >= 0.45   0/16       0/7
+//   body Jaccard      >= 0.25   6/16       0/7
+//   body containment  >= 0.40  11/16       0/7
+//
+// Jaccard loses because these pairs differ in LENGTH: a two-sentence note restating a six-sentence
+// one shares most of its own vocabulary but a small fraction of the union, so the denominator buries
+// it. Containment divides by the smaller set, and asymmetry stops being a penalty.
+//
+// 0.40, not the 0.30 that would catch 15/16: the highest complementary pair scores 0.286, so 0.40
+// keeps a 0.114 margin while 0.30 leaves 0.006. The costs are asymmetric — a false merge folds one
+// lesson into another and deletes the distinct one, a miss just leaves a duplicate for
+// /memory:prune. Be conservative here.
+//
+// ponytail: token overlap, not embeddings. The ceiling is the 5/16 it still misses, pairs that share
+// a lesson but almost no wording. Upgrade path: embed the new note and compare against the semantic
+// index, which finds all 16 at cosine >= 0.75 — that means reindexing BEFORE this check instead of
+// after, so only do it if the miss rate ever outweighs added SessionEnd latency.
+const RECONCILE_BODY_AT = 0.40;
+
 /** Significant, lightly-singularised tokens of a slug — the reconciliation key. */
 export function tokens(slug) {
   const out = new Set();
@@ -66,26 +92,64 @@ export function tokens(slug) {
 }
 
 /**
+ * Prose tokens of a note body, via the same tokeniser the slug arm uses.
+ *
+ * Strips what is not the claim: frontmatter, the `##` heading (it restates the title, which the
+ * slug arm already scores), the alias line (retrieval vocabulary, deliberately over-broad — leaving
+ * it in inflates every pair), and `**Also seen` addenda a previous reconcile folded in.
+ */
+export function bodyTokens(text) {
+  const prose = String(text)
+    .replace(/^---\n[\s\S]*?\n---\n/, '')
+    .replace(/^\s*#{1,6} .*$/gm, '')
+    .replace(/^_Also asked as:.*$/gm, '')
+    .replace(/^\*\*Also seen .*$/gm, '');
+  return tokens(prose.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-'));
+}
+
+/** Overlap as a fraction of the SMALLER set — see RECONCILE_BODY_AT for why not Jaccard. */
+function containment(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  return inter / Math.min(a.size, b.size);
+}
+
+/**
  * Existing note in `dir` that already carries this lesson, or null.
  *
  * Same-folder only, deliberately: a Pattern and a Mistake on one topic are complementary by
  * design, not duplicates.
  */
-export function findNearDuplicate(dir, sl) {
+export function findNearDuplicate(dir, sl, body = '') {
   const now = tokens(sl);
-  if (!now.size) return null;
-  let best = null, bestScore = 0;
+  const nowBody = body ? bodyTokens(body) : new Set();
+  if (!now.size && !nowBody.size) return null;
   let entries;
   try { entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md')); } catch { return null; }
+  // Each arm is divided by its OWN threshold, so both are expressed as "fraction of the bar" and a
+  // single >= 1 gate compares them. Without that the two scales are not comparable and whichever
+  // arm happens to run second wins.
+  let best = null, bestScore = 0;
   for (const f of entries) {
+    const file = path.join(dir, f);
+    let score = 0;
     const old = tokens(f.slice(0, -3).replace(/^\d{4}-\d{2}-\d{2}-/, ''));
-    if (!old.size) continue;
-    let inter = 0;
-    for (const t of now) if (old.has(t)) inter++;
-    const score = inter / (now.size + old.size - inter);
-    if (score > bestScore) { best = path.join(dir, f); bestScore = score; }
+    if (old.size && now.size) {
+      let inter = 0;
+      for (const t of now) if (old.has(t)) inter++;
+      score = (inter / (now.size + old.size - inter)) / RECONCILE_AT;
+    }
+    // Body arm only when a body was supplied — a 2-arg call reads no files and behaves exactly as
+    // before. N reads per new note; the folder is the bound, and this runs detached at SessionEnd.
+    if (nowBody.size) {
+      let oldBody = null;
+      try { oldBody = bodyTokens(fs.readFileSync(file, 'utf8')); } catch { /* unreadable: skip */ }
+      if (oldBody?.size) score = Math.max(score, containment(nowBody, oldBody) / RECONCILE_BODY_AT);
+    }
+    if (score > bestScore) { best = file; bestScore = score; }
   }
-  return bestScore >= RECONCILE_AT ? best : null;
+  return bestScore >= 1 ? best : null;
 }
 
 /**
@@ -238,7 +302,7 @@ function writeNotes(insights, slug) {
     // Reconcile before appending: a restatement of an existing lesson updates that note rather
     // than spawning a near-duplicate. Without this the distiller keeps re-creating notes
     // /memory:prune has just merged away.
-    const dup = findNearDuplicate(d, sl);
+    const dup = findNearDuplicate(d, sl, body);
     if (dup) { reconcile(dup, title, body, line, today); merged++; return; }
     const text = line ? `${body.replace(/\s+$/, '')}\n\n_Also asked as: ${line}._\n` : body;
     // YAML-safe: quote the title so colons/quotes in it don't break frontmatter
@@ -377,6 +441,63 @@ function selftest() {
   assert.strictEqual(findNearDuplicate(d, 'media-cache-key-with-query-aware-allowlist'), null);
   assert.strictEqual(findNearDuplicate(d, 'gitlab-ci-trigger-uses-branch-ref-not-commit-sha'), null);
 
+  // ---- body arm (RECONCILE_BODY_AT). The pairs below are the real 2026-08-17 audit findings,
+  // shortened: a restatement whose TITLE shares nothing with the original, which is the whole class
+  // the slug arm could not see. A 2-arg call must keep behaving exactly as it did before.
+  const b = path.join(tmpBase, 'bodies');
+  fs.mkdirSync(b);
+  const mirrors = 'Config vault and project_key resolution was duplicated in bash, Node and Python.'
+    + ' Porting the distiller to Node eliminated a mirror by importing paths.mjs instead of'
+    + ' reimplementing it. Mirrors drift; imports do not.';
+  fs.writeFileSync(path.join(b, '2026-08-16-single-implementation-resolution-beats-mirrored-logic.md'),
+    `---\ntitle: m\n---\n\n## m\n\n${mirrors}\n\n_Also asked as: mirror drift, one source of truth._\n`);
+  // Same lesson, different words in the title: slug Jaccard is 0.00, body containment clears 0.40.
+  const restated = '## Collapse multi-runtime mirrors via porting\n\nConfig, vault and project_key'
+    + ' resolution existed in bash, Node and Python. Porting distill-session.py to Node removed one'
+    + ' mirror without adding abstraction — the new .mjs imports paths.mjs for resolution.\n';
+  assert.strictEqual(findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting'), null,
+    'slug arm alone must miss this pair — that is the bug the body arm fixes');
+  assert.ok(findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting', restated),
+    'body arm must catch a restatement whose title shares no vocabulary');
+
+  // A complementary note on the same subject must NOT merge. This is the real KEEP pair that scored
+  // highest (0.286) in the calibration, so it is the margin under RECONCILE_BODY_AT being asserted.
+  const complementary = '## Cache the fork, do not port the caller\n\nA shell hook that calls'
+    + ' project_key forks git and pays the full 34ms each time. Caching it saves 14ms per call'
+    + ' across every hook, rather than porting one expensive hook from shell to Node.\n';
+  assert.strictEqual(findNearDuplicate(b, 'cache-the-fork-do-not-port-the-caller', complementary), null,
+    'a complementary lesson on the same subject must survive as its own note');
+
+  // The alias line is deliberately over-broad vocabulary; counting it would inflate every pair.
+  assert.ok(!bodyTokens('---\ntitle: t\n---\n\n## t\n\nreal claim.\n\n_Also asked as: zebra, quokka._\n')
+    .has('zebra'), 'alias line must not reach the body tokens');
+  assert.ok(!bodyTokens('## heading-word\n\nclaim.\n').has('heading'),
+    'heading restates the title the slug arm already scores');
+  // An unreadable sibling must not take the whole check down with it (hooks never block).
+  fs.writeFileSync(path.join(b, '2026-08-16-unreadable.md'), 'x');
+  fs.chmodSync(path.join(b, '2026-08-16-unreadable.md'), 0o000);
+  assert.ok(findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting', restated),
+    'an unreadable note must be skipped, not thrown');
+  fs.chmodSync(path.join(b, '2026-08-16-unreadable.md'), 0o644);
+
+  // The entry-point guard must survive being reached through a symlinked plugin dir, which is how
+  // plugins are actually installed. Run this file with no args through a symlink: main() prints its
+  // usage line. A lexical path compare returns false here and prints NOTHING — the distiller would
+  // go silently dead, so assert on the output rather than on the exit code (it is 0 either way).
+  const self = fileURLToPath(import.meta.url);
+  const linkRoot = path.join(tmpBase, 'linked');
+  fs.symlinkSync(path.dirname(self), linkRoot, 'dir');
+  // No args means main() prints usage to stderr and exits 1, so execFileSync throws — the output is
+  // the signal here, not the status. Silence is the failure being guarded against.
+  let viaLink = '';
+  try {
+    execFileSync(process.execPath, [path.join(linkRoot, path.basename(self))],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    viaLink = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+  }
+  assert.match(viaLink, /^usage:/, 'main() must still run when invoked through a symlinked dir');
+
   // reconcile: unions aliases, appends dated addendum, creates no file
   const target = path.join(d, '2026-08-06-parent-pipeline-allow-failure-true-hides-child-job-cancellat.md');
   const before = fs.readdirSync(d).filter((f) => f.endsWith('.md')).length;
@@ -406,7 +527,7 @@ function selftest() {
   assert.ok(flat.includes('[REDACTED]') && flat.includes('[assistant:tool] Bash'));
 
   fs.rmSync(tmpBase, { recursive: true, force: true });
-  console.log('selftest: 22 assertions passed');
+  console.log('selftest: 28 assertions passed');
 }
 
 // ---------------------------------------------------------------- main
@@ -440,4 +561,13 @@ function main() {
   console.log(`distill: wrote ${written} note(s), merged ${merged} into existing, for ${slug}`);
 }
 
-main();
+// Nothing runs on import. This file exports its pure helpers (slugify, tokens, bodyTokens,
+// findNearDuplicate, reconcile, transcriptToText, ...) and an importer that got the hook executed
+// instead — spawning a headless `claude`, writing notes, reindexing the vault — would be a nasty
+// surprise. It was one until 2026-08-17: `main()` was called unconditionally here, so merely
+// importing `findNearDuplicate` to check a pair printed the usage line and exited.
+//
+// See paths.isEntryPoint for why it compares real paths and not lexically-resolved ones — it matters
+// most here, because distill-session.sh hands node a BASH_SOURCE-derived path that still contains
+// any symlinked directory. Covered by the symlink selftest above.
+if (paths.isEntryPoint(import.meta.url)) main();

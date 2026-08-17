@@ -30,12 +30,12 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
 2. **Dedup insights** (needs judgment). **Start from the semantic scan, not from titles:**
 
    ```
-   node "$MEM/scripts/memory-semantic.mjs" --dupes [--min 0.86] [--top 30]
+   node "$MEM/scripts/memory-semantic.mjs" --dupes [--min 0.75] [--top 30]
    ```
 
    It ranks same-folder pairs by embedding similarity in well under a second, and cross-folder pairs are excluded by construction. **Use it in preference to token overlap.** On 2026-08-14 the Jaccard scan in `memory-audit-checks.mjs` reported **0 pairs ≥0.45** across 987 notes while eleven real duplicates sat in them — notes that restate one idea in different words ("origin owns Cache-Control" / "cache-control at origin not CloudFront" / "cache-control source should follow the content source") share a concept but almost no vocabulary. That is the same keyword-vs-meaning gap that makes `ctx_search` miss paraphrased questions. Keep the Jaccard list as a secondary signal; it still catches literal restatements cheaply.
 
-   **Calibration is per-model — do not carry a threshold across models.** Run it with no `--min` and trust the profile default (`e5-multi` 0.95, `bge-small-en` 0.86). E5 packs all similarities into a high narrow band, so bge-small-en's 0.86 returns **29,560 pairs** under e5-multi — noise that reads like a backlog. On the current profile, ≥0.95 yields ~16 pairs and they are overwhelmingly real. **High similarity is not proof** — under the old model `aws-cra1-login` and `aws-cra2-login` scored 0.890 and must never be merged: same shape, opposite content (two different AWS orgs). The scan proposes; you judge.
+   **Calibration is per-model — do not carry a threshold across models.** Run it with no `--min` and trust the profile default (`bge-m3` 0.75, `bge-small-en` 0.86, `e5-multi` 0.95). The number does not transfer **in either direction**: e5-multi packs similarities into a high narrow band, so bge-small-en's 0.86 returns **29,560 pairs** under it — noise that reads like a backlog. bge-m3's band sits low and wide, so e5-multi's 0.95 returned **0 pairs on a 74-note set holding 16 real duplicates** — a clean bill of health that was pure miscalibration (measured 2026-08-17; that is why the default is now 0.75). **High similarity is not proof** — under the old model `aws-cra1-login` and `aws-cra2-login` scored 0.890 and must never be merged: same shape, opposite content (two different AWS orgs). And a clean run is not proof either: two real duplicates in that same set scored **below 0.70** and were found only by reading. The scan proposes; you judge.
 
    Then, for each candidate, find notes that describe the **same** lesson or that a later note supersedes.
    - **Cluster within each folder FIRST, then look across folders.** Cross-type pairs (a Mistake plus its matching Decision) are complementary by design and get kept — so if a greedy pass assigns a note to a cross-type cluster first and marks it consumed, it never gets compared against its real same-type twin and the duplicate survives the prune. That is precisely how `cloudfront-function-code-budgeting-with-esbuild` and `…-size-budgeting-with-esbuild` (Jaccard 0.67) slipped through on 2026-08-07 and were only caught by the next audit. Same-folder first, always.
@@ -43,12 +43,21 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    - **Do NOT delete anything without explicit confirmation** (vault rule). On confirmation: merge content into the surviving note and delete the redundant ones.
    - **Union the aliases on merge** (mandatory): before deleting a redundant note, fold every distinctive `_Also asked as:` paraphrase from it into the survivor's alias line. Dropping a deleted note's aliases silently shrinks retrieval coverage — a `/memory:eval` miss that looks like a vocabulary gap but is really merge-loss. Dedup near-identical phrasings; keep the union.
 
-2b. ⚠ **`--dupes` and `--clusters` thresholds are UNMEASURED for the current model.** `dupeMin`/
-   `clusterMin` are per-model and do not transfer — e5-multi reported 29,560 pairs at bge-small's
-   0.86 because its similarity band is compressed. The values carried for bge-m3 (0.95/0.92) were
-   never calibrated against it, so treat their output as a starting point and sanity-check the top
-   pairs before trusting the count. Recalibrating means sweeping the threshold and eyeballing where
-   real duplicates stop and coincidence starts.
+2b. **`--dupes` and `--clusters` are calibrated for bge-m3 as of 2026-08-17** (0.75 / 0.72), by the
+   sweep below. They were **0.95 / 0.92**, copied from e5-multi and never measured, and at those
+   values both scans reported nothing on a vault holding 16 real duplicates and 2 uncovered topics.
+   If you change the model, redo this — and until you have, treat a clean run as unmeasured rather
+   than as a clean vault.
+
+   | `--dupes --min` | 0.95 | 0.90 | 0.86 | 0.84 | 0.80 | **0.75** |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | pairs (74-note set) | 0 | 0 | 1 | 6 | 9 | **16** |
+
+   Real duplicates occupied 0.75–0.869; the first coincidental pair appeared at 0.714.
+   `--clusters` returned 0 topics at ≥0.76 and 2 real ones at **0.72**. Recalibrating is exactly
+   this: sweep, then read the boundary pairs and find where real duplicates stop and coincidence
+   starts. Note the tail — 2 real duplicates fell below 0.70 and no threshold would have surfaced
+   them, so the sweep bounds the scan's reach, it does not eliminate reading.
 
 3. **Refresh BOTH indexes** so retrieval reflects the pruned state — the FTS5 one below, and the semantic one: `node "$MEM/scripts/memory-semantic.mjs" --index` (incremental: re-embeds only notes whose mtime moved and drops rows for deleted notes, so it is seconds after a prune). **Run it here even though a SessionStart hook also refreshes it** — that hook fires at the *start* of the next session, and until then the vector side would keep answering with notes this prune just deleted. (Routine freshness after *new* notes is automatic — the distiller re-indexes at SessionEnd; this step matters mainly for **deletions**, which must drop stale chunks.)
    - **Source label MUST be lowercase** `<repo>` — the SessionEnd distiller indexes as `vault-insights-frontend` / `vault-memory-frontend` (lowercase). If you index with a different case (e.g. `vault-insights-Frontend`), FTS5 stores a *second* copy under the case-variant label and every note returns twice, halving the effective result window and pushing real matches below the top-5. Lowercase the repo segment before substituting.
