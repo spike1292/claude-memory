@@ -26,55 +26,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
   process alive, next query reloads in 800ms and answers correctly. Because the process is then
   ~150MB rather than ~1.4GB, `serveIdleMs` goes the other way, **5 min → 30 min**: it now guards a
   cheap process, and keeping the socket, indexes and BM25 tokens warm is worth more than the exit.
-
-### Fixed
-
-- **onnxruntime's arena is disabled (`session_options.enableCpuMemArena: false`).** Its BFCArena
-  grows to the largest shapes it has ever seen and never returns them, which is the mechanism behind
-  the 8.8GB of dirty `MALLOC_LARGE` this release already addressed by clamping the input. Clamping
-  bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
-  or an `--index` run over long notes cannot reintroduce the same failure by another route.
-  Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
-- **An idle unload can no longer dispose a session mid-inference.** `singleFlight` guarded
-  concurrent *loads*; the mirror hazard is on the release side, where the idle timer could
-  `dispose()` a session another request was still running inference on — freeing it underneath
-  native code, so a crash rather than a wrong answer. `embed()` now borrows the session for the
-  duration and `take()` refuses while borrowed, retrying on the next idle tick. Rare (it needs an
-  inference outlasting the 5-minute timer) but the same failure class as the load-side race.
-- **A concurrent model reload no longer leaks a session.** `if (!embedder) embedder = await load()`
-  is a check-then-act across an `await`, and it only became reachable once the model could return to
-  `null` mid-life: two requests arriving after an unload both saw `null`, both loaded, and the second
-  assignment dropped the first ~1.3GB session with no `dispose()`. The in-flight load is now shared.
-  Measured: 4 concurrent requests into an unloaded server settle at `MALLOC_LARGE` 450.0M — one
-  session, not four — and all four answer in the same ~1000ms.
-- **`loadIndex()` closes its SQLite handle.** `node:sqlite` does not free it on GC: 200 unclosed
-  `DatabaseSync` opens held 201 fds, unchanged after an explicit `global.gc()`. Harmless in a
-  short-lived CLI, an fd leak ending in EMFILE in a 30-minute server that reopens on every mtime
-  bump for every project. Measured after the fix: 12 forced reloads, 0 handles held.
-- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
-  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
-  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
-  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
-  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
-  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
-  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
-  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
-  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
-  detached with stdio ignored, the stack trace went nowhere.
-- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
-  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but nothing capped a query, and
-  the recall hook embeds the user's whole prompt verbatim — a pasted stack trace went in at 57k
-  chars, 32x longer than anything in the index, so it was also being compared against a length the
-  index never contains. The memory cost is the sharp end: attention is O(seq²) per layer over 24
-  layers, and onnxruntime's arena keeps whatever high-water mark it reaches for the process
-  lifetime, which for `--serve` is 30 idle minutes. Two resident servers were each holding **8.8G of
-  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
-  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
-  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
-  that had 70MB free.
-
-### Changed
-
 - **One resident server total, not one per project, and it idles out in 5 minutes rather than 30.**
   A warm `--serve` costs 800MB-1.4GB — node, onnxruntime and the q8 weights — and there was one per
   indexed repo, so three projects meant ~2.4-4.2GB resident while you prompt in one of them. A
@@ -127,6 +78,49 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **onnxruntime's arena is disabled (`session_options.enableCpuMemArena: false`).** Its BFCArena
+  grows to the largest shapes it has ever seen and never returns them, which is the mechanism behind
+  the 8.8GB of dirty `MALLOC_LARGE` this release already addressed by clamping the input. Clamping
+  bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
+  or an `--index` run over long notes cannot reintroduce the same failure by another route.
+  Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
+- **An idle unload can no longer dispose a session mid-inference.** `singleFlight` guarded
+  concurrent *loads*; the mirror hazard is on the release side, where the idle timer could
+  `dispose()` a session another request was still running inference on — freeing it underneath
+  native code, so a crash rather than a wrong answer. `embed()` now borrows the session for the
+  duration and `take()` refuses while borrowed, retrying on the next idle tick. Rare (it needs an
+  inference outlasting the 5-minute timer) but the same failure class as the load-side race.
+- **A concurrent model reload no longer leaks a session.** `if (!embedder) embedder = await load()`
+  is a check-then-act across an `await`, and it only became reachable once the model could return to
+  `null` mid-life: two requests arriving after an unload both saw `null`, both loaded, and the second
+  assignment dropped the first ~1.3GB session with no `dispose()`. The in-flight load is now shared.
+  Measured: 4 concurrent requests into an unloaded server settle at `MALLOC_LARGE` 450.0M — one
+  session, not four — and all four answer in the same ~1000ms.
+- **`loadIndex()` closes its SQLite handle.** `node:sqlite` does not free it on GC: 200 unclosed
+  `DatabaseSync` opens held 201 fds, unchanged after an explicit `global.gc()`. Harmless in a
+  short-lived CLI, an fd leak ending in EMFILE in a 30-minute server that reopens on every mtime
+  bump for every project. Measured after the fix: 12 forced reloads, 0 handles held.
+- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
+  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
+  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
+  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
+  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
+  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
+  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
+  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
+  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
+  detached with stdio ignored, the stack trace went nowhere.
+- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
+  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but nothing capped a query, and
+  the recall hook embeds the user's whole prompt verbatim — a pasted stack trace went in at 57k
+  chars, 32x longer than anything in the index, so it was also being compared against a length the
+  index never contains. The memory cost is the sharp end: attention is O(seq²) per layer over 24
+  layers, and onnxruntime's arena keeps whatever high-water mark it reaches for the process
+  lifetime, which for `--serve` is 30 idle minutes. Two resident servers were each holding **8.8G of
+  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
+  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
+  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
+  that had 70MB free.
 - **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried
   e5-multi's thresholds.** `dupeMin`/`clusterMin` were 0.95/0.92, copied when bge-m3 became the
   default and never measured against it — and m3's similarity band sits *low and wide* where

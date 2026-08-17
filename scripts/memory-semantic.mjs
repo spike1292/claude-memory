@@ -740,7 +740,6 @@ if (flag('--serve')) {
               matched: r.heading,
               score: +s.toFixed(4),
             })),
-            stale: false, // indexFor() reloads on mtime change, so an answer is never stale now
           }) + '\n',
         );
       } catch (e) {

@@ -334,12 +334,15 @@ test('socketIsLive: live socket, stale file, and absent path', async () => {
 // evictableSockets — the one-resident-server rule. Pure filtering, so it is cheap to pin down; the
 // connect-and-quit half is exercised end-to-end by running two servers.
 test('evictableSockets: siblings only, never self, never strays', () => {
-  const own = 'search-repo-a-bge-m3.sock';
+  // Under the model-keyed scheme the server's own name is search-<model>.sock; everything else
+  // under run/ is a leftover — an old per-slug socket, or a server for a model no longer active.
+  const own = 'search-bge-m3.sock';
   const names = [
     own,
-    'search-repo-b-bge-m3.sock',
+    'search-bge-small-en.sock', // a server for a model that is no longer the active one
+    'search-repo-a-bge-m3.sock', // per-slug names left by the version before the rename,
+    'search-repo-b-bge-m3.sock', // which is why the migration needs no special case
     'search-repo-c-bge-small-en.sock',
-    'search-repo-a-bge-small-en.sock', // same project, other model: a model change, not a sibling
     'notes.db', // the run dir is not sockets-only
     'search-repo-d.sock.tmp',
   ];
@@ -349,7 +352,8 @@ test('evictableSockets: siblings only, never self, never strays', () => {
     'a server must never evict itself — that is a self-inflicted outage',
   );
   assert.deepEqual(out.sort(), [
-    'search-repo-a-bge-small-en.sock',
+    'search-bge-small-en.sock',
+    'search-repo-a-bge-m3.sock',
     'search-repo-b-bge-m3.sock',
     'search-repo-c-bge-small-en.sock',
   ]);

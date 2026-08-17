@@ -164,7 +164,6 @@ try {
         top: hits[0].note,
         score: hits[0].score,
         via: 'server',
-        stale: semantic.stale,
       });
       console.log(
         `Possibly relevant vault notes (retrieved, not verified — open one before relying on it):\n${lines.join('\n')}`,
