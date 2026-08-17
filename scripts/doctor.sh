@@ -156,9 +156,15 @@ if [ -f "$db" ]; then
 else
   warn "no index for this project" "recall abstains silently. It builds on the next SessionStart if $VAULT/Memory/$slug exists."
 fi
-sock="$STATE/run/search-$slug-$model.sock"
+# One server per MODEL, serving every project — not per slug+model, which held one ~1.3GB model
+# per indexed repo.
+sock="$STATE/run/search-$model.sock"
 [ -S "$sock" ] && ok "resident search server listening" \
   || warn "search server not running" "first recall of the session spawns it (~1.5s), then answers take ~60ms. Not an error."
+stale=$(find "$STATE/run" -name 'search-*.sock' ! -name "search-$model.sock" 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: a false test is the LAST command here, and this script must exit 0 whatever it finds.
+[ "${stale:-0}" -gt 0 ] && warn "$stale leftover socket(s) in run/" \
+  "from the per-project scheme or another model. The next server start evicts them." || true
 
 echo
 echo "recall"

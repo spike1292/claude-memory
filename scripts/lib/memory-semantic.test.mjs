@@ -23,6 +23,7 @@ import {
   clusterNotes,
   cosine,
   fuseRRF,
+  buildLexDocs,
   evictableSockets,
   fuseReserved,
   lexTokens,
@@ -362,7 +363,7 @@ test('serveIdleMs: env wins, then config, then a sane default', (t) => {
   });
 
   delete process.env.MEMORY_SERVE_IDLE_MS;
-  assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, 'default is 5 minutes');
+  assert.equal(paths.serveIdleMs(), 30 * 60 * 1000, 'default is 30 minutes');
 
   process.env.MEMORY_SERVE_IDLE_MS = '60000';
   assert.equal(paths.serveIdleMs(), 60000, 'env overrides');
@@ -370,6 +371,61 @@ test('serveIdleMs: env wins, then config, then a sane default', (t) => {
   // Garbage must not disable the timer — that is how a 1.4GB process becomes permanent.
   for (const bad of ['', 'soon', '0', '-1', 'NaN']) {
     process.env.MEMORY_SERVE_IDLE_MS = bad;
-    assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, `"${bad}" must fall back, not disable`);
+    assert.equal(paths.serveIdleMs(), 30 * 60 * 1000, `"${bad}" must fall back, not disable`);
   }
+});
+
+// modelIdleMs — the timer that actually reclaims the 1.3GB. Separate from serveIdleMs because the
+// process and the model are two different costs; conflating them is why the process timeout had to
+// be short.
+test('modelIdleMs: env wins, then config, then a sane default', (t) => {
+  const prev = process.env.MEMORY_MODEL_IDLE_MS;
+  t.after(() => {
+    if (prev === undefined) delete process.env.MEMORY_MODEL_IDLE_MS;
+    else process.env.MEMORY_MODEL_IDLE_MS = prev;
+  });
+
+  delete process.env.MEMORY_MODEL_IDLE_MS;
+  assert.equal(paths.modelIdleMs(), 5 * 60 * 1000, 'default is 5 minutes');
+
+  process.env.MEMORY_MODEL_IDLE_MS = '30000';
+  assert.equal(paths.modelIdleMs(), 30000, 'env overrides');
+
+  for (const bad of ['', 'soon', '0', '-1', 'NaN']) {
+    process.env.MEMORY_MODEL_IDLE_MS = bad;
+    assert.equal(paths.modelIdleMs(), 5 * 60 * 1000, `"${bad}" must fall back, not disable`);
+  }
+
+  // The model must go before the process does, or unloading it never happens.
+  delete process.env.MEMORY_MODEL_IDLE_MS;
+  assert.ok(
+    paths.modelIdleMs() < paths.serveIdleMs(),
+    'model idle must be shorter than process idle, or the unload is dead code',
+  );
+});
+
+// buildLexDocs — the keyword arm's units. Per-chunk vs per-note is a scoring decision, so the shape
+// is pinned rather than assumed.
+test('buildLexDocs: chunk mode keeps rows, note mode concatenates', () => {
+  const rows = [
+    { note: 'a', layer: 'Memory', heading: '(card)', text: 'cutover rollback' },
+    { note: 'a', layer: 'Memory', heading: '(body)', text: 'canary deployment' },
+    { note: 'b', layer: 'Patterns', heading: '(card)', text: 'latency budget' },
+  ];
+
+  const chunk = buildLexDocs(rows, 'chunk');
+  assert.equal(chunk.length, 3, 'chunk mode is one doc per row');
+  assert.ok(chunk[0].toks.length > 0, 'each doc is tokenised');
+
+  const note = buildLexDocs(rows, 'note');
+  assert.equal(note.length, 2, 'note mode is one doc per note');
+  const a = note.find((d) => d.note === 'a');
+  assert.equal(a.heading, '(note)');
+  for (const w of ['cutover', 'rollback', 'canary', 'deployment'])
+    assert.ok(a.toks.includes(w), `note doc must carry "${w}" from both of its chunks`);
+  assert.equal(note.find((d) => d.note === 'b').layer, 'Patterns', 'layer survives the merge');
+
+  // Anything that is not exactly 'note' means chunk — the env var is free text.
+  assert.equal(buildLexDocs(rows, undefined).length, 3);
+  assert.equal(buildLexDocs([], 'note').length, 0, 'an empty index is not an error');
 });

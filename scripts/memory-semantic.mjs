@@ -42,6 +42,7 @@ import {
   fuseRRF,
   socketIsLive,
   evictableSockets,
+  buildLexDocs,
   QUIT,
 } from './lib/memory-semantic.mjs';
 
@@ -65,13 +66,14 @@ const SLUG = val('--slug') || paths.projectKey(repo);
 const DB_DIR = paths.stateDir('db');
 const DB_PATH = path.join(DB_DIR, `semantic-${SLUG}-${MODEL_KEY}.db`);
 
-// Refuse to become a second server for this slug+model — see socketIsLive(). This sits above the
-// DB open on purpose: everything below it (index rows, then the model) is what a duplicate must
-// not pay for.
-const SERVE_SOCK = path.join(paths.stateDir('run'), `search-${SLUG}-${MODEL_KEY}.sock`);
+// Keyed by MODEL, not by slug+model: one server answers for every project, because the model is
+// what is expensive to hold and it is identical across them. Refuse to become a second one — see
+// socketIsLive(). This sits above the DB open on purpose: everything below it (index rows, then the
+// model) is what a duplicate must not pay for.
+const SERVE_SOCK = path.join(paths.stateDir('run'), `search-${MODEL_KEY}.sock`);
 if (flag('--serve')) {
   if (await socketIsLive(SERVE_SOCK)) {
-    console.log(`already serving ${SLUG} / ${MODEL_KEY} on ${SERVE_SOCK}`);
+    console.log(`already serving ${MODEL_KEY} on ${SERVE_SOCK}`);
     process.exit(0);
   }
   try {
@@ -97,6 +99,26 @@ const hasChunks = db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0;
 const modelChanged = hasChunks && storedModel !== MODEL;
 
 let embedder = null;
+
+// Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
+// `InferenceSession.release()` on each session, which is what actually returns the native memory —
+// dropping the JS reference alone would not, since the allocation lives on the native side.
+//
+// This is the difference between a 1.4GB idle process and a ~150MB one. The socket, the loaded
+// indexes and the tokenised BM25 documents all survive, so a question after an unload costs a model
+// load (~1.5s) rather than a cold start, and one the keyword arm answers costs nothing.
+async function unloadEmbedder() {
+  if (!embedder) return false;
+  const e = embedder;
+  embedder = null; // clear FIRST: a request arriving mid-dispose must rebuild, not reuse a corpse
+  try {
+    await e.dispose();
+  } catch {
+    /* best effort — a failed release must not take the server down */
+  }
+  return true;
+}
+
 async function embed(texts) {
   if (!embedder) {
     const transformers = await import('@huggingface/transformers');
@@ -104,7 +126,17 @@ async function embed(texts) {
     // The default caches ~722 MB inside node_modules/@huggingface/transformers/.cache, which is
     // the plugin's version-pinned dir and is discarded on every /plugin update.
     paths.useModelCache(transformers);
-    embedder = await transformers.pipeline('feature-extraction', MODEL, { dtype: 'q8' });
+    embedder = await transformers.pipeline('feature-extraction', MODEL, {
+      dtype: 'q8',
+      // Do not let onnxruntime pool freed arena blocks. Its BFCArena grows to the largest shapes it
+      // has ever seen and never returns them, which is how a single long query left a resident
+      // server holding 8.8G of dirty MALLOC_LARGE (2026-08-17). The clamp below bounds the input;
+      // this bounds the ALLOCATOR, so a future model, a larger MAX_CHARS or an --index run over
+      // long notes cannot reintroduce the same failure by a different route.
+      // Costs per-inference allocation instead of pooled reuse — measured worth it, see the
+      // arena numbers in CHANGELOG.
+      session_options: { enableCpuMemArena: false },
+    });
   }
   // Pooling is per-model and silent when wrong, exactly like the query/passage prefixes above.
   // The BGE family trains its dense vector on the CLS token; E5 trains on the mean. Feeding a
@@ -457,7 +489,6 @@ if (flag('--dupes')) {
 
 // ---------------------------------------------------------------- query
 
-const loadedAt = Date.now();
 const queries = argv.filter((a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
 if (!queries.length && !flag('--serve')) {
   console.log(
@@ -470,60 +501,63 @@ const K = Number(val('-k') || 5);
 // Memory ones: measured 2026-08-14, gold L1 notes sat at rank 20 and 35 unscoped, top-3 scoped.
 // Same corpus-competition effect BM25 shows — a bigger k does not fix it, a separate window does.
 const layer = val('--layer');
-const rows = layer
-  ? db.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
-  : db.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
-if (!rows.length) {
-  console.log(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
-  process.exit(1);
-}
-// Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
-// Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is exactly
-// how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after) and why it
-// could not be trusted. Query-time exclusion holds the note set fixed by construction.
-const rowsUsed =
-  process.env.MEMORY_NO_ALIAS_CHUNKS === '1' ? rows.filter((r) => r.heading !== '(aliases)') : rows;
-assertVectorWidth(rowsUsed, DIM, 'query');
-
-// Tokenise once for all queries — df/idf does not change per question, so doing this inside the
-// loop would re-tokenise thousands of chunks per query for no reason.
-//
-// GRANULARITY IS A REAL CHOICE, not a detail. Per-chunk keeps both arms scoring the same units.
-// Per-note concatenates a note's chunks first, which suits a LONG note whose matching terms are
-// spread thin — cra2-ecs-runtime-facts carries the query's vocabulary across many sections and no
-// single chunk looks convincing. It also inflates df for the identity header repeated in every
-// chunk, though BM25 saturates term frequency so the effect is bounded. MEMORY_FUSE_LEX=note|chunk.
 const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
-const lexDocs =
-  LEX_MODE === 'note'
-    ? [
-        ...rowsUsed
-          .reduce((m, r) => {
-            const cur = m.get(r.note) ?? {
-              note: r.note,
-              layer: r.layer,
-              heading: '(note)',
-              text: '',
-              toks: [],
-            };
-            cur.text += ' ' + r.text;
-            m.set(r.note, cur);
-            return m;
-          }, new Map())
-          .values(),
-      ].map((d) => ({ ...d, toks: lexTokens(d.text) }))
-    : rowsUsed.map((r) => ({
-        note: r.note,
-        layer: r.layer,
-        heading: r.heading,
-        text: r.text,
-        toks: lexTokens(r.text),
-      }));
+
+/**
+ * Everything a query needs for ONE project, as a value rather than module state.
+ *
+ * It used to be module state, which is exactly why there had to be a server per project: the slug
+ * was fixed before the socket existed. As a value, one process serves every project — and since the
+ * model is ~1.3GB against ~15MB of vectors for a 3400-chunk index, the thing worth sharing is the
+ * model, not the process.
+ *
+ * Throws rather than exiting: for the CLI a bad index is fatal, but for the server it is one bad
+ * request among many, and a server that called process.exit() on a stale slug would take every other
+ * project down with it.
+ */
+function loadIndex(slug) {
+  const dbPath = path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`);
+  if (!fs.existsSync(dbPath)) throw new Error(`no index for ${slug} — run --index first`);
+  const idb = new DatabaseSync(dbPath);
+  // Same guard the CLI applies, per index: vectors from another model are noise that looks like a
+  // score, and in a multi-project server one stale index must not be answered from.
+  const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
+  const rows = layer
+    ? idb.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
+    : idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
+  if (rows.length && stored !== MODEL)
+    throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
+  if (!rows.length)
+    throw new Error(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
+  // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
+  // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is
+  // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)
+  // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
+  const rowsUsed =
+    process.env.MEMORY_NO_ALIAS_CHUNKS === '1'
+      ? rows.filter((r) => r.heading !== '(aliases)')
+      : rows;
+  assertVectorWidth(rowsUsed, DIM, 'query');
+  return {
+    slug,
+    dbPath,
+    rowsUsed,
+    lexDocs: buildLexDocs(rowsUsed, LEX_MODE),
+    // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
+    // the match often (that is their job) but their text is a list of questions — as a one-line
+    // brief it reads as noise. Match on any chunk, describe with the card.
+    cardByNote: new Map(
+      rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
+    ),
+    loadedAt: Date.now(),
+  };
+}
 
 // One query, factored out so the CLI and the socket server cannot drift apart. A server that
 // re-implemented ranking would eventually answer differently from the eval harness, and the whole
 // point of the harness is that it measures what a session actually gets.
-function searchOne(q, qvec, k) {
+function searchIn(index, q, qvec, k) {
+  const { rowsUsed, lexDocs } = index;
   // best chunk per note, so one long note cannot fill the whole result list
   const best = new Map();
   for (const r of rowsUsed) {
@@ -578,26 +612,60 @@ if (flag('--serve')) {
   const sockPath = SERVE_SOCK; // probed and cleaned above; do NOT unlink again — by now another
   // server may legitimately own the path, and stealing it is what made these multiply.
   const IDLE_MS = paths.serveIdleMs();
+  const MODEL_IDLE_MS = paths.modelIdleMs();
   const quit = () => {
     try {
       fs.unlinkSync(sockPath);
     } catch {}
     process.exit(0);
   };
+
+  // Two timers, because the process and the model are two very different costs. The model is ~1.3G
+  // and goes first; the process is ~150M once it has, and can afford to linger holding its indexes.
   let idle = setTimeout(quit, IDLE_MS);
+  let modelIdle = null;
+  const armModelIdle = () => {
+    clearTimeout(modelIdle);
+    modelIdle = setTimeout(async () => {
+      if (await unloadEmbedder())
+        console.log(`unloaded model after ${MODEL_IDLE_MS / 60000}m idle`);
+    }, MODEL_IDLE_MS);
+    modelIdle.unref?.(); // must never be the reason the event loop stays alive
+  };
   const bump = () => {
     clearTimeout(idle);
     idle = setTimeout(quit, IDLE_MS);
+    armModelIdle();
   };
 
-  await embed(['warm up so the first real request is not the one that pays for the model load']);
+  // Indexes are per project and loaded on demand — this is what lets ONE process serve every
+  // project instead of one process per project. They are cheap next to the model (~15M of vectors
+  // for 3400 chunks against ~1.3G of weights), so they are cached and never evicted; the process
+  // idle timer is the upper bound on how long they live.
+  const indexes = new Map();
+  function indexFor(slug) {
+    const have = indexes.get(slug);
+    // The index changes under us as notes are written, and a stale one is answered from silently.
+    // mtime on the DB file is the cheap check — the same one the single-project server used, now
+    // per project and used to RELOAD rather than merely to warn.
+    if (have) {
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(have.dbPath).mtimeMs;
+      } catch {
+        /* file vanished; fall through and let loadIndex report it */
+      }
+      if (mtime <= have.loadedAt) return have;
+    }
+    const fresh = loadIndex(slug);
+    indexes.set(slug, fresh);
+    console.log(`loaded index ${slug} (${fresh.rowsUsed.length} chunks)`);
+    return fresh;
+  }
 
-  // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win the
-  // match often (that is their job) but their text is a list of questions — as a one-line brief it
-  // reads as noise. Match on any chunk, describe with the card.
-  const cardByNote = new Map(
-    rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
-  );
+  // Pay the model load now, not on the first real request. The hook only spawns this server because
+  // it just had no answer, so the prompt after next is the one that benefits.
+  await embed(['warm up so the first real request is not the one that pays for the model load']);
 
   const server = net.createServer((sock) => {
     bump();
@@ -609,29 +677,31 @@ if (flag('--serve')) {
       buf = '';
       try {
         const msg = JSON.parse(line);
-        // A newer server for another project has taken over — see evictableSockets(). Acknowledge
-        // first so it is not left waiting on a socket that vanishes mid-write.
+        // A newer server has taken over — see evictableSockets(). Acknowledge first so it is not
+        // left waiting on a socket that vanishes mid-write.
         if (msg.quit) {
-          sock.end(JSON.stringify({ quitting: SLUG }) + '\n', quit);
+          sock.end(JSON.stringify({ quitting: MODEL_KEY }) + '\n', quit);
           return;
         }
-        const { q, k = 5 } = msg;
-        // The index changes under us as notes are written; mtime on the DB is the cheap check.
-        const stat = fs.statSync(DB_PATH);
-        const stale = stat.mtimeMs > loadedAt;
+        // The slug is now a REQUEST field, not process state. Falling back to the server's own slug
+        // keeps an older hook working against a newer server rather than answering from the wrong
+        // project — the one failure that would be invisible, since wrong notes still look like notes.
+        const { q, k = 5, slug = SLUG } = msg;
+        const index = indexFor(slug);
         const [qv] = await embed([QUERY_PREFIX + q]);
-        const top = searchOne(q, qv, k);
+        const top = searchIn(index, q, qv, k);
         sock.end(
           JSON.stringify({
+            slug,
             results: top.map(({ r, s }) => ({
               note: r.note,
               layer: r.layer,
               heading: r.heading,
-              text: cardByNote.get(r.note) ?? r.text,
+              text: index.cardByNote.get(r.note) ?? r.text,
               matched: r.heading,
               score: +s.toFixed(4),
             })),
-            stale, // caller decides; a slightly stale brief beats a 3s stall
+            stale: false, // indexFor() reloads on mtime change, so an answer is never stale now
           }) + '\n',
         );
       } catch (e) {
@@ -646,7 +716,7 @@ if (flag('--serve')) {
   // spawned detached with stdio ignored, the stack trace went nowhere.
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') {
-      console.log(`already serving ${SLUG} / ${MODEL_KEY} (lost bind race)`);
+      console.log(`already serving ${MODEL_KEY} (lost bind race)`);
       process.exit(0);
     }
     console.error(`serve failed: ${e.message}`);
@@ -654,11 +724,12 @@ if (flag('--serve')) {
   });
   server.listen(sockPath, async () => {
     console.log(
-      `serving ${SLUG} / ${MODEL_KEY} on ${sockPath} (${rowsUsed.length} chunks, idle exit ${IDLE_MS / 60000}m)`,
+      `serving ${MODEL_KEY} on ${sockPath} (all projects, model idle ${MODEL_IDLE_MS / 60000}m, exit ${IDLE_MS / 60000}m)`,
     );
-    // Take over from the other projects' servers. AFTER listen, so a failed bind never evicts the
-    // server that beat us to it. Best-effort throughout: a sibling that ignores us dies on its own
-    // idle timer, which is the whole safety net here.
+    armModelIdle(); // nothing has been served yet, so the model must already be on the clock
+    // Take over from any leftover server. AFTER listen, so a failed bind never evicts the server
+    // that beat us to it. Best-effort throughout: one that ignores us dies on its own idle timer,
+    // which is the whole safety net here.
     const runDir = path.dirname(sockPath);
     const own = path.basename(sockPath);
     let evicted = 0;
@@ -694,9 +765,18 @@ if (flag('--serve')) {
       process.exit(0);
     });
 } else {
+  // The CLI is single-project by nature — its slug comes from cwd or --slug. A bad index here IS
+  // fatal, unlike in the server, so the throw becomes the usage message it always was.
+  let selfIndex;
+  try {
+    selfIndex = loadIndex(SLUG);
+  } catch (e) {
+    console.log(e.message);
+    process.exit(1);
+  }
   const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
   queries.forEach((q, qi) => {
-    const top = searchOne(q, qvecs[qi], K);
+    const top = searchIn(selfIndex, q, qvecs[qi], K);
     // --json: one machine-readable line per query, so the eval harness can score a whole case set in
     // a single process (the model loads once, not once per question).
     if (flag('--json')) {

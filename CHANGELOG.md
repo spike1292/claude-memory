@@ -9,6 +9,33 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **One search server for the whole machine, keyed by model rather than by project.** The slug is
+  now a request field and indexes load on demand and cache, so one process holds one model and
+  answers for every project. Previously the slug was fixed before the socket existed, which forced
+  one ~1.3GB model per indexed repo — three projects meant ~2.4-4.2GB resident while you prompt in
+  one of them. This supersedes the evict-other-projects behaviour added earlier in this release:
+  switching projects no longer costs a model reload, it costs an index load (~15MB of vectors for
+  3400 chunks). Socket moves from `run/search-<slug>-<model>.sock` to `run/search-<model>.sock`;
+  leftovers under the old name are evicted on startup, so the migration needs no special case.
+  Verified: projA and projB served by one process from one socket, 22-32ms each.
+- **The model unloads on its own timer while the process stays alive.** `modelIdleMs` (new, 5 min)
+  calls `pipeline.dispose()` → `InferenceSession.release()`, which is what actually returns native
+  memory — dropping the JS reference would not. Measured: `MALLOC_LARGE` dirty **451.3M → 2,464K**,
+  process alive, next query reloads in 800ms and answers correctly. Because the process is then
+  ~150MB rather than ~1.4GB, `serveIdleMs` goes the other way, **5 min → 30 min**: it now guards a
+  cheap process, and keeping the socket, indexes and BM25 tokens warm is worth more than the exit.
+
+### Fixed
+
+- **onnxruntime's arena is disabled (`session_options.enableCpuMemArena: false`).** Its BFCArena
+  grows to the largest shapes it has ever seen and never returns them, which is the mechanism behind
+  the 8.8GB of dirty `MALLOC_LARGE` this release already addressed by clamping the input. Clamping
+  bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
+  or an `--index` run over long notes cannot reintroduce the same failure by another route.
+  Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
+
 ### Fixed
 
 - **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the

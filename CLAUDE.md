@@ -129,20 +129,27 @@ purpose, because a drifting default makes recall stop silently instead of errori
 never wait on it. Its cosine gate (0.55) is separate from the BM25 gate; the bands overlap, so it
 errs toward abstaining.
 
-**Exactly one `--serve` per slug+model, and every embedding input is bounded.** The hook spawns on
-any miss — including its 700 ms timeout expiring during the ~1.5 s warm-up — so redundant spawns are
-routine; `--serve` probes the socket and exits in ~55 ms rather than stealing it, and only an
-unbound socket (`ECONNREFUSED`) may be unlinked. Both rules exist because breaking either costs
-gigabytes, not milliseconds: six servers ran at once on a 16 GB machine, and because attention is
-O(seq²) and onnxruntime's arena never shrinks, an unclamped query left two servers holding 8.8 GB of
-dirty `MALLOC_LARGE` each. `embed()` clamps to `MAX_CHARS` for the same reason it pins the batch —
-the index path and the query path must embed identically, and only documents were being chunked.
+**One `--serve` for the whole machine, keyed by MODEL, and three separate bounds on its memory.**
+The server holds the model and answers for every project; the slug is a *request field*, and indexes
+load on demand and cache. That inverts the old design, which fixed the slug before the socket existed
+and therefore needed one ~1.3 GB model per indexed repo. Anything else under `run/` is a leftover and
+gets evicted on startup, which is also the migration path off the per-slug names.
 
-**And exactly one server across all projects.** A warm one is 800 MB–1.4 GB, so one per indexed repo
-was ~2.4–4.2 GB while you prompt in a single repo; a starting server evicts the others through their
-own sockets, which are the registry precisely so there is no pidfile or lock to leave stale. Idle
-exit is 5 minutes and reads `serveIdleMs` from `config.json` — env-only was wrong here for the usual
-reason, that hooks set it and a mid-session env write never reaches the session that made it.
+The three bounds are not interchangeable and each covers what the others cannot:
+
+- **`enableCpuMemArena: false`** in `session_options` — onnxruntime's BFCArena grows to the largest
+  shapes it has ever seen and never returns them. This is the only bound that survives a bad input.
+- **`embed()` clamps to `MAX_CHARS`** — documents were chunked, queries were not, and a query was
+  capped only by bge-m3's own 8192-token max. Attention is heads × seq² per layer (~4.3 GB for one
+  of 24 layers at that length), so this is what stops the arena being asked for gigabytes at all.
+- **`modelIdleMs` (5 min) unloads the model; `serveIdleMs` (30 min) exits the process.** Two timers
+  because they are two costs: `pipeline.dispose()` → `InferenceSession.release()` takes ~450 MB of
+  `MALLOC_LARGE` down to ~2.4 MB while the socket, indexes and BM25 tokens survive, so the process
+  that lingers is the cheap one. Measured 2026-08-17.
+
+The hook spawns on any miss — including its 700 ms timeout expiring during warm-up — so redundant
+spawns are routine; `--serve` probes the socket and exits in ~55 ms rather than stealing it, and only
+an unbound socket (`ECONNREFUSED`) may be unlinked. Six servers once ran at once on a 16 GB machine.
 
 **Two optional integrations, neither installed by this plugin, neither on the retrieval path.**
 `context-mode` backs `ctx_search` (a second index `memory-semantic.mjs` never reads);

@@ -65,25 +65,59 @@ import * as paths from '../../hooks/lib/paths.mjs';
 // Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
 // Which sibling servers should this one evict?
 //
-// One warm server is 800MB-1.4GB, and a server exists per PROJECT — three indexed repos meant up to
-// three of them resident at once for 30 minutes each. You are prompting in one repo at a time, so
-// the other two are pure cost. A starting server takes over: it lists the sibling sockets in run/
-// and asks each to quit.
+// The server is keyed by MODEL alone and serves every project, so anything else under run/ is a
+// leftover: a per-slug socket from the version that ran one server per project, or a server for a
+// model that is no longer the active one. Both are pure cost — a warm server is 800MB-1.4GB — so a
+// starting server asks each of them to quit.
 //
-// Sockets are the registry — no pidfile, no lock, nothing to leave stale. The name carries both
-// halves of the identity, and only the slug may differ: a server for the SAME project on a
-// different model is not a sibling to evict, it is a model change, which every mode except --index
-// already refuses.
+// Sockets are the registry: no pidfile, no lock, nothing to leave stale. This is also the migration
+// path off the per-slug scheme, which needs no special case precisely because those names are
+// "not mine" under the same rule.
 //
-// ponytail: last-writer-wins, no coordination. Two servers for different projects starting in the
-// same instant can evict each other and both die; the next prompt respawns one, so it self-heals at
-// the cost of one keyword-only recall. Needs a lock only if that is ever observed, which takes two
-// sessions prompting simultaneously in different repos.
+// ponytail: last-writer-wins, no coordination. Two servers starting in the same instant can evict
+// each other and both die; the next prompt respawns one, so it self-heals at the cost of one
+// keyword-only recall. Needs a lock only if that is ever observed.
 export function evictableSockets(names, ownName) {
   return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
 }
 
 export const QUIT = { quit: 1 };
+
+/**
+ * Documents for the keyword arm, tokenised once.
+ *
+ * Granularity is a real choice, not a detail. `chunk` keeps both arms scoring the same units.
+ * `note` concatenates a note's chunks first, which suits a LONG note whose matching terms are spread
+ * thin — one where no single chunk looks convincing but the note carries the query's vocabulary
+ * across many sections. It also inflates df for the identity header repeated in every chunk, though
+ * BM25 saturates term frequency so the effect is bounded. MEMORY_FUSE_LEX=note|chunk.
+ *
+ * Tokenising here rather than per query matters: df/idf does not change per question, so doing it
+ * inside the loop would re-tokenise thousands of chunks for every question asked.
+ */
+export function buildLexDocs(rowsUsed, mode) {
+  if (mode !== 'note')
+    return rowsUsed.map((r) => ({
+      note: r.note,
+      layer: r.layer,
+      heading: r.heading,
+      text: r.text,
+      toks: lexTokens(r.text),
+    }));
+  const byNote = new Map();
+  for (const r of rowsUsed) {
+    const cur = byNote.get(r.note) ?? {
+      note: r.note,
+      layer: r.layer,
+      heading: '(note)',
+      text: '',
+      toks: [],
+    };
+    cur.text += ' ' + r.text;
+    byNote.set(r.note, cur);
+  }
+  return [...byNote.values()].map((d) => ({ ...d, toks: lexTokens(d.text) }));
+}
 
 export function socketIsLive(sockPath, timeoutMs = 1000) {
   if (!fs.existsSync(sockPath)) return Promise.resolve(false);
