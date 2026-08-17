@@ -11,6 +11,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
@@ -22,9 +23,11 @@ import {
   clusterNotes,
   cosine,
   fuseRRF,
+  evictableSockets,
   fuseReserved,
   lexTokens,
   samefolderPairs,
+  socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
 
@@ -297,4 +300,76 @@ test('real notes chunk cleanly — and the check names the project it got', (t) 
   // 345-note check to 6 while still printing a pass. Coverage that depends on cwd must say which
   // cwd it got and how much it actually covered, or a shrunken run reads as a clean one.
   t.diagnostic(`chunk-checked ${checked} real notes in ${project}`);
+});
+
+// socketIsLive — the guard that keeps one bge-m3 per slug+model instead of six.
+//
+// Costs nothing to test and everything to get wrong in the safe direction: a false "dead" makes a
+// duplicate steal the socket and orphan a live server holding ~800MB.
+test('socketIsLive: live socket, stale file, and absent path', async () => {
+  const net = await import('node:net');
+  // Short base dir on purpose — macOS sun_path caps a unix socket path at 104 bytes, and the
+  // scratchpad paths this repo is usually tested from blow straight past it with EINVAL.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sock-'));
+  const sock = path.join(dir, 's');
+
+  assert.equal(await socketIsLive(path.join(dir, 'nope')), false, 'absent path is not live');
+
+  const server = net.createServer(() => {});
+  await new Promise((r) => server.listen(sock, r));
+  assert.equal(await socketIsLive(sock), true, 'a listening socket must read as live');
+
+  // Close the server but leave the file: exactly what a SIGKILLed serve leaves behind, and the
+  // only case that may be unlinked.
+  await new Promise((r) => server.close(r));
+  fs.writeFileSync(sock, ''); // close() removes it; recreate the leftover
+  assert.equal(await socketIsLive(sock), false, 'a socket file nobody is bound to is not live');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// evictableSockets — the one-resident-server rule. Pure filtering, so it is cheap to pin down; the
+// connect-and-quit half is exercised end-to-end by running two servers.
+test('evictableSockets: siblings only, never self, never strays', () => {
+  const own = 'search-repo-a-bge-m3.sock';
+  const names = [
+    own,
+    'search-repo-b-bge-m3.sock',
+    'search-repo-c-bge-small-en.sock',
+    'search-repo-a-bge-small-en.sock', // same project, other model: a model change, not a sibling
+    'notes.db', // the run dir is not sockets-only
+    'search-repo-d.sock.tmp',
+  ];
+  const out = evictableSockets(names, own);
+  assert.ok(
+    !out.includes(own),
+    'a server must never evict itself — that is a self-inflicted outage',
+  );
+  assert.deepEqual(out.sort(), [
+    'search-repo-a-bge-small-en.sock',
+    'search-repo-b-bge-m3.sock',
+    'search-repo-c-bge-small-en.sock',
+  ]);
+  assert.equal(evictableSockets([own], own).length, 0, 'a lone server evicts nobody');
+});
+
+// serveIdleMs — the knob that decides how long 800MB-1.4GB sits doing nothing.
+test('serveIdleMs: env wins, then config, then a sane default', (t) => {
+  const prev = process.env.MEMORY_SERVE_IDLE_MS;
+  t.after(() => {
+    if (prev === undefined) delete process.env.MEMORY_SERVE_IDLE_MS;
+    else process.env.MEMORY_SERVE_IDLE_MS = prev;
+  });
+
+  delete process.env.MEMORY_SERVE_IDLE_MS;
+  assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, 'default is 5 minutes');
+
+  process.env.MEMORY_SERVE_IDLE_MS = '60000';
+  assert.equal(paths.serveIdleMs(), 60000, 'env overrides');
+
+  // Garbage must not disable the timer — that is how a 1.4GB process becomes permanent.
+  for (const bad of ['', 'soon', '0', '-1', 'NaN']) {
+    process.env.MEMORY_SERVE_IDLE_MS = bad;
+    assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, `"${bad}" must fall back, not disable`);
+  }
 });

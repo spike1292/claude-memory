@@ -129,6 +129,21 @@ purpose, because a drifting default makes recall stop silently instead of errori
 never wait on it. Its cosine gate (0.55) is separate from the BM25 gate; the bands overlap, so it
 errs toward abstaining.
 
+**Exactly one `--serve` per slug+model, and every embedding input is bounded.** The hook spawns on
+any miss — including its 700 ms timeout expiring during the ~1.5 s warm-up — so redundant spawns are
+routine; `--serve` probes the socket and exits in ~55 ms rather than stealing it, and only an
+unbound socket (`ECONNREFUSED`) may be unlinked. Both rules exist because breaking either costs
+gigabytes, not milliseconds: six servers ran at once on a 16 GB machine, and because attention is
+O(seq²) and onnxruntime's arena never shrinks, an unclamped query left two servers holding 8.8 GB of
+dirty `MALLOC_LARGE` each. `embed()` clamps to `MAX_CHARS` for the same reason it pins the batch —
+the index path and the query path must embed identically, and only documents were being chunked.
+
+**And exactly one server across all projects.** A warm one is 800 MB–1.4 GB, so one per indexed repo
+was ~2.4–4.2 GB while you prompt in a single repo; a starting server evicts the others through their
+own sockets, which are the registry precisely so there is no pidfile or lock to leave stale. Idle
+exit is 5 minutes and reads `serveIdleMs` from `config.json` — env-only was wrong here for the usual
+reason, that hooks set it and a mid-session env write never reaches the session that made it.
+
 **Two optional integrations, neither installed by this plugin, neither on the retrieval path.**
 `context-mode` backs `ctx_search` (a second index `memory-semantic.mjs` never reads);
 `codebase-memory-mcp` backs the L4 `Graph/` layer. Details in

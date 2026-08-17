@@ -54,6 +54,24 @@ export function recallEnabled() {
 }
 
 /**
+ * How long a resident --serve sits idle before exiting.
+ *
+ * A warm server costs 800MB-1.4GB — node, onnxruntime and the q8 weights — so an idle one is the
+ * most expensive thing this plugin leaves running. 5 minutes, not the old env-only 30: coming back
+ * to a cold project costs one keyword-only recall and a ~1.5s respawn, which is the cheap side of
+ * that trade on a 16GB machine.
+ *
+ * Reads config.json and not just the env var because hooks are what set this, and a value written
+ * to settings.json's env block does not reach the session that wrote it — the same trap that once
+ * pointed a relocating hook at an empty vault.
+ */
+export function serveIdleMs() {
+  const raw = process.env.MEMORY_SERVE_IDLE_MS ?? config().serveIdleMs;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 5 * 60 * 1000;
+}
+
+/**
  * Mutable state root — never inside the plugin, which is wiped on update.
  * Mirrors memory_home(). Subdirs: db/ models/ logs/ run/ eval/
  */

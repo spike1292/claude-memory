@@ -9,7 +9,42 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
+  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
+  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
+  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
+  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
+  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
+  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
+  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
+  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
+  detached with stdio ignored, the stack trace went nowhere.
+- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
+  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but nothing capped a query, and
+  the recall hook embeds the user's whole prompt verbatim — a pasted stack trace went in at 57k
+  chars, 32x longer than anything in the index, so it was also being compared against a length the
+  index never contains. The memory cost is the sharp end: attention is O(seq²) per layer over 24
+  layers, and onnxruntime's arena keeps whatever high-water mark it reaches for the process
+  lifetime, which for `--serve` is 30 idle minutes. Two resident servers were each holding **8.8G of
+  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
+  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
+  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
+  that had 70MB free.
+
 ### Changed
+
+- **One resident server total, not one per project, and it idles out in 5 minutes rather than 30.**
+  A warm `--serve` costs 800MB-1.4GB — node, onnxruntime and the q8 weights — and there was one per
+  indexed repo, so three projects meant ~2.4-4.2GB resident while you prompt in one of them. A
+  starting server now asks the others to quit over their own sockets (no pidfile, no lock, nothing
+  to leave stale); a server for the same project on a different model is left alone, since that is a
+  model change and every mode except `--index` already refuses it. Last-writer-wins with no
+  coordination: two servers for different projects starting in the same instant can evict each other
+  and both die, which costs one keyword-only recall and self-heals on the next prompt.
+  `MEMORY_SERVE_IDLE_MS` now also reads `serveIdleMs` from `config.json`, because hooks are what set
+  it and an env value written mid-session does not reach the session that wrote it.
 
 - **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
   `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and

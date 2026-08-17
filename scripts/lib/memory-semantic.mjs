@@ -40,9 +40,70 @@
 // ponytail: linear cosine scan over a few thousand 384-d vectors is ~5ms. No ANN index, no server.
 
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 import * as paths from '../../hooks/lib/paths.mjs';
+
+// Is something already listening on this unix socket?
+//
+// One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
+// SIX --serve processes at once, each holding a full model — 797MB-1.5GB phys_footprint apiece,
+// mostly swapped out, so they cost the machine without showing up in RSS.
+//
+// They pile up because --serve used to unlink the socket unconditionally and rebind. The previous
+// server kept running with a listening fd on an unlinked inode: reachable by nobody, exiting only
+// when its 30m idle timer fired. And a redundant spawn is the NORMAL case, not an edge one —
+// memory-recall.mjs spawns whenever it has no answer, which includes its 700ms timeout expiring
+// during the ~1.5s warm-up. Every prompt in that window forked another model.
+//
+// Probing costs ~1ms and has to happen BEFORE the index load and the warm-up, or a duplicate has
+// already paid for both by the time it discovers it is redundant.
+//
+// A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
+// might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
+// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
+// Which sibling servers should this one evict?
+//
+// One warm server is 800MB-1.4GB, and a server exists per PROJECT — three indexed repos meant up to
+// three of them resident at once for 30 minutes each. You are prompting in one repo at a time, so
+// the other two are pure cost. A starting server takes over: it lists the sibling sockets in run/
+// and asks each to quit.
+//
+// Sockets are the registry — no pidfile, no lock, nothing to leave stale. The name carries both
+// halves of the identity, and only the slug may differ: a server for the SAME project on a
+// different model is not a sibling to evict, it is a model change, which every mode except --index
+// already refuses.
+//
+// ponytail: last-writer-wins, no coordination. Two servers for different projects starting in the
+// same instant can evict each other and both die; the next prompt respawns one, so it self-heals at
+// the cost of one keyword-only recall. Needs a lock only if that is ever observed, which takes two
+// sessions prompting simultaneously in different repos.
+export function evictableSockets(names, ownName) {
+  return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
+}
+
+export const QUIT = { quit: 1 };
+
+export function socketIsLive(sockPath, timeoutMs = 1000) {
+  if (!fs.existsSync(sockPath)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const c = net.createConnection(sockPath);
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        c.destroy();
+      } catch {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(true), timeoutMs);
+    c.on('connect', () => done(true));
+    c.on('error', () => done(false));
+  });
+}
 
 // Model profiles. Embedding models are asymmetric in different ways — BGE-en wants an instruction
 // on the query only, E5 wants `query:`/`passage:` on both sides, bge-m3 wants neither. Getting the
