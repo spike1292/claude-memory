@@ -45,6 +45,7 @@ import {
   mtimeCache,
   evictableSockets,
   buildLexDocs,
+  buildBundle,
   QUIT,
 } from './lib/memory-semantic.mjs';
 
@@ -83,28 +84,29 @@ if (flag('--serve')) {
   } catch {}
 }
 
-const db = new DatabaseSync(DB_PATH);
-db.exec(`CREATE TABLE IF NOT EXISTS chunks (
+// NOT opened for --serve. Every query goes through loadIndex(), which opens and closes its own
+// per-slug handle, so this one would be an unread fd held for the life of a 30-minute process — and
+// worse, the CREATE TABLE below would CREATE an empty index file for whichever project happened to
+// spawn the server, which doctor.sh then reports as "index is empty" for a project that simply has
+// none. The server has no special relationship with its spawning project; that is the whole point.
+const db = flag('--serve') ? null : new DatabaseSync(DB_PATH);
+if (db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY, note TEXT, layer TEXT, file TEXT, mtime INTEGER,
   heading TEXT, text TEXT, vec BLOB)`);
-db.exec('CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file)');
-db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  db.exec('CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file)');
+  db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+}
 
 // Vectors from two different models are not comparable — cosine between them is noise that looks
 // like a score. Record which model built the index; --index rebuilds on a change, everything else
 // refuses to run against a stale one rather than returning quiet nonsense.
-const storedModel = db.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
-const hasChunks = db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0;
+const storedModel = db?.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
+const hasChunks = db ? db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0 : false;
 // An index written before this table existed records no model. Treat unknown as MISMATCHED, not as
 // "probably fine" — the first version of this guard did the latter and quietly kept serving stale
 // vectors from the previous model while reporting the index as current.
 const modelChanged = hasChunks && storedModel !== MODEL;
-
-// --serve reads nothing more from this handle: every query goes through loadIndex(), which opens
-// and closes its own per-slug handle. Leaving it open would hold an fd for the life of a 30-minute
-// process, for a project the server has no special relationship with — it is merely whichever one
-// happened to spawn it. Same rule loadIndex() follows; node:sqlite does not free on GC.
-if (flag('--serve')) db.close();
 
 // Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
 // `InferenceSession.release()` on each session, which is what actually returns the native memory —
@@ -549,15 +551,24 @@ function loadIndex(slug) {
   try {
     // Same guard the CLI applies, per index: vectors from another model are noise that looks like a
     // score, and in a multi-project server one stale index must not be answered from.
+    //
+    // Asked of the WHOLE index, not of the --layer slice. Scoped to the slice, an index with the
+    // wrong model but nothing in that layer reported "no chunks in layer X" — a true statement that
+    // sends you looking for missing notes instead of at the rebuild you actually need.
     const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
+    const total = idb.prepare('SELECT COUNT(*) c FROM chunks').get().c;
+    if (total && stored !== MODEL)
+      throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
     const rows = layer
       ? idb.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
       : idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
-    if (rows.length && stored !== MODEL)
-      throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
     if (!rows.length)
       throw new Error(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
-    return buildBundle(slug, dbPath, rows);
+    return buildBundle(slug, dbPath, rows, {
+      dropAliases: process.env.MEMORY_NO_ALIAS_CHUNKS === '1',
+      lexMode: LEX_MODE,
+      dim: DIM,
+    });
   } finally {
     try {
       idb.close();
@@ -565,31 +576,6 @@ function loadIndex(slug) {
       /* already closed, or never opened cleanly — nothing left to release */
     }
   }
-}
-
-function buildBundle(slug, dbPath, rows) {
-  // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
-  // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is
-  // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)
-  // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
-  const rowsUsed =
-    process.env.MEMORY_NO_ALIAS_CHUNKS === '1'
-      ? rows.filter((r) => r.heading !== '(aliases)')
-      : rows;
-  assertVectorWidth(rowsUsed, DIM, 'query');
-  return {
-    slug,
-    dbPath,
-    rowsUsed,
-    lexDocs: buildLexDocs(rowsUsed, LEX_MODE),
-    // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
-    // the match often (that is their job) but their text is a list of questions — as a one-line
-    // brief it reads as noise. Match on any chunk, describe with the card.
-    cardByNote: new Map(
-      rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
-    ),
-    loadedAt: Date.now(),
-  };
 }
 
 // One query, factored out so the CLI and the socket server cannot drift apart. A server that

@@ -23,6 +23,7 @@ import {
   clusterNotes,
   cosine,
   fuseRRF,
+  buildBundle,
   buildLexDocs,
   evictableSockets,
   mtimeCache,
@@ -560,4 +561,37 @@ test('mtimeCache: serves cached until the source is newer, and reloads on a fail
 
   cache.get('projB', 0);
   assert.equal(cache.size(), 2, 'projects are cached independently');
+});
+
+// buildBundle — everything after the SQL. Both of its decisions fail silently: dropping alias
+// chunks changes retrieval without erroring, and a missing card map degrades every brief to raw
+// chunk text that still looks like a result.
+test('buildBundle: card map, alias ablation, and the lex mode it is given', () => {
+  const rows = [
+    { note: 'a', layer: 'Memory', heading: '(card)', text: 'a: the card line' },
+    { note: 'a', layer: 'Memory', heading: '(aliases)', text: 'how do we cut over?' },
+    { note: 'a', layer: 'Memory', heading: '(body)', text: 'cutover rollback detail' },
+    { note: 'b', layer: 'Patterns', heading: '(body)', text: 'latency budget' },
+  ];
+
+  const b = buildBundle('projA', '/tmp/x.db', rows, { lexMode: 'chunk' });
+  assert.equal(b.slug, 'projA');
+  assert.equal(b.dbPath, '/tmp/x.db');
+  assert.equal(b.rowsUsed.length, 4, 'alias chunks are kept by default — they earn their matches');
+  assert.equal(b.cardByNote.get('a'), 'a: the card line', 'the card is what a brief displays');
+  assert.equal(b.cardByNote.get('b'), undefined, 'a note with no card falls back to chunk text');
+  assert.ok(b.loadedAt > 0, 'loadedAt is what mtimeCache compares against');
+
+  const ablated = buildBundle('projA', '/tmp/x.db', rows, { dropAliases: true, lexMode: 'chunk' });
+  assert.equal(ablated.rowsUsed.length, 3, 'the ablation switch removes alias chunks');
+  assert.ok(!ablated.rowsUsed.some((r) => r.heading === '(aliases)'));
+  assert.equal(
+    ablated.lexDocs.length,
+    3,
+    'and the keyword arm sees the ablated set, not the full one',
+  );
+
+  // lexMode is threaded through rather than read from the environment here — the entry owns env.
+  assert.equal(buildBundle('p', '/d', rows, { lexMode: 'note' }).lexDocs.length, 2);
+  assert.equal(buildBundle('p', '/d', rows, { lexMode: 'chunk' }).lexDocs.length, 4);
 });

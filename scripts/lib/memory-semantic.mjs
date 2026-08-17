@@ -45,24 +45,6 @@ import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 import * as paths from '../../hooks/lib/paths.mjs';
 
-// Is something already listening on this unix socket?
-//
-// One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
-// SIX --serve processes at once, each holding a full model — 797MB-1.5GB phys_footprint apiece,
-// mostly swapped out, so they cost the machine without showing up in RSS.
-//
-// They pile up because --serve used to unlink the socket unconditionally and rebind. The previous
-// server kept running with a listening fd on an unlinked inode: reachable by nobody, exiting only
-// when its 30m idle timer fired. And a redundant spawn is the NORMAL case, not an edge one —
-// memory-recall.mjs spawns whenever it has no answer, which includes its 700ms timeout expiring
-// during the ~1.5s warm-up. Every prompt in that window forked another model.
-//
-// Probing costs ~1ms and has to happen BEFORE the index load and the warm-up, or a duplicate has
-// already paid for both by the time it discovers it is redundant.
-//
-// A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
-// might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
-// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
 // Which sibling servers should this one evict?
 //
 // The server is keyed by MODEL alone and serves every project, so anything else under run/ is a
@@ -215,6 +197,24 @@ export function buildLexDocs(rowsUsed, mode) {
   return [...byNote.values()].map((d) => ({ ...d, toks: lexTokens(d.text) }));
 }
 
+// Is something already listening on this unix socket?
+//
+// One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
+// SIX --serve processes at once, each holding a full model — 797MB-1.5GB phys_footprint apiece,
+// mostly swapped out, so they cost the machine without showing up in RSS.
+//
+// They pile up because --serve used to unlink the socket unconditionally and rebind. The previous
+// server kept running with a listening fd on an unlinked inode: reachable by nobody, exiting only
+// when its 30m idle timer fired. And a redundant spawn is the NORMAL case, not an edge one —
+// memory-recall.mjs spawns whenever it has no answer, which includes its 700ms timeout expiring
+// during the ~1.5s warm-up. Every prompt in that window forked another model.
+//
+// Probing costs ~1ms and has to happen BEFORE the index load and the warm-up, or a duplicate has
+// already paid for both by the time it discovers it is redundant.
+//
+// A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
+// might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
+// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
 export function socketIsLive(sockPath, timeoutMs = 1000) {
   if (!fs.existsSync(sockPath)) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -594,4 +594,34 @@ export function fuseRRF(semRanked, lexRanked, w, k) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, k)
     .map(([note]) => note);
+}
+
+/**
+ * A query-ready index bundle from raw chunk rows. No SQLite here — `lib/` must not import
+ * node:sqlite (CI enforces it), so the entry reads the rows and this owns everything after.
+ *
+ * Split out for the reason singleFlight and mtimeCache were: the alias ablation and the card map
+ * are both silent when wrong. Dropping alias chunks changes retrieval without erroring, and a
+ * missing card map degrades every brief to raw chunk text that still looks like a result.
+ */
+export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, dim } = {}) {
+  // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
+  // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is
+  // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)
+  // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
+  const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
+  if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
+  return {
+    slug,
+    dbPath,
+    rowsUsed,
+    lexDocs: buildLexDocs(rowsUsed, lexMode),
+    // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
+    // the match often (that is their job) but their text is a list of questions — as a one-line
+    // brief it reads as noise. Match on any chunk, describe with the card.
+    cardByNote: new Map(
+      rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
+    ),
+    loadedAt: Date.now(),
+  };
 }
