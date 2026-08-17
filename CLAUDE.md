@@ -22,6 +22,7 @@ node scripts/memory-eval.mjs     --selftest    # 9 assertions
 node scripts/memory-synth-vault.mjs --selftest
 node scripts/memory-audit-checks.mjs --selftest # 44 assertions
 node hooks/distill-session.mjs   --selftest    # 22 assertions
+node hooks/validate-note.mjs     --selftest    # 24 assertions
 node hooks/lib/paths.mjs         --selftest    # 7 assertions, project-key cache vs vault-env.sh
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 ```
@@ -135,6 +136,19 @@ and `graph-staleness-check.sh` stays silent because it never generates a first r
 Do not write code that assumes either is present, and do not describe a missing one as breakage.
 State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
 `context-mode` was gone, which was never true.
+
+**Shell vs Node in hooks: fork count decides, not language** (measured 2026-08-17). bash starts in
+5.4 ms and Node in 42.7 ms, so Node's floor is 8× higher — but a hook that forks `jq`/`grep`/`sed`
+per item pays ~3.5 ms *each*, which swamps the difference. Keep a hook in bash when it is a **gate**
+that decides cheaply and spawns (`distill-session.sh`, `semantic-index-refresh.sh`); port it to
+Node when it **loops over notes** (`validate-note.mjs`: 15 fork sites, 166 ms → 93 ms).
+
+Do not port `vault-memory-sync.sh` casually — it repoints symlinks and moves files in a live synced
+vault, and it has already cost 24 notes once. Any port of a vault-mutating hook needs a
+differential harness against the original, not just a self-test.
+
+Roughly 40% of hook wall-clock is vault I/O on a sync-backed volume, which no port fixes:
+`find` over the vault is 130 ms against 68 ms on local disk.
 
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.sh` warns rather than blocking a write, and the heavy hooks

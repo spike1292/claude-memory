@@ -26,6 +26,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **`validate-note.sh` is now `validate-note.mjs` — 166 ms → 93 ms on the hook that runs on every
+  Write/Edit.** The shell version forked ~15 processes (`jq`, `head`, `awk`, six `grep`s,
+  `basename`, `sed`) to check one file; fork-per-operation, not the language, was the cost.
+  Verified against the shell version across all **1172 notes in a real vault plus nine edge-case
+  payloads: identical output** (100 warnings emitted on each side, so the checks demonstrably
+  fire). The convention predicates are now pure functions with a 24-assertion self-test, where the
+  shell had none. It still spawns `memory-audit-checks.mjs --check-file`, now the dominant
+  remaining cost — importing it needs that module to stop running a vault-wide audit at import.
 - **`projectKey()` is cached on disk — roughly 50 ms off every hook invocation.** It delegates to
   `vault-env.sh` so there is one implementation of the key, but that costs a bash+git subprocess:
   72 ms in-process, the single largest cost in both the per-prompt recall hook and the per-write
