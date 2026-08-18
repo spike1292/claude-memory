@@ -9,6 +9,36 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **The last three gate hooks are Node.** `semantic-index-refresh`, `graph-staleness-check` and
+  `distill-session` were bash; they are now thin entries over tested `lib/` modules, and the three
+  `.sh` files are deleted. Only `hooks/vault-memory-sync.sh` and `scripts/doctor.sh` remain shell.
+  The 2026-08-17 rule kept them in bash on a floor of ~5 ms — but none of them was a *bare* gate:
+  each sourced `vault-env.sh` (15 ms) and forked `git`/`jq` several times, and `distill-session.sh`
+  parsed its payload with five separate `jq` pipelines. Measured on the gate path, local-disk vault,
+  n=30: 148.3 ms → **140.7 ms** total, the win carried entirely by the distiller. Rationale and the
+  full table in [docs/decisions/2026-08-18-node-hooks.md](docs/decisions/2026-08-18-node-hooks.md).
+  Test count 76 → 99; the ported decisions (24h and 2h debounces, the >400-message Stop threshold,
+  short-sha staleness) had no tests at all while they lived in shell.
+
+- **One implementation of the gate plumbing.** New `hooks/lib/hook-io.mjs` holds the stdin payload
+  parser, debounce markers, `detach()` and `findClaude()`. The last of those had already drifted:
+  `graph-staleness-check.sh` probed four `claude` locations in bash while `distill-session.mjs`
+  probed the same four in Node, with nothing keeping them in step.
+
+- **Debounce markers and background logs move into `$CLAUDE_MEMORY_HOME`.** From
+  `~/.cache/claude-distill/` and `~/.cache/claude-graphgen/` to `cache/` and `logs/` under the one
+  machine-local root, so there is a single directory to inspect, size and clear. Costs one missed
+  debounce per marker at upgrade — one extra background run, never a wrong one.
+
+### Removed
+
+- **The redundant semantic-index lock.** `$CLAUDE_MEMORY_HOME/.semantic-index.lock` guarded the same
+  file as the indexer's own per-model `db/.index-<model>.lock`, at a coarser scope, and its only
+  observable effect was a **silent** skip: on contention it exited 0 with no output, so a session
+  that indexed nothing looked identical to one that had nothing to index.
+
 ### Fixed
 
 - **`/memory:doctor` measured the symlink instead of the shared `node_modules`.** `du` without `-L`
