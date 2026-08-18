@@ -81,6 +81,25 @@ else
   fi
   # Same skipped-lifecycle-script gap, different symptom: nothing breaks, the install is just
   # 320 MB of binaries that cannot load here (other platforms, browser WASM, image pipeline).
+  # Claude Code keeps every installed version of a plugin — it does not replace the cache on
+  # update. Six versions of this plugin measured 381 MB each, 2.2 GB total, on 2026-08-18. The
+  # runtime is identical across them, so one shared copy in $STATE is the whole fix.
+  if [ -L "$ROOT/node_modules" ]; then
+    ok "node_modules shared from $STATE ($(du -shL "$ROOT/node_modules" 2>/dev/null | cut -f1))"
+  else
+    case "$ROOT" in
+      */plugins/cache/*)
+        vers=$(dirname "$ROOT")
+        n=$(find "$vers" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        tot=$(du -sm "$vers" 2>/dev/null | cut -f1)
+        if [ "${n:-1}" -gt 1 ]; then
+          warn "$n installed versions, ${tot} MB total — each keeps its own node_modules" \
+            "run /memory:install, or: (cd \"$ROOT\" && node scripts/share-modules.mjs)"
+        fi
+        ;;
+    esac
+  fi
+
   nm_mb=$(du -sm "$ROOT/node_modules" 2>/dev/null | cut -f1)
   if [ "${nm_mb:-0}" -gt 150 ]; then
     warn "node_modules is ${nm_mb} MB" "unslimmed. Run /memory:install, or: (cd $ROOT && node scripts/slim-install.mjs)"

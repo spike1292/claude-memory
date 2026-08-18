@@ -48,6 +48,13 @@ things about it:
 - **npm `overrides` cannot do this.** Pointed at a local stub, npm writes a lockfile it then
   rejects itself (`npm ci`: "Missing: sharp@ from lock file"), and Claude Code installs plugins with
   `npm ci`. Workspace overrides install the real package anyway. Measured 2026-08-18.
+- **One copy is shared across installed versions.** Claude Code keeps every version it has
+  installed — it does *not* replace the cache on update — so the install cost multiplies: six
+  versions of this plugin measured 381 MB each, link count 1, **2.2 GB** on 2026-08-18.
+  `scripts/share-modules.mjs` moves the runtime to `$CLAUDE_MEMORY_HOME/node_modules` and symlinks
+  every version dir at it (Node resolves through symlinks, so nothing else changes). It deletes
+  directories, so it refuses to run anywhere but inside a `plugins/cache/` path — a checkout keeps
+  its own. `/memory:doctor` reports the multi-version cost when it is not yet shared.
 - **It fails safe, which means it fails silently.** An upstream layout change makes it prune
   nothing and everything keeps working at 380 MB. The `install` job in `ci.yml` is the only thing
   that notices — it is the one place a real `npm ci` runs, since every other suite mocks the
@@ -115,7 +122,7 @@ happily build an empty vault at the default path. `CLAUDE_MEMORY_HOME` is the ex
 relocates the config file itself, so it can only be an env var.
 
 **All mutable state lives in `$CLAUDE_MEMORY_HOME/` (`db/ models/ logs/ run/ eval/`), never in the
-plugin.** Plugin cache dirs are version-pinned and replaced wholesale on `/plugin update`; anything
+plugin.** Each release installs into its own version-pinned cache dir; anything
 inside would take the indexes and 722 MB of ONNX weights with it. `paths.useModelCache()` exists
 because transformers.js v4 ignores `HF_HOME`/`TRANSFORMERS_CACHE` and must be redirected by mutating
 its own `env.cacheDir`.

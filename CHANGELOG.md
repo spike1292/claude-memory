@@ -11,6 +11,16 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **One `node_modules` shared across installed plugin versions.** Claude Code keeps every version
+  it has installed, each with its own copy — the docs here claimed caches were "replaced wholesale
+  on update", and that is wrong: six versions of this plugin measured 381 MB each, link count 1,
+  **2.2 GB** total. `scripts/share-modules.mjs` (new step 6 of `/memory:install`) moves the runtime
+  to `$CLAUDE_MEMORY_HOME/node_modules` and symlinks every version dir at it, which is the same rule
+  the indexes and model weights already follow. With the slimming below, six versions go from 2.2 GB
+  to 59 MB kept once. The script deletes directories, so it refuses to run outside a `plugins/cache/`
+  path; a git checkout keeps its own `node_modules`. `/memory:doctor` reports the multi-version cost
+  until it is shared.
+
 - **The install is 380 MB → 59 MB.** A `postinstall`
   (`scripts/slim-install.mjs`) strips what this plugin can never execute:
   onnxruntime-node ships every platform's native runtime in one tarball (176 MB of it unloadable on

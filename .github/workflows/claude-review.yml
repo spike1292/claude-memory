@@ -63,8 +63,9 @@ jobs:
                generated eval case sets (`eval-cases-*.jsonl`) that appear in the diff or
                in a test fixture. This is the one finding that must never be soft-pedalled.
             2. State written inside the plugin directory instead of `$CLAUDE_MEMORY_HOME`.
-               Plugin caches are version-pinned and wiped on update, taking indexes and
-               722 MB of model weights with them.
+               Every release installs into its own version-pinned cache dir, so anything
+               put there is both lost on update and duplicated per version — indexes and
+               722 MB of model weights included.
             3. An absolute install path anywhere. bash resolves via `BASH_SOURCE` and node via
                `import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside hooks.json
                command strings.

@@ -146,7 +146,7 @@ before extraction.
 ├── Graph/<project>/      L4 — codebase graph digest
 └── permanent/            cross-project notes that graduated out of a single project
 
-$CLAUDE_MEMORY_HOME/      never in the plugin — plugin caches are wiped on update
+$CLAUDE_MEMORY_HOME/      never in the plugin — every version gets its own cache dir
 ├── db/  models/  logs/  run/  eval/
 ```
 
