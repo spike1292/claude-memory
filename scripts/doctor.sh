@@ -85,7 +85,7 @@ else
   # update. Six versions of this plugin measured 381 MB each, 2.2 GB total, on 2026-08-18. The
   # runtime is identical across them, so one shared copy in $STATE is the whole fix.
   if [ -L "$ROOT/node_modules" ]; then
-    ok "node_modules shared from $STATE ($(du -shL "$ROOT/node_modules" 2>/dev/null | cut -f1))"
+    ok "node_modules shared from $STATE ($(du -shL "$ROOT/node_modules" 2>/dev/null | cut -f1 | tr -d ' '))"
   else
     case "$ROOT" in
       */plugins/cache/*)
@@ -100,7 +100,9 @@ else
     esac
   fi
 
-  nm_mb=$(du -sm "$ROOT/node_modules" 2>/dev/null | cut -f1)
+  # -L on purpose: once node_modules is a symlink into $STATE, du without it measures the link
+  # (0 MB) and this check would pass by measuring nothing.
+  nm_mb=$(du -smL "$ROOT/node_modules" 2>/dev/null | cut -f1)
   if [ "${nm_mb:-0}" -gt 150 ]; then
     warn "node_modules is ${nm_mb} MB" "unslimmed. Run /memory:install, or: (cd $ROOT && node scripts/slim-install.mjs)"
   else
