@@ -13,6 +13,8 @@ import {
   systemMessage,
   readMarker,
   writeMarker,
+  logBanner,
+  detach,
 } from './hook-io.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
@@ -70,4 +72,57 @@ test('countLines matches wc -l semantics', () => {
 
 test('systemMessage is one JSON line Claude Code can render', () => {
   assert.deepStrictEqual(JSON.parse(systemMessage('hi "there"')), { systemMessage: 'hi "there"' });
+});
+
+test('logBanner caps a runaway log and keeps the most recent content', () => {
+  const d = tmp();
+  const f = path.join(d, 'semantic-index.log');
+  // 1.5 MB of numbered lines, so "which lines survived" is checkable.
+  const lines = [];
+  for (let i = 0; i < 60_000; i++) lines.push(`line ${i} ${'x'.repeat(16)}`);
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  assert.ok(fs.statSync(f).size > 1024 * 1024, 'precondition: over the cap');
+
+  logBanner(f, 'bench', '2026-08-18T00:00:00Z');
+
+  const after = fs.readFileSync(f, 'utf8');
+  assert.ok(fs.statSync(f).size <= 1024 * 1024, 'trimmed to at or below the cap');
+  assert.ok(after.endsWith('=== 2026-08-18T00:00:00Z bench ===\n'), 'banner still appended');
+  assert.ok(after.includes('line 59999 '), 'the newest content survived');
+  assert.ok(!after.includes('line 0 '), 'the oldest content is gone');
+  assert.ok(after.startsWith('line '), 'the partial first line was dropped');
+});
+
+test('logBanner leaves a small log alone, and creates a missing one', () => {
+  const d = tmp();
+  const f = path.join(d, 'nested', 'distill.log');
+  logBanner(f, 'a', '2026-08-18T00:00:00Z');
+  logBanner(f, 'b', '2026-08-18T00:00:01Z');
+  const s = fs.readFileSync(f, 'utf8');
+  assert.ok(s.includes(' a ==='), 'nothing below the cap is ever trimmed');
+  assert.ok(s.includes(' b ==='));
+});
+
+// detach() opens distill.log and graphgen.log, which logBanner never touches — the cap has to hold
+// on this path too, and it did not when the trim lived only in logBanner.
+test('detach caps a runaway log before the child writes to it', async () => {
+  const d = tmp();
+  const f = path.join(d, 'distill.log');
+  const lines = [];
+  for (let i = 0; i < 60_000; i++) lines.push(`line ${i} ${'x'.repeat(16)}`);
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  assert.ok(fs.statSync(f).size > 1024 * 1024, 'precondition: over the cap');
+
+  assert.ok(
+    detach(process.execPath, ['-e', 'process.stdout.write("child ran\\n")'], { logFile: f }),
+  );
+  for (let i = 0; i < 100 && !fs.readFileSync(f, 'utf8').includes('child ran'); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+
+  const after = fs.readFileSync(f, 'utf8');
+  assert.ok(fs.statSync(f).size <= 1024 * 1024, 'trimmed to at or below the cap');
+  assert.ok(after.includes('child ran'), 'the child still appended to the trimmed file');
+  assert.ok(after.includes('line 59999 '), 'the newest content survived');
+  assert.ok(!after.includes('line 0 '), 'the oldest content is gone');
 });

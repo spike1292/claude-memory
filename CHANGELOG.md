@@ -9,7 +9,24 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`/memory:doctor` reports the size of machine-local state.** Nothing had ever printed how big
+  `$CLAUDE_MEMORY_HOME` was getting: nothing vacuums, per-project × per-model `.db` files
+  accumulate, `models/` accumulates one set of weights per model, and the hook logs append. The
+  2.2 GB of duplicated `node_modules` behind 0.3.1 was found by accident rather than by a check.
+  Doctor now prints `db/ models/ logs/ eval/ run/` with a combined total and `warn`s past 2 GB,
+  which sits above the ~722 MB of ONNX weights a healthy install is expected to carry. Sizes are
+  measured with `du -L`: without it a symlinked subdirectory reports 0 and the check passes by
+  measuring nothing, the same blind spot as the `node_modules` fix below.
+
 ### Fixed
+
+- **Hook logs are capped at 1 MB.** `semantic-index.log`, `distill.log` and `graphgen.log` were
+  appended to forever and nothing truncated them; the last two carry a headless `claude` child's
+  whole stdout and stderr. An oversized log is now trimmed to its last 256 KB before it is written
+  to. The read is positioned, so a log that has already run away to hundreds of MB never enters
+  memory.
 
 - **A repo with no `origin` remote could change project key.** When the remote-URL normaliser moved
   from `vault-env.sh` into `paths.mjs`, the *other* branch of `computeProjectKey` — the fallback to
@@ -19,6 +36,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
   by a test. Only ever present in this unreleased section, never in a published version.
 
 ### Changed
+
+- **`/memory:synthesize` prints the command that counts staged versus promoted notes, instead of
+  quoting a number.** It carried "965 Insights against 5 `permanent/` notes" — a 2026-08-15
+  measurement with no refresh path, in the one file that tells Claude whether promotion is keeping
+  up with capture. A figure nothing re-measures decays into a claim, so the two `find | wc -l` lines
+  that produce it are now in the command body, and the prose beside them says only what survives
+  re-measurement. The undated "32 uncovered clusters exist" in step 1 got the same treatment; its
+  argument never depended on the number.
 
 - **The last three gate hooks are Node.** `semantic-index-refresh`, `graph-staleness-check` and
   `distill-session` were bash; they are now thin entries over tested `lib/` modules, and the three
@@ -68,6 +93,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
   stats the link itself, so once the runtime moved to `$CLAUDE_MEMORY_HOME` the size check read 0 MB
   and passed by measuring nothing — precisely the case it exists to police. Found running
   `/memory:install` against a real shared install.
+
+### Security
+
+- **The resident search socket is `chmod 0600`.** Since 0.3.0 the slug is a *request field*, so one
+  connection to `run/search-<model>.sock` can query every indexed project rather than only the one
+  you are prompting in — and the socket was created at whatever the umask happened to give it. It is
+  now restricted to the owning user immediately after `listen()`, inside a `try`/`catch` so a failed
+  `chmod` can never stop the server serving. macOS does not enforce unix-socket permissions
+  uniformly, so this is defence in depth on a shared host, not a guarantee.
 
 ## [0.3.1] - 2026-08-18
 

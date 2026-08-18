@@ -122,10 +122,15 @@ export function findClaude() {
  *
  * Detached children write straight to the fd. Piping instead would keep this process alive to
  * shuttle bytes, which is the one thing a gate must not do.
+ *
+ * This is where distill.log and graphgen.log are opened, and each carries a headless `claude`
+ * child's whole stdout+stderr, so the cap has to be applied HERE and not only in `logBanner()` —
+ * those two logs never go through the banner helper.
  */
 function openLog(file) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    trimLog(file);
     return fs.openSync(file, 'a');
   } catch {
     return null;
@@ -163,10 +168,53 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
   }
 }
 
+// The only unbounded appends in the system: semantic-index.log, distill.log and graphgen.log grew
+// forever, and nothing anywhere truncated them (2026-08-18). There are two doors into those files —
+// `logBanner()` writes the banner for semantic-index.log, `openLog()` hands the other two straight
+// to a detached child — so both call trimLog and neither alone is enough. 1 MB is roughly a year of
+// banners plus child output at this repo's rates; keeping 256 KB leaves the last few dozen runs,
+// which is all anyone reads a hook log for.
+const LOG_MAX_BYTES = 1024 * 1024;
+const LOG_KEEP_BYTES = 256 * 1024;
+
+/**
+ * Keep only the tail of an oversized log.
+ *
+ * The read is POSITIONED — one fs.readSync at `size - LOG_KEEP_BYTES` — so a log that has run away
+ * to hundreds of MB never enters memory; readFileSync + slice would be the bug, not the fix.
+ *
+ * The retained tail starts mid-line, so everything up to the first newline is dropped: a truncated
+ * first line reads as corrupt output rather than as a partial one, and the cost is at most one lost
+ * line. Losing a whole banner is impossible — the banner about to be appended follows immediately.
+ *
+ * Best effort throughout, like everything else here: a log we cannot trim is a log that keeps
+ * growing, never a hook that fails.
+ */
+function trimLog(file) {
+  try {
+    const size = fs.statSync(file).size;
+    if (size <= LOG_MAX_BYTES) return;
+    const fd = fs.openSync(file, 'r');
+    let tail;
+    try {
+      const buf = Buffer.allocUnsafe(LOG_KEEP_BYTES);
+      const read = fs.readSync(fd, buf, 0, LOG_KEEP_BYTES, size - LOG_KEEP_BYTES);
+      tail = buf.subarray(0, read);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const nl = tail.indexOf(0x0a);
+    fs.writeFileSync(file, nl === -1 ? tail : tail.subarray(nl + 1));
+  } catch {
+    /* best effort */
+  }
+}
+
 /** Timestamped log banner, so one log file can be read as a sequence of runs. */
 export function logBanner(file, label, iso) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    trimLog(file);
     fs.appendFileSync(file, `\n=== ${iso} ${label} ===\n`);
   } catch {
     /* best effort */

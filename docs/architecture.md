@@ -511,9 +511,11 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | — | **Runaway `claude` recursion** | `CLAUDE_DISTILL_CHILD` is the only guard, on a hook registered for both `SessionEnd` **and** `Stop` | low probability, **unbounded** cost |
 
 There is **no auth and no billing surface** — single user, one unix socket. The nearest analogues:
-the socket is created with no `chmod`/`umask` and the slug is a request field, so any local process
-can query any project's index (harmless on a single-user machine, not on a shared host); and the
-`haiku` call above is the only metered thing in the system.
+the slug is a request field, so one connection to the socket can query *every* indexed project, not
+only the current one — the socket is `chmod 0600` at `listen()` (unreleased), which restricts that
+to the owning user but is defence in depth rather than a guarantee, since macOS does not enforce
+unix-socket permissions uniformly; and the `haiku` call above is the only metered thing in the
+system.
 
 **Data corruption proper is well defended** — the per-model write lock, `assertVectorWidth` at read,
 and `loadIndex`'s model check. The residual irreversible-loss risk is not in SQLite. It is in the
