@@ -1,0 +1,12 @@
+{
+  "name": "onnxruntime-web",
+  "version": "0.0.0-stub",
+  "description": "Stub — see README.md in this directory.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  }
+}

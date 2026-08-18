@@ -25,6 +25,9 @@ never sent anywhere.**
 the package directory exists while the runtime is unusable. `/memory:install` closes that gap,
 migrates any state from a previous install, and warms the model.
 
+It also slims `node_modules` from 380 MB to 59 MB — the dependency tarballs carry every platform's
+native runtime plus a browser WASM backend and an image pipeline that nothing here executes.
+
 Without it, everything except semantic search still works.
 
 ### Requirements
@@ -143,7 +146,7 @@ before extraction.
 ├── Graph/<project>/      L4 — codebase graph digest
 └── permanent/            cross-project notes that graduated out of a single project
 
-$CLAUDE_MEMORY_HOME/      never in the plugin — plugin caches are wiped on update
+$CLAUDE_MEMORY_HOME/      never in the plugin — every version gets its own cache dir
 ├── db/  models/  logs/  run/  eval/
 ```
 

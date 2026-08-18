@@ -147,3 +147,35 @@ jobs:
               exit 1; }
           done
           echo "every version field agrees on $v"
+
+  # The only check that runs a real `npm ci`. Everything else mocks the embedding runtime, so
+  # nothing else would notice if an upstream layout change quietly restored the 320 MB that
+  # scripts/slim-install.mjs strips — it fails safe, which means it fails silently.
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install is slim
+        run: |
+          npm ci
+          mb=$(du -sm node_modules | cut -f1)
+          echo "node_modules: ${mb} MB"
+          # Printed always, so a failure here says what grew instead of just how much.
+          du -sm node_modules/* node_modules/*/* 2>/dev/null | sort -rn | head -8
+          # ~55 MB slimmed on linux/x64, 380 MB unslimmed. Anything near the ceiling means the
+          # postinstall stopped matching what it deletes.
+          [ "$mb" -lt 100 ] || { echo "::error::node_modules is ${mb} MB — slim-install did not apply"; exit 1; }
+          for p in sharp onnxruntime-web; do
+            v=$(node -p "require('./node_modules/$p/package.json').version")
+            [ "$v" = "0.0.0-stub" ] || { echo "::error::$p is $v, not the stub"; exit 1; }
+          done
+
+      # sharp and onnxruntime-web are STATIC imports in transformers.node.mjs — a stub with the
+      # wrong shape fails here, at module load, before any model is involved. Deliberately not
+      # a real embedding: that would pull 722 MB of weights into CI for a check this covers.
+      - name: transformers still loads against the stubs
+        run: node --input-type=module -e "await import('@huggingface/transformers'); console.log('loaded')"

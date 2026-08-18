@@ -63,8 +63,9 @@ jobs:
                generated eval case sets (`eval-cases-*.jsonl`) that appear in the diff or
                in a test fixture. This is the one finding that must never be soft-pedalled.
             2. State written inside the plugin directory instead of `$CLAUDE_MEMORY_HOME`.
-               Plugin caches are version-pinned and wiped on update, taking indexes and
-               722 MB of model weights with them.
+               Every release installs into its own version-pinned cache dir, so anything
+               put there is both lost on update and duplicated per version — indexes and
+               722 MB of model weights included.
             3. An absolute install path anywhere. bash resolves via `BASH_SOURCE` and node via
                `import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside hooks.json
                command strings.
@@ -98,6 +99,13 @@ jobs:
                Node >= 22.5. There is deliberately NO Python — flag any reintroduction of a
                second runtime, and note that porting between the two is not mechanical
                (JS `\w` is ASCII-only; `toISOString()` is UTC where `date.today()` is local).
+
+            10. Install weight. Every dependency ships into a user's version-pinned plugin
+                cache, so a new one in `package.json` needs justifying, and `devDependencies`
+                are not an escape hatch (Claude Code's `npm ci` installs them). `sharp` and
+                `onnxruntime-web` are replaced by stubs after install — flag any code that
+                calls into them, and any change to `scripts/slim-install.mjs` that could
+                delete a path this platform loads from.
 
             Also apply ordinary judgement — correctness, races, error handling, and
             over-engineering. This codebase prefers the stdlib and the shortest thing that
