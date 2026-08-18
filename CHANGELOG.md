@@ -108,16 +108,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
   race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
   detached with stdio ignored, the stack trace went nowhere.
 - **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
-  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but nothing capped a query, and
-  the recall hook embeds the user's whole prompt verbatim — a pasted stack trace went in at 57k
-  chars, 32x longer than anything in the index, so it was also being compared against a length the
-  index never contains. The memory cost is the sharp end: attention is O(seq²) per layer over 24
-  layers, and onnxruntime's arena keeps whatever high-water mark it reaches for the process
-  lifetime, which for `--serve` is 30 idle minutes. Two resident servers were each holding **8.8G of
+  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but a query was capped only by
+  the model: the pipeline passes `truncation: true`, so the tokenizer cut at bge-m3's
+  `model_max_length` of **8192 tokens**. A cap, but ~18x the token count of anything in the index —
+  the recall hook embeds the user's whole prompt verbatim, and a pasted stack trace went in at 57k
+  chars, so a query was also being compared against a length the index never contains. 8192 is where
+  the memory goes: attention materialises heads x seq² scores per layer, which at seq 8192 is
+  `16 * 8192² * 4B` ≈ **4.3GB for one of 24 layers**, and onnxruntime's arena keeps whatever
+  high-water mark it reaches for the process lifetime, which for `--serve` was 30 idle minutes. Two resident servers were each holding **8.8G of
   dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
   costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
   controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
-  that had 70MB free.
+  that had 70MB free. The allocator itself is bounded separately, by
+  `enableCpuMemArena: false` above.
 - **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried
   e5-multi's thresholds.** `dupeMin`/`clusterMin` were 0.95/0.92, copied when bge-m3 became the
   default and never measured against it — and m3's similarity band sits *low and wide* where
