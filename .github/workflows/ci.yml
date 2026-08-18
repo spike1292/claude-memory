@@ -73,6 +73,24 @@ jobs:
           fi
           echo "node:test confined to test files"
 
+      # node:sqlite belongs to the entry points, which own the handle. A lib/ module that opens a
+      # database is not testable without one, and the side-effect check above cannot catch this:
+      # it suppresses ExperimentalWarning precisely because node:sqlite emits one, so an import
+      # would pass silently. This check is what the comment in lib/memory-semantic.mjs claims
+      # exists — it did not until 2026-08-18, and a claimed-but-absent guard is worse than none.
+      - name: node:sqlite is imported only by entry points
+        run: |
+          # Matches the IMPORT, not the string: both lib files mention node:sqlite in prose, and a
+          # bare `grep node:sqlite` fails the build on its own comments.
+          bad=$(grep -rlnE "from 'node:sqlite'|import\('node:sqlite'\)|require\('node:sqlite'\)" \
+            --include='*.mjs' hooks/lib scripts/lib || true)
+          if [ -n "$bad" ]; then
+            echo "::error::node:sqlite imported inside lib/: $bad"
+            echo "the entry owns the handle; lib/ takes rows as values so it can be tested"
+            exit 1
+          fi
+          echo "node:sqlite confined to entry points"
+
       # There is no Python left. Fail if any creeps back in — the whole point of the port was
       # that a second runtime is a second thing to be the wrong version on someone's machine.
       # Matches real dependencies only (a .py file, or a shell hook shelling out to python),

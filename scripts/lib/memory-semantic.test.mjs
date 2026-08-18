@@ -23,7 +23,11 @@ import {
   clusterNotes,
   cosine,
   fuseRRF,
+  buildBundle,
+  buildLexDocs,
   evictableSockets,
+  mtimeCache,
+  singleFlight,
   fuseReserved,
   lexTokens,
   samefolderPairs,
@@ -331,12 +335,15 @@ test('socketIsLive: live socket, stale file, and absent path', async () => {
 // evictableSockets — the one-resident-server rule. Pure filtering, so it is cheap to pin down; the
 // connect-and-quit half is exercised end-to-end by running two servers.
 test('evictableSockets: siblings only, never self, never strays', () => {
-  const own = 'search-repo-a-bge-m3.sock';
+  // Under the model-keyed scheme the server's own name is search-<model>.sock; everything else
+  // under run/ is a leftover — an old per-slug socket, or a server for a model no longer active.
+  const own = 'search-bge-m3.sock';
   const names = [
     own,
-    'search-repo-b-bge-m3.sock',
+    'search-bge-small-en.sock', // a server for a model that is no longer the active one
+    'search-repo-a-bge-m3.sock', // per-slug names left by the version before the rename,
+    'search-repo-b-bge-m3.sock', // which is why the migration needs no special case
     'search-repo-c-bge-small-en.sock',
-    'search-repo-a-bge-small-en.sock', // same project, other model: a model change, not a sibling
     'notes.db', // the run dir is not sockets-only
     'search-repo-d.sock.tmp',
   ];
@@ -346,7 +353,8 @@ test('evictableSockets: siblings only, never self, never strays', () => {
     'a server must never evict itself — that is a self-inflicted outage',
   );
   assert.deepEqual(out.sort(), [
-    'search-repo-a-bge-small-en.sock',
+    'search-bge-small-en.sock',
+    'search-repo-a-bge-m3.sock',
     'search-repo-b-bge-m3.sock',
     'search-repo-c-bge-small-en.sock',
   ]);
@@ -362,7 +370,7 @@ test('serveIdleMs: env wins, then config, then a sane default', (t) => {
   });
 
   delete process.env.MEMORY_SERVE_IDLE_MS;
-  assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, 'default is 5 minutes');
+  assert.equal(paths.serveIdleMs(), 30 * 60 * 1000, 'default is 30 minutes');
 
   process.env.MEMORY_SERVE_IDLE_MS = '60000';
   assert.equal(paths.serveIdleMs(), 60000, 'env overrides');
@@ -370,6 +378,220 @@ test('serveIdleMs: env wins, then config, then a sane default', (t) => {
   // Garbage must not disable the timer — that is how a 1.4GB process becomes permanent.
   for (const bad of ['', 'soon', '0', '-1', 'NaN']) {
     process.env.MEMORY_SERVE_IDLE_MS = bad;
-    assert.equal(paths.serveIdleMs(), 5 * 60 * 1000, `"${bad}" must fall back, not disable`);
+    assert.equal(paths.serveIdleMs(), 30 * 60 * 1000, `"${bad}" must fall back, not disable`);
   }
+});
+
+// modelIdleMs — the timer that actually reclaims the 1.3GB. Separate from serveIdleMs because the
+// process and the model are two different costs; conflating them is why the process timeout had to
+// be short.
+test('modelIdleMs: env wins, then config, then a sane default', (t) => {
+  const prev = process.env.MEMORY_MODEL_IDLE_MS;
+  t.after(() => {
+    if (prev === undefined) delete process.env.MEMORY_MODEL_IDLE_MS;
+    else process.env.MEMORY_MODEL_IDLE_MS = prev;
+  });
+
+  delete process.env.MEMORY_MODEL_IDLE_MS;
+  assert.equal(paths.modelIdleMs(), 5 * 60 * 1000, 'default is 5 minutes');
+
+  process.env.MEMORY_MODEL_IDLE_MS = '30000';
+  assert.equal(paths.modelIdleMs(), 30000, 'env overrides');
+
+  for (const bad of ['', 'soon', '0', '-1', 'NaN']) {
+    process.env.MEMORY_MODEL_IDLE_MS = bad;
+    assert.equal(paths.modelIdleMs(), 5 * 60 * 1000, `"${bad}" must fall back, not disable`);
+  }
+
+  // The model must go before the process does, or unloading it never happens.
+  delete process.env.MEMORY_MODEL_IDLE_MS;
+  assert.ok(
+    paths.modelIdleMs() < paths.serveIdleMs(),
+    'model idle must be shorter than process idle, or the unload is dead code',
+  );
+});
+
+// buildLexDocs — the keyword arm's units. Per-chunk vs per-note is a scoring decision, so the shape
+// is pinned rather than assumed.
+test('buildLexDocs: chunk mode keeps rows, note mode concatenates', () => {
+  const rows = [
+    { note: 'a', layer: 'Memory', heading: '(card)', text: 'cutover rollback' },
+    { note: 'a', layer: 'Memory', heading: '(body)', text: 'canary deployment' },
+    { note: 'b', layer: 'Patterns', heading: '(card)', text: 'latency budget' },
+  ];
+
+  const chunk = buildLexDocs(rows, 'chunk');
+  assert.equal(chunk.length, 3, 'chunk mode is one doc per row');
+  assert.ok(chunk[0].toks.length > 0, 'each doc is tokenised');
+
+  const note = buildLexDocs(rows, 'note');
+  assert.equal(note.length, 2, 'note mode is one doc per note');
+  const a = note.find((d) => d.note === 'a');
+  assert.equal(a.heading, '(note)');
+  for (const w of ['cutover', 'rollback', 'canary', 'deployment'])
+    assert.ok(a.toks.includes(w), `note doc must carry "${w}" from both of its chunks`);
+  assert.equal(note.find((d) => d.note === 'b').layer, 'Patterns', 'layer survives the merge');
+
+  // Anything that is not exactly 'note' means chunk — the env var is free text.
+  assert.equal(buildLexDocs(rows, undefined).length, 3);
+  assert.equal(buildLexDocs([], 'note').length, 0, 'an empty index is not an error');
+});
+
+// singleFlight — the guard that stops a concurrent reload leaking a ~1.3GB onnxruntime session.
+// Tested here rather than through the server because a regression is SILENT: it costs memory, not
+// correctness, so no answer changes and nothing throws.
+test('singleFlight: N concurrent callers cause exactly one load', async () => {
+  let loads = 0;
+  let release;
+  const cell = singleFlight(() => {
+    loads++;
+    return new Promise((r) => (release = () => r({ id: loads })));
+  });
+
+  const all = [cell.get(), cell.get(), cell.get(), cell.get()];
+  assert.equal(loads, 1, 'four concurrent get()s must share ONE in-flight load');
+  release();
+  const got = await Promise.all(all);
+  assert.equal(loads, 1, 'still one after they resolve');
+  for (const g of got) assert.equal(g.id, 1, 'every caller gets the same instance');
+  assert.equal(new Set(got).size, 1, 'literally the same object — a second would be the leak');
+
+  // Cached: a later get() must not reload.
+  assert.equal((await cell.get()).id, 1);
+  assert.equal(loads, 1, 'a resolved value is reused, not reloaded');
+});
+
+test('singleFlight: take() hands the value over and the next get() reloads', async () => {
+  let loads = 0;
+  const cell = singleFlight(async () => ({ id: ++loads }));
+
+  const first = await cell.get();
+  const taken = cell.take();
+  assert.equal(taken, first, 'take() returns the live value so the caller can release it');
+  assert.equal(cell.take(), null, 'taking twice must not hand out the same value again');
+
+  const second = await cell.get();
+  assert.equal(second.id, 2, 'after a take() the next get() loads afresh');
+  assert.notEqual(second, first);
+});
+
+test('singleFlight: a failed load clears the slot instead of poisoning it', async () => {
+  let attempts = 0;
+  const cell = singleFlight(async () => {
+    if (++attempts === 1) throw new Error('cold start failed');
+    return { id: attempts };
+  });
+
+  await assert.rejects(() => cell.get(), /cold start failed/);
+  // The bug this guards: a rejected promise left in the slot would reject every later call forever,
+  // so recall would stay dead for the life of the process after one transient failure.
+  assert.equal((await cell.get()).id, 2, 'the next call retries rather than replaying the failure');
+});
+
+test('singleFlight: take() during an in-flight load lets that load land', async () => {
+  let loads = 0;
+  let release;
+  const cell = singleFlight(() => {
+    loads++;
+    return new Promise((r) => (release = () => r({ id: loads })));
+  });
+
+  const pending = cell.get();
+  assert.equal(cell.take(), null, 'nothing is loaded yet, so there is nothing to release');
+  release();
+  const v = await pending;
+  assert.equal(v.id, 1, 'the caller still gets its value');
+  assert.equal(await cell.get(), v, 'and the arrived value is now the cached one');
+  assert.equal(loads, 1, 'the take() must not have triggered a second load');
+});
+
+test('singleFlight: take() refuses while the value is borrowed', async () => {
+  let loads = 0;
+  const cell = singleFlight(async () => ({ id: ++loads, disposed: false }));
+
+  let releaseWork;
+  const work = new Promise((r) => (releaseWork = r));
+  const inFlight = cell.borrow(async (v) => {
+    // The idle timer fires here, mid-inference. Disposing now would free the session underneath
+    // native code — a crash, not a wrong answer.
+    assert.equal(cell.busy(), true, 'the cell must report itself in use');
+    assert.equal(cell.take(), null, 'take() must refuse while borrowed');
+    await work;
+    return v.id;
+  });
+
+  releaseWork();
+  assert.equal(await inFlight, 1);
+  assert.equal(cell.busy(), false, 'no longer in use once the borrow returns');
+  assert.ok(cell.take(), 'and now it may be taken and disposed');
+});
+
+test('singleFlight: a throwing borrow still releases the value', async () => {
+  const cell = singleFlight(async () => ({ id: 1 }));
+  await assert.rejects(() =>
+    cell.borrow(async () => {
+      throw new Error('inference blew up');
+    }),
+  );
+  // Without the finally, one failed request would pin the session for the life of the process —
+  // the unload would refuse forever and the 1.3GB would never come back.
+  assert.equal(cell.busy(), false, 'a failed borrow must not leave the cell permanently busy');
+  assert.ok(cell.take(), 'so the idle timer can still reclaim it');
+});
+
+// mtimeCache — reload-when-written. One expression, and every way of getting it wrong is silent.
+test('mtimeCache: serves cached until the source is newer, and reloads on a failed stat', () => {
+  let loads = 0;
+  const cache = mtimeCache((key) => ({ key, id: ++loads, loadedAt: 1000 }));
+
+  const a = cache.get('projA', 999);
+  assert.equal(a.id, 1, 'first get loads');
+  assert.equal(cache.get('projA', 999).id, 1, 'not newer than loadedAt — cached');
+  assert.equal(cache.get('projA', 1000).id, 1, 'equal is not newer — still cached');
+  assert.equal(loads, 1);
+
+  assert.equal(cache.get('projA', 1001).id, 2, 'written since load — reloads');
+
+  // The direction that matters: a failed stat yields NaN, and NaN <= x is false, so it RELOADS.
+  // Written the other way round (`mtimeMs > loadedAt`) NaN would be false and serve a stale index
+  // forever, which reads identically and is wrong.
+  const before = loads;
+  cache.get('projA', NaN);
+  assert.equal(loads, before + 1, 'an unreadable source must reload, never serve stale silently');
+
+  cache.get('projB', 0);
+  assert.equal(cache.size(), 2, 'projects are cached independently');
+});
+
+// buildBundle — everything after the SQL. Both of its decisions fail silently: dropping alias
+// chunks changes retrieval without erroring, and a missing card map degrades every brief to raw
+// chunk text that still looks like a result.
+test('buildBundle: card map, alias ablation, and the lex mode it is given', () => {
+  const rows = [
+    { note: 'a', layer: 'Memory', heading: '(card)', text: 'a: the card line' },
+    { note: 'a', layer: 'Memory', heading: '(aliases)', text: 'how do we cut over?' },
+    { note: 'a', layer: 'Memory', heading: '(body)', text: 'cutover rollback detail' },
+    { note: 'b', layer: 'Patterns', heading: '(body)', text: 'latency budget' },
+  ];
+
+  const b = buildBundle('projA', '/tmp/x.db', rows, { lexMode: 'chunk' });
+  assert.equal(b.slug, 'projA');
+  assert.equal(b.dbPath, '/tmp/x.db');
+  assert.equal(b.rowsUsed.length, 4, 'alias chunks are kept by default — they earn their matches');
+  assert.equal(b.cardByNote.get('a'), 'a: the card line', 'the card is what a brief displays');
+  assert.equal(b.cardByNote.get('b'), undefined, 'a note with no card falls back to chunk text');
+  assert.ok(b.loadedAt > 0, 'loadedAt is what mtimeCache compares against');
+
+  const ablated = buildBundle('projA', '/tmp/x.db', rows, { dropAliases: true, lexMode: 'chunk' });
+  assert.equal(ablated.rowsUsed.length, 3, 'the ablation switch removes alias chunks');
+  assert.ok(!ablated.rowsUsed.some((r) => r.heading === '(aliases)'));
+  assert.equal(
+    ablated.lexDocs.length,
+    3,
+    'and the keyword arm sees the ablated set, not the full one',
+  );
+
+  // lexMode is threaded through rather than read from the environment here — the entry owns env.
+  assert.equal(buildBundle('p', '/d', rows, { lexMode: 'note' }).lexDocs.length, 2);
+  assert.equal(buildBundle('p', '/d', rows, { lexMode: 'chunk' }).lexDocs.length, 4);
 });

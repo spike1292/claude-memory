@@ -83,7 +83,9 @@ try {
   // why this hook was stuck on its own keyword-only search, at MRR 0.158 against the full path's
   // 0.547. If the socket is absent or slow, spawn it for NEXT time and fall through to keyword —
   // a prompt must never wait on it.
-  const sockPath = path.join(runDir, `search-${slug}-${model}.sock`);
+  // Keyed by MODEL alone: one server holds the model and answers for every project, with the slug
+  // sent per request. It used to be per slug+model, which meant one ~1.3GB model per indexed repo.
+  const sockPath = path.join(runDir, `search-${model}.sock`);
   const askServer = (q) =>
     new Promise((resolve) => {
       const done = (v) => {
@@ -95,7 +97,7 @@ try {
       const c = net.createConnection(sockPath);
       const timer = setTimeout(() => done(null), 700);
       let buf = '';
-      c.on('connect', () => c.write(JSON.stringify({ q, k: MAX_NOTES }) + '\n'));
+      c.on('connect', () => c.write(JSON.stringify({ q, k: MAX_NOTES, slug }) + '\n'));
       c.on('data', (d) => {
         buf += d;
       });
@@ -162,7 +164,6 @@ try {
         top: hits[0].note,
         score: hits[0].score,
         via: 'server',
-        stale: semantic.stale,
       });
       console.log(
         `Possibly relevant vault notes (retrieved, not verified — open one before relying on it):\n${lines.join('\n')}`,

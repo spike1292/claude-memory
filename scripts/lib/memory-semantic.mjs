@@ -45,6 +45,158 @@ import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 import * as paths from '../../hooks/lib/paths.mjs';
 
+// Which sibling servers should this one evict?
+//
+// The server is keyed by MODEL alone and serves every project, so anything else under run/ is a
+// leftover: a per-slug socket from the version that ran one server per project, or a server for a
+// model that is no longer the active one. Both are pure cost — a warm server is 800MB-1.4GB — so a
+// starting server asks each of them to quit.
+//
+// Sockets are the registry: no pidfile, no lock, nothing to leave stale. This is also the migration
+// path off the per-slug scheme, which needs no special case precisely because those names are
+// "not mine" under the same rule.
+//
+// ponytail: last-writer-wins, no coordination. Two servers starting in the same instant can evict
+// each other and both die; the next prompt respawns one, so it self-heals at the cost of one
+// keyword-only recall. Needs a lock only if that is ever observed.
+export function evictableSockets(names, ownName) {
+  return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
+}
+
+export const QUIT = { quit: 1 };
+
+/**
+ * A lazily-loaded value that is loaded AT MOST ONCE at a time, and can be taken back out.
+ *
+ * `if (!x) x = await load()` is a check-then-act across an await. It was unreachable while the model
+ * loaded once at startup and never went back to null; making it unloadable made it reachable, and
+ * then two requests arriving after an unload would both load, with the second assignment silently
+ * dropping the first ~1.3GB onnxruntime session — no dispose(), exactly the leak this file exists to
+ * prevent. In `lib/` rather than beside its one caller because a regression here is SILENT: it costs
+ * memory, not correctness, so nothing fails and no answer changes.
+ *
+ * - `get()` shares the in-flight promise, so N concurrent callers cause ONE load.
+ * - a rejected load clears the in-flight slot, so one failure does not poison every later call.
+ * - `take()` removes and returns the value for the caller to release; a `take()` while a load is
+ *   still in flight returns null and lets that load land. Bounded: the value then waits for the
+ *   next `take()`, and for the server that is the following idle tick.
+ */
+export function singleFlight(load) {
+  let value = null;
+  let inFlight = null;
+  let borrowed = 0;
+  return {
+    get() {
+      if (value) return Promise.resolve(value);
+      if (!inFlight)
+        inFlight = load().then(
+          (v) => {
+            value = v;
+            inFlight = null;
+            return v;
+          },
+          (e) => {
+            inFlight = null;
+            throw e;
+          },
+        );
+      return inFlight;
+    },
+    /**
+     * Hold the value for the duration of `use`, so `take()` cannot pull it out mid-flight.
+     *
+     * singleFlight originally guarded concurrent LOADS. The mirror hazard is on the release side:
+     * an idle timer calling take() → dispose() while another request is still running inference on
+     * that same session frees it underneath native code. Rare — it needs an inference outlasting
+     * the idle timer — but it is the same class of bug, and the failure is a native crash rather
+     * than a wrong answer.
+     */
+    async borrow(use) {
+      const v = await this.get();
+      borrowed++;
+      try {
+        return await use(v);
+      } finally {
+        borrowed--;
+      }
+    },
+    /**
+     * In use right now? `take()` refuses while it is. Callers own the retry — the server re-arms
+     * its idle timer on a refusal, because nothing else would: only a new connection re-arms it.
+     */
+    busy() {
+      return borrowed > 0;
+    },
+    take() {
+      if (borrowed > 0) return null;
+      const v = value;
+      value = null;
+      return v;
+    },
+  };
+}
+
+/**
+ * Per-key cache that reloads when the source has been written since it was loaded.
+ *
+ * Split out for the same reason as singleFlight: the staleness comparison is one expression whose
+ * failure modes are all silent. `mtimeMs <= entry.loadedAt` must be written in that direction so a
+ * NaN — which is what a failed stat gives — falls through to a RELOAD rather than serving a cached
+ * index forever. The other order (`mtimeMs > entry.loadedAt`) reads identically and is wrong.
+ *
+ * Entries are never evicted: an index is ~15MB of vectors against the ~1.3GB model, so the process
+ * idle timer is a good enough upper bound on how long they live.
+ */
+export function mtimeCache(load) {
+  const entries = new Map();
+  return {
+    get(key, mtimeMs) {
+      const have = entries.get(key);
+      if (have && mtimeMs <= have.loadedAt) return have;
+      const fresh = load(key);
+      entries.set(key, fresh);
+      return fresh;
+    },
+    size: () => entries.size,
+  };
+}
+
+/**
+ * Documents for the keyword arm, tokenised once.
+ *
+ * Granularity is a real choice, not a detail. `chunk` keeps both arms scoring the same units.
+ * `note` concatenates a note's chunks first, which suits a LONG note whose matching terms are spread
+ * thin — one where no single chunk looks convincing but the note carries the query's vocabulary
+ * across many sections. It also inflates df for the identity header repeated in every chunk, though
+ * BM25 saturates term frequency so the effect is bounded. MEMORY_FUSE_LEX=note|chunk.
+ *
+ * Tokenising here rather than per query matters: df/idf does not change per question, so doing it
+ * inside the loop would re-tokenise thousands of chunks for every question asked.
+ */
+export function buildLexDocs(rowsUsed, mode) {
+  if (mode !== 'note')
+    return rowsUsed.map((r) => ({
+      note: r.note,
+      layer: r.layer,
+      heading: r.heading,
+      text: r.text,
+      toks: lexTokens(r.text),
+    }));
+  const byNote = new Map();
+  for (const r of rowsUsed) {
+    const cur = byNote.get(r.note) ?? {
+      note: r.note,
+      layer: r.layer,
+      heading: '(note)',
+      text: '',
+      toks: [],
+    };
+    cur.text += ' ' + r.text;
+    byNote.set(r.note, cur);
+  }
+  return [...byNote.values()].map((d) => ({ ...d, toks: lexTokens(d.text) }));
+}
+
 // Is something already listening on this unix socket?
 //
 // One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
@@ -63,28 +215,6 @@ import * as paths from '../../hooks/lib/paths.mjs';
 // A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
 // might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
 // Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
-// Which sibling servers should this one evict?
-//
-// One warm server is 800MB-1.4GB, and a server exists per PROJECT — three indexed repos meant up to
-// three of them resident at once for 30 minutes each. You are prompting in one repo at a time, so
-// the other two are pure cost. A starting server takes over: it lists the sibling sockets in run/
-// and asks each to quit.
-//
-// Sockets are the registry — no pidfile, no lock, nothing to leave stale. The name carries both
-// halves of the identity, and only the slug may differ: a server for the SAME project on a
-// different model is not a sibling to evict, it is a model change, which every mode except --index
-// already refuses.
-//
-// ponytail: last-writer-wins, no coordination. Two servers for different projects starting in the
-// same instant can evict each other and both die; the next prompt respawns one, so it self-heals at
-// the cost of one keyword-only recall. Needs a lock only if that is ever observed, which takes two
-// sessions prompting simultaneously in different repos.
-export function evictableSockets(names, ownName) {
-  return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
-}
-
-export const QUIT = { quit: 1 };
-
 export function socketIsLive(sockPath, timeoutMs = 1000) {
   if (!fs.existsSync(sockPath)) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -464,4 +594,35 @@ export function fuseRRF(semRanked, lexRanked, w, k) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, k)
     .map(([note]) => note);
+}
+
+/**
+ * A query-ready index bundle from raw chunk rows. No SQLite here — `lib/` must not import
+ * node:sqlite (CI enforces it — "node:sqlite is imported only by entry points"), so the entry
+ * reads the rows and this owns everything after.
+ *
+ * Split out for the reason singleFlight and mtimeCache were: the alias ablation and the card map
+ * are both silent when wrong. Dropping alias chunks changes retrieval without erroring, and a
+ * missing card map degrades every brief to raw chunk text that still looks like a result.
+ */
+export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, dim } = {}) {
+  // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
+  // Otherwise the A/B needs two full rebuilds, and the note set moves between them — which is
+  // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)
+  // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
+  const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
+  if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
+  return {
+    slug,
+    dbPath,
+    rowsUsed,
+    lexDocs: buildLexDocs(rowsUsed, lexMode),
+    // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
+    // the match often (that is their job) but their text is a list of questions — as a one-line
+    // brief it reads as noise. Match on any chunk, describe with the card.
+    cardByNote: new Map(
+      rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
+    ),
+    loadedAt: Date.now(),
+  };
 }

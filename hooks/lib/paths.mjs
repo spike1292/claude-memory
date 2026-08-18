@@ -54,12 +54,27 @@ export function recallEnabled() {
 }
 
 /**
- * How long a resident --serve sits idle before exiting.
+ * How long a resident --serve sits idle before dropping the MODEL (but staying alive).
  *
- * A warm server costs 800MB-1.4GB — node, onnxruntime and the q8 weights — so an idle one is the
- * most expensive thing this plugin leaves running. 5 minutes, not the old env-only 30: coming back
- * to a cold project costs one keyword-only recall and a ~1.5s respawn, which is the cheap side of
- * that trade on a 16GB machine.
+ * The model is the expensive part by an order of magnitude: ~1.3GB of onnxruntime session and q8
+ * weights, against ~15MB of vectors for a 3400-chunk index. Releasing the session
+ * (`pipeline.dispose()` → `InferenceSession.release()`) gives that back while the process keeps its
+ * socket, its loaded indexes and its BM25 tokens — so the next question costs a model load and not
+ * a cold start, and questions the keyword arm can answer cost nothing at all.
+ */
+export function modelIdleMs() {
+  const raw = process.env.MEMORY_MODEL_IDLE_MS ?? config().modelIdleMs;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 5 * 60 * 1000;
+}
+
+/**
+ * How long a resident --serve sits idle before exiting entirely.
+ *
+ * 30 minutes, where a *model-holding* server had to be capped at 5: once the model unloads on its
+ * own timer the process is ~100-200MB, so keeping it costs little and saves the index load on
+ * return. Both numbers are the same trade seen from two sides — this one now guards a cheap
+ * process, not an expensive one.
  *
  * Reads config.json and not just the env var because hooks are what set this, and a value written
  * to settings.json's env block does not reach the session that wrote it — the same trap that once
@@ -68,7 +83,7 @@ export function recallEnabled() {
 export function serveIdleMs() {
   const raw = process.env.MEMORY_SERVE_IDLE_MS ?? config().serveIdleMs;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 5 * 60 * 1000;
+  return Number.isFinite(n) && n > 0 ? n : 30 * 60 * 1000;
 }
 
 /**

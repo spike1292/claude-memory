@@ -9,44 +9,30 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
-### Fixed
-
-- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
-  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
-  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
-  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
-  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
-  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
-  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
-  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
-  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
-  detached with stdio ignored, the stack trace went nowhere.
-- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
-  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but a query was capped only by
-  the model: the pipeline passes `truncation: true`, so the tokenizer cut at bge-m3's
-  `model_max_length` of **8192 tokens**. A cap, but ~18x the token count of anything in the index —
-  the recall hook embeds the user's whole prompt verbatim, and a pasted stack trace went in at 57k
-  chars, so a query was also being compared against a length the index never contains. 8192 is where
-  the memory goes: attention materialises heads x seq² scores per layer, which at seq 8192 is
-  `16 * 8192² * 4B` ≈ **4.3GB for one of 24 layers**, and onnxruntime's arena keeps whatever
-  high-water mark it reaches for the process lifetime, which for `--serve` was 30 idle minutes. Two resident servers were each holding **8.8G of
-  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
-  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
-  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
-  that had 70MB free.
-
 ### Changed
 
-- **One resident server total, not one per project, and it idles out in 5 minutes rather than 30.**
-  A warm `--serve` costs 800MB-1.4GB — node, onnxruntime and the q8 weights — and there was one per
-  indexed repo, so three projects meant ~2.4-4.2GB resident while you prompt in one of them. A
-  starting server now asks the others to quit over their own sockets (no pidfile, no lock, nothing
-  to leave stale); a server for the same project on a different model is left alone, since that is a
-  model change and every mode except `--index` already refuses it. Last-writer-wins with no
-  coordination: two servers for different projects starting in the same instant can evict each other
-  and both die, which costs one keyword-only recall and self-heals on the next prompt.
-  `MEMORY_SERVE_IDLE_MS` now also reads `serveIdleMs` from `config.json`, because hooks are what set
-  it and an env value written mid-session does not reach the session that wrote it.
+- **One search server for the whole machine, keyed by model rather than by project.** The slug is
+  now a request field and indexes load on demand and cache, so one process holds one model and
+  answers for every project. Previously the slug was fixed before the socket existed, which forced
+  one ~1.3GB model per indexed repo — three projects meant ~2.4-4.2GB resident while you prompt in
+  one of them. This supersedes the evict-other-projects behaviour added earlier in this release:
+  switching projects no longer costs a model reload, it costs an index load (~15MB of vectors for
+  3400 chunks). Socket moves from `run/search-<slug>-<model>.sock` to `run/search-<model>.sock`;
+  leftovers under the old name are evicted on startup, so the migration needs no special case.
+  Verified: projA and projB served by one process from one socket, 22-32ms each.
+- **The model unloads on its own timer while the process stays alive.** `modelIdleMs` (new, 5 min)
+  calls `pipeline.dispose()` → `InferenceSession.release()`, which is what actually returns native
+  memory — dropping the JS reference would not. Measured: `MALLOC_LARGE` dirty **451.3M → 2,464K**,
+  process alive, next query reloads in 800ms and answers correctly. Because the process is then
+  ~150MB rather than ~1.4GB, `serveIdleMs` goes the other way, **5 min → 30 min**: it now guards a
+  cheap process, and keeping the socket, indexes and BM25 tokens warm is worth more than the exit.
+- **`serveIdleMs` is configurable, not env-only.** `MEMORY_SERVE_IDLE_MS` now also reads
+  `serveIdleMs` from `config.json`, because hooks are what set it and an env value written
+  mid-session does not reach the session that wrote it. Garbage and non-positive values fall back
+  rather than disabling the timer, which is how a 1.4GB process becomes permanent. (An intermediate
+  step in this release had one server per project evicting the others at a 5-minute process
+  timeout; the model-keyed server above replaced it, and 5 minutes is now the MODEL timer while the
+  process — cheap once the model unloads — waits 30.)
 
 - **Every Node hook and script is now a thin entry over a `lib/` module, with tests in
   `*.test.mjs` beside the logic and `node --test` as the runner.** `hooks/<name>.mjs` and
@@ -89,6 +75,52 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **onnxruntime's arena is disabled (`session_options.enableCpuMemArena: false`).** Its BFCArena
+  grows to the largest shapes it has ever seen and never returns them, which is the mechanism behind
+  the 8.8GB of dirty `MALLOC_LARGE` this release already addressed by clamping the input. Clamping
+  bounds what is *asked for*; this bounds the *allocator*, so a future model, a larger `MAX_CHARS`
+  or an `--index` run over long notes cannot reintroduce the same failure by another route.
+  Measured: a 46,799-char query leaves `MALLOC_LARGE` at 451.3M, unchanged from warm.
+- **An idle unload can no longer dispose a session mid-inference.** `singleFlight` guarded
+  concurrent *loads*; the mirror hazard is on the release side, where the idle timer could
+  `dispose()` a session another request was still running inference on — freeing it underneath
+  native code, so a crash rather than a wrong answer. `embed()` now borrows the session for the
+  duration and `take()` refuses while borrowed, retrying on the next idle tick. Rare (it needs an
+  inference outlasting the 5-minute timer) but the same failure class as the load-side race.
+- **A concurrent model reload no longer leaks a session.** `if (!embedder) embedder = await load()`
+  is a check-then-act across an `await`, and it only became reachable once the model could return to
+  `null` mid-life: two requests arriving after an unload both saw `null`, both loaded, and the second
+  assignment dropped the first ~1.3GB session with no `dispose()`. The in-flight load is now shared.
+  Measured: 4 concurrent requests into an unloaded server settle at `MALLOC_LARGE` 450.0M — one
+  session, not four — and all four answer in the same ~1000ms.
+- **`loadIndex()` closes its SQLite handle.** `node:sqlite` does not free it on GC: 200 unclosed
+  `DatabaseSync` opens held 201 fds, unchanged after an explicit `global.gc()`. Harmless in a
+  short-lived CLI, an fd leak ending in EMFILE in a 30-minute server that reopens on every mtime
+  bump for every project. Measured after the fix: 12 forced reloads, 0 handles held.
+- **One resident search server per slug+model, instead of one per spawn.** `--serve` unlinked the
+  socket unconditionally and rebound it, so a redundant spawn stole the path and left the previous
+  server running but reachable by nobody — exiting only when its 30m idle timer fired. And a
+  redundant spawn is the normal case, not an edge one: `memory-recall.mjs` spawns whenever it has no
+  answer, which includes its 700ms timeout expiring during the ~1.5s warm-up, so every prompt in
+  that window forked another model. Measured 2026-08-17 on a 16GB machine: **six** `--serve`
+  processes at once. `--serve` now probes the socket first and exits in ~55ms without loading the
+  index or the model; only a socket nobody is bound to (`ECONNREFUSED`) is unlinked. Losing the bind
+  race is handled too — the loser used to die on an unhandled `error` event, and since it is spawned
+  detached with stdio ignored, the stack trace went nowhere.
+- **Queries are clamped to `MAX_CHARS` before embedding, like documents already were.**
+  `chunkNote()` caps every indexed chunk at 1800 chars for bge-m3, but a query was capped only by
+  the model: the pipeline passes `truncation: true`, so the tokenizer cut at bge-m3's
+  `model_max_length` of **8192 tokens**. A cap, but ~18x the token count of anything in the index —
+  the recall hook embeds the user's whole prompt verbatim, and a pasted stack trace went in at 57k
+  chars, so a query was also being compared against a length the index never contains. 8192 is where
+  the memory goes: attention materialises heads x seq² scores per layer, which at seq 8192 is
+  `16 * 8192² * 4B` ≈ **4.3GB for one of 24 layers**, and onnxruntime's arena keeps whatever
+  high-water mark it reaches for the process lifetime, which for `--serve` was 30 idle minutes. Two resident servers were each holding **8.8G of
+  dirty `MALLOC_LARGE`**, ~7.4G of it compressed; killing them returned it. A 46,799-char query now
+  costs +76MB. Note the 8.8G→clamp link is inferred from the allocation profile, not from a
+  controlled A/B — the arena was not re-measured unpatched, because doing so needs GBs on a machine
+  that had 70MB free. The allocator itself is bounded separately, by
+  `enableCpuMemArena: false` above.
 - **`--dupes` and `--clusters` found nothing under the default model, because bge-m3 carried
   e5-multi's thresholds.** `dupeMin`/`clusterMin` were 0.95/0.92, copied when bge-m3 became the
   default and never measured against it — and m3's similarity band sits *low and wide* where

@@ -75,7 +75,7 @@ recall_enabled() {
 #   db/      semantic-<slug>-<model>.db
 #   models/  ONNX weights (transformers.js cache)
 #   logs/    semantic-index.log, recall-<date>.jsonl, distill.log
-#   run/     <slug>.sock  (resident search server)
+#   run/     search-<model>.sock  (resident search server; ONE for all projects, keyed by model)
 #   eval/    eval-cases-*.jsonl  — contains vault content, never committed
 memory_home() {
   printf '%s' "${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
