@@ -39,7 +39,7 @@ and overstating a degradation is how a warning gets ignored.
 L4 is the only layer this plugin does not write. `/memory:graph-report` asks the
 `codebase-memory-mcp` MCP server for a structural digest of the *code* — architecture, call graphs,
 entry points, via `search_graph` / `trace_path` / `get_architecture` — and writes it to
-`<vault>/Graph/<project>/GRAPH_REPORT.md`. `hooks/graph-staleness-check.sh` regenerates it in the
+`<vault>/Graph/<project>/GRAPH_REPORT.md`. `hooks/graph-staleness-check.mjs` regenerates it in the
 background once the repo has commits newer than the report.
 
 Configure the server in your Claude Code MCP settings first; it is not a CLI, so nothing on PATH
