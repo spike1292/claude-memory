@@ -79,27 +79,28 @@ makes sense without it.
 **Project identity is the normalised git remote** (`project_key`), not the checkout path — one repo
 maps to one vault folder from any machine or subdirectory. `legacy_key` (the cwd slug) still exists
 because Claude Code names `~/.claude/projects/<slug>/` after it. Both live in
-[`hooks/lib/vault-env.sh`](../hooks/lib/vault-env.sh).
+[`hooks/lib/paths.mjs`](../hooks/lib/paths.mjs).
 
 ## Module map
 
 ```
                         ┌──────────────────────────┐
-                        │  hooks/lib/vault-env.sh  │  SOURCE OF TRUTH
-                        │  resolve_vault           │  vault path, memory home,
-                        │  memory_home             │  recall arming, project_key
-                        │  recall_enabled          │
-                        │  project_key (+ cache)   │
-                        └────────────┬─────────────┘
-                                     │ mirrored by, and shelled out to
-                                     ▼
-                        ┌──────────────────────────┐
-                        │   hooks/lib/paths.mjs    │  THE KERNEL
-                        │  vault() config()        │  every Node module imports it
+                        │   hooks/lib/paths.mjs    │  THE KERNEL, AND THE RESOLVER
+                        │  vault() vaultSource()   │  every Node module imports it
                         │  memoryHome() stateDir() │  config() is memoised — see H8
-                        │  projectKey() -> bash    │  forks bash — see H1
+                        │  config() recallEnabled()│
+                        │  projectKey() (+ cache)  │  normaliseRemote() ported from
+                        │  normaliseRemote()       │  five sed -e on 2026-08-18
                         │  useModelCache()         │  mutates a 3rd-party global — H2
                         └────────────┬─────────────┘
+                                     │ asked by (one node fork per script)
+                                     ▲
+                        ┌────────────┴─────────────┐
+                        │  hooks/lib/vault-env.sh  │  85 lines, RESOLVES NOTHING
+                        │  eval "$(node env.mjs)"  │  eager load — see H13
+                        │  degraded path if no node│  2 callers: vault-memory-sync,
+                        └──────────────────────────┘  doctor.sh
+
                                      │
         ┌──────────────┬─────────────┼──────────────┬──────────────────┐
         ▼              ▼             ▼              ▼                  ▼
@@ -108,17 +109,22 @@ because Claude Code names `~/.claude/projects/<slug>/` after it. Both live in
   │ surface   │  │ link-lint │ │ note      │ │  session   │  │ memory-semantic │
   │           │  │           │ │     │     │ │            │  │ (pure fns only) │
   └───────────┘  └───────────┘ └─────┼─────┘ └─────┬──────┘  └────────┬────────┘
-                                     │             │                  │
-                                     │ imports     │ spawns           │ imported by
-                                     ▼             ▼                  ▼
-                          ┌────────────────────┐  ┌──────────────────────────────┐
-                          │ scripts/lib/       │  │ scripts/memory-semantic.mjs  │
-                          │ memory-audit-checks│  │ 843 lines — see G1           │
-                          └────────────────────┘  │  CLI · model lifecycle ·     │
-                                                  │  SCHEMA OWNER · indexer ·    │
-                                                  │  4 reports · search · DAEMON │
-                                                  └──────────────────────────────┘
+        │              │             │             │                  │
+        └──────────────┴──── all gates share ──────┘ imports          │ imported by
+                    ┌──────────────────────┐         ▼                ▼
+                    │ hooks/lib/hook-io.mjs│  ┌────────────────────┐ ┌────────────────────────┐
+                    │ stdin · debounce ·   │  │ scripts/lib/       │ │ scripts/               │
+                    │ detach() ·findClaude()│ │ memory-audit-checks│ │ memory-semantic.mjs    │
+                    └──────────────────────┘  └────────────────────┘ │ 843 lines — see G1     │
+                                                                     │ CLI · model lifecycle ·│
+                                                                     │ SCHEMA OWNER · indexer·│
+                                                                     │ 4 reports·search·DAEMON│
+                                                                     └────────────────────────┘
 ```
+
+**The arrow reversed on 2026-08-18.** `vault-env.sh` was the source of truth and `paths.mjs`
+mirrored it, forking bash for `project_key`. Now `paths.mjs` owns every rule and the shell asks —
+[decision record](decisions/2026-08-18-single-resolver.md).
 
 `hooks/` and `scripts/` are **invocation channels, not layers** — see [B1](#b1--hooks-and-scripts-are-not-layers).
 
@@ -140,11 +146,14 @@ Claude Code fires SessionStart
    ├─▶ hooks/memory-link-lint.mjs          10s   report MOC-only notes + drift
    │      -> lib/memory-link-lint.mjs            names only, never auto-fixes
    │
-   ├─▶ hooks/semantic-index-refresh.sh     10s   take $MEM_HOME/.semantic-index.lock,
-   │      (detached; see R1/R2)                  detach `node memory-semantic.mjs --index`
+   ├─▶ hooks/semantic-index-refresh.mjs    10s   plan() decides, then detaches
+   │      -> lib/semantic-index-refresh.mjs      `node memory-semantic.mjs --index`
+   │      (detached; see R1)                     NO lock of its own — the indexer
+   │                                             takes a per-model one
    │
-   └─▶ hooks/graph-staleness-check.sh      10s   regenerate GRAPH_REPORT.md if stale
-          (detached; needs codebase-memory-mcp)
+   └─▶ hooks/graph-staleness-check.mjs     10s   plan() -> silent | nudge | regen
+          -> lib/graph-staleness-check.mjs       staleness by RECORDED COMMIT, not
+          (detached; needs codebase-memory-mcp)  mtime; 24h debounce per repo
 ```
 
 Every Node hook is guarded `command -v node >/dev/null 2>&1 && node ... || exit 0`. Every hook is
@@ -219,8 +228,17 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
 ### Flow 4 — session end (distillation)
 
 ```
-SessionEnd AND Stop  ──▶ hooks/distill-session.sh  (bash gate, 15 s, detaches)
-                            └─▶ hooks/distill-session.mjs -> lib/distill-session.mjs
+SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
+                            │
+                            ├─ no argv ─▶ GATE: gatePlan(payload)
+                            │    CLAUDE_DISTILL_CHILD set        -> skip
+                            │    stop_hook_active                -> skip
+                            │    < 15 messages                   -> skip
+                            │    not SessionEnd and < 400        -> skip
+                            │    not SessionEnd and within 2h    -> skip
+                            │    else: writeMarker + detach() the worker below
+                            │
+                            └─ argv ────▶ WORKER: distill(transcript, cwd)
                                    │
                                    ├─ projectKey(cwd), fall back to legacy_key if the
                                    │  vault has not been migrated yet
@@ -236,8 +254,9 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.sh  (bash gate, 15 s, detac
                                    └─ reindex(): context-mode `cm index` x5 (120 s each)
                                         or, if absent, memory-semantic.mjs --index (600 s)
 
-  Note the timeout arithmetic: a 15 s hook wrapping work budgeted to 600 s. Only correct
-  because the .sh detaches.
+  Note the timeout arithmetic: a 15 s hook wrapping work budgeted to 600 s. Correct only
+  because detach() in hook-io.mjs is spawn(detached) + unref() + stdio to a log fd — a
+  child holding a pipe would keep the gate's event loop alive.
 ```
 
 ### Flow 5 — install
@@ -302,8 +321,10 @@ exists because a comment once claimed a CI check that did not exist.
 | `main` is protected | **GitHub settings** (not in this repo) | admins and force-pushes included |
 | One index per model; a wrong-model index is refused | **code** — `loadIndex()` checks `meta.model` | asked of the whole index, not the `--layer` slice |
 | Vectors are the profile's width | **code** — `assertVectorWidth()` | guards the mixed 384/1024 corruption that created the lock |
-| One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in 5 of 9; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
+| Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
+| Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
+| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in 8 of 12 (was 5 of 9 before #20); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
 | No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -317,8 +338,9 @@ Everything above is the design. Below is what the code does.
 
 ## G1 — the entry/`lib/` rule is inverted where it matters
 
-The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for five
-entries. In the four that carry the real behaviour it is reversed:
+The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for eight
+of the twelve hook and CLI entries — it was 5 of 9, and the three added by #20 all comply. In the
+four that carry the real behaviour it is still reversed:
 
 | Entry | Entry | Lib | Entry tested? |
 | --- | ---: | ---: | --- |
@@ -346,6 +368,7 @@ function that decides what you actually see — stayed on the untested side.
 
 ```
   hooks/lib/validate-note.mjs ──────────▶ scripts/lib/memory-audit-checks.mjs
+  scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │
   scripts/lib/memory-semantic.mjs ──┐                    │
   scripts/lib/memory-eval.mjs ──────┤                    │
@@ -354,9 +377,14 @@ function that decides what you actually see — stayed on the untested side.
   scripts/memory-semantic.mjs ──────┘
 ```
 
-The arrows point both ways. The directory names describe **who invokes the file**, not a dependency
-direction. There is exactly one real layer — `paths.mjs` — and it is misfiled under `hooks/`, so
-seven files reach up through `../../hooks/lib/` to get it.
+The arrows point both ways, and #20 added one: `scripts/env.mjs` is the only entry whose `lib/` twin
+is neither same-named nor in the sibling directory. That is defensible — it renders what `paths.mjs`
+resolves, so it belongs beside it — but it is the pattern breaking again rather than an exception to
+it.
+
+The directory names describe **who invokes the file**, not a dependency direction. There is exactly
+one real layer — `paths.mjs` — and it is misfiled under `hooks/`, so eight files reach up through
+`../../hooks/lib/` to get it.
 
 Consequence: `validate-note` is a `PostToolUse` hook firing on **every Write/Edit in every session**,
 and it pulls the whole `/memory:health` audit engine in by import. Deliberate (the comment says
@@ -375,10 +403,16 @@ imported-not-spawned, to avoid a fork), but it puts the audit module's import co
 
 Each of these is load-bearing. None is an accident; most have a dated measurement behind them.
 
-**H1 — `projectKey()` forks bash.** `paths.mjs` shells out (`bash -c '. "$0"; project_key "$1"'`)
-so the sed pipeline over git remote URLs stays single-implementation. The most-called identity
-function in the system is a subprocess. Mitigated by a cache stamped to **whole-second** mtime — a
-float would make every shell-side lookup a silent miss.
+**H1 — `projectKey()` forks bash. — CLOSED 2026-08-18 (#20).** `paths.mjs` used to shell out
+(`bash -c '. "$0"; project_key "$1"'`) so the sed pipeline over git remote URLs stayed
+single-implementation: the most-called identity function in the system was a subprocess. The
+pipeline moved into `normaliseRemote()` and the shell now asks Node instead. Cache miss went
+**82.2 → 64.3 ms**; the disk cache stays, because git itself still forks.
+
+What the closure cost, and why it is worth recording: applying the ported pipeline to *both*
+branches of `computeProjectKey` silently re-keyed repos with no `origin` remote (`foo.git/` → `foo`).
+Caught in review, fixed in #21. A key that moves is a vault folder that moves — when consolidating
+two implementations into one, the branch nobody was thinking about is the one that shifts.
 
 **H2 — `useModelCache()` mutates a third-party global.** `transformers.env.cacheDir` is assigned
 directly because transformers.js v4 ignores both `HF_HOME` and `TRANSFORMERS_CACHE` (verified
@@ -434,13 +468,30 @@ Whatever the Xenova q8 export does is not what the card describes. **Do not "fix
 **H11 — ten copies of path resolution in Markdown.** All ten `commands/*.md` open with the same
 `$STATE`/`$MEM` preamble and several inline `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`.
 Prettier is configured to skip `*.md`, no CI step greps them, and no test executes them. Path
-resolution therefore has four implementations, not two: `vault-env.sh`, `paths.mjs`, `doctor.sh`
-(which correctly sources the first), and ten hand-copied preambles.
+resolution now has **two** implementations rather than four — `paths.mjs`, plus ten hand-copied
+Markdown preambles. #20 removed the other two (`vault-env.sh` stopped resolving; `doctor.sh` sources
+it). The Markdown copies are untouched and are now the whole of the remaining duplication.
 
-**H12 — two locks guard one resource.** `$MEM_HOME/.semantic-index.lock` (shell, SessionStart only,
-30-minute stale reclaim) and `$DB_DIR/.index-<model>.lock` (Node, per model). The Node lock is the
-one that protects integrity; both `distill` and `/memory:prune` call `--index` directly and take
-only that one. The shell lock's contention path is `exit 0` with **no output**.
+**H12 — two locks guard one resource. — CLOSED 2026-08-18 (#20).**
+`$MEM_HOME/.semantic-index.lock` (shell, SessionStart only, 30-minute stale reclaim) sat alongside
+`$DB_DIR/.index-<model>.lock` (Node, per model). Only the Node one protected integrity — both
+`distill` and `/memory:prune` call `--index` directly and took only that. The shell lock's
+contention path was `exit 0` with **no output**, so it deleted work silently. Removed; the per-model
+lock is now the only index lock.
+
+**H13 — `vault-env.sh` must load eagerly, in the parent shell.** Its accessors are called as
+`$(resolve_vault)`, which runs in a subshell — so a load performed *inside* one sets variables that
+die with it, and the next accessor forks `node` again. Five accessors, five forks. It therefore
+calls `_memory_env_load "$PWD"` at **source time**, and a caller wanting a different directory
+(`vault-memory-sync.sh` takes cwd from the hook payload) must call it itself. Verified with
+`bash -x`: one `node` invocation per script. This is a correctness requirement wearing the costume
+of an optimisation.
+
+**H14 — `shellQuote()` is an `eval` boundary, not politeness.** `scripts/env.mjs` emits
+`NAME='value'` lines that `vault-env.sh` runs through `eval`. A vault path is user-supplied, so a
+bare `$`, a backtick or a quote is an injection. POSIX single-quoting suppresses every expansion,
+and `'\''` is the only escape it needs. The test's oracle is bash itself: quote it, echo it back,
+compare byte for byte.
 
 ## Where failure is silent
 
@@ -449,14 +500,14 @@ These are the paths where a fault produces no error — ranked by expected cost.
 
 | # | Failure | Mechanism | Blast radius |
 | --- | --- | --- | --- |
-| R1 | **Full re-embed storm** | the incremental path keys on exact mtime equality — and `prune-logs.sh` states in a comment that Synology sync churns mtime | 20–40 min CPU at batch size 1; cascades into R2 |
-| R2 | **Silently skipped indexing** | H12: a legitimate long `--index` or a killed session holds the shell lock; SessionStart then `exit 0`s quietly for up to 30 min | stale recall, no message |
+| R1 | **Full re-embed storm** | the incremental path keys on exact mtime equality — and `prune-logs.sh` states in a comment that Synology sync churns mtime | 20–40 min CPU at batch size 1 |
+| ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
 | R4 | **Recall's keyword arm dies** | change the `'(card)'` sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** | keyword arm dead, no signal |
 | R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** | no `VACUUM` anywhere; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `semantic-index.log` appends with no rotation; `prune-logs.sh` touches only the vault | multi-GB, noticed late — precedent: the 2.2 GB `node_modules` found by accident |
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |
-| R8 | **Symlink-dereference bugs** | fixed once already (`du` without `-L`); `semantic-index-refresh.sh`'s `[ ! -d .../node_modules/... ]` is correct only because `test -d` happens to dereference | a check that measures nothing |
+| R8 | **Symlink-dereference bugs** | the class, not an instance: two found so far (`du` without `-L`; the runtime probe in `semantic-index-refresh`). Both fixed, the second now pinned by a test that symlinks `node_modules` and asserts `runtimeInstalled()` sees through it. Every new check against `$CLAUDE_MEMORY_HOME` is another draw | a check that measures nothing |
 | — | **Runaway `claude` recursion** | `CLAUDE_DISTILL_CHILD` is the only guard, on a hook registered for both `SessionEnd` **and** `Stop` | low probability, **unbounded** cost |
 
 There is **no auth and no billing surface** — single user, one unix socket. The nearest analogues:
@@ -472,18 +523,25 @@ vault, concentrated entirely in the two untested `mv`-wielding shell scripts:
 ## The one-paragraph read
 
 A **procedural core with one shared kernel and four out-of-band services**, wearing the folder names
-of a layered plugin. `paths.mjs` is the kernel; everything depends on it and it depends on a bash
-subprocess. `scripts/memory-semantic.mjs` is a monolith that is simultaneously CLI, schema owner and
-daemon — and the rest of the system reaches it over a socket, over SQLite, and over `execFileSync`,
-never over an import. The `lib/` split is a **testability seam, not an architectural one**, which is
-exactly why it holds in the simple modules and dissolves in the complex ones.
+of a layered plugin. `paths.mjs` is the kernel and, since #20, the sole resolver — everything
+depends on it, and the two remaining shell files depend on it too, by asking. `scripts/memory-semantic.mjs`
+is a monolith that is simultaneously CLI, schema owner and daemon, and the rest of the system reaches
+it over a socket, over SQLite, and over `execFileSync`, never over an import. The `lib/` split is a
+**testability seam, not an architectural one**, which is exactly why it holds in the simple modules
+and dissolves in the complex ones — including the three #20 added, which comply precisely because
+they are simple.
 
 ---
 
 # Maintaining this document
 
-- **Part 1 describes intent; Part 2 describes reality.** When you close a gap, move the entry from
-  Part 2 to Part 1 rather than deleting it, and say what closed it.
+- **Part 1 describes intent; Part 2 describes reality.** When you close a gap, Part 1 absorbs the
+  new truth and the Part 2 entry stays where it is, marked **CLOSED** with the date and the PR.
+  Never delete it. (The first draft said "move the entry to Part 1", and the first three closures —
+  `H1`, `H12`, `R2` in #20 — showed why that does not work: once the hack is gone there is nothing
+  to *say* in Part 1 beyond what the design section already says, while the record of what was
+  wrong, and what closing it cost, is worth keeping exactly where someone hunting the same shape
+  will look. `H1` carries the re-keying bug its own closure introduced.)
 - **The invariants table is the highest-value section — keep the middle column honest.** "Enforced
   by: NOTHING" is a useful, true statement. A rule listed as enforced when it is not is the exact
   mistake this table was written to prevent.

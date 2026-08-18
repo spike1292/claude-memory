@@ -14,21 +14,11 @@ so it is not rediscovered as a good idea later (see item 15).
 
 ## Wave 1 — make silent failures loud
 
-Four cheapest items in the repo, all attacking one class: things that fail without saying so.
-**~1 h total, one PR.**
+The cheapest items in the repo, all attacking one class: things that fail without saying so.
 
-### 1. Delete the shell index lock
-
-- **Goal:** remove `H12` and half of `R2`. Two locks guard one resource; only the Node one protects
-  integrity.
-- **Files:** [`hooks/semantic-index-refresh.sh`](../hooks/semantic-index-refresh.sh)
-- **Diff plan:** delete the `mkdir "$lock"` block, the 30-minute stale reclaim, and the
-  `trap ... rmdir` — about 12 lines. The Node lock (`db/.index-<model>.lock`) already covers
-  cross-process writes and logs `another --index is running (lock held); skipping`. Cost: one extra
-  ~40 ms node spawn on a contended session start.
-- **Risk: low.** Pure deletion; the surviving lock is the one guarding the mixed-dimension
-  corruption case.
-- **~15 min.**
+> **Item 1 (delete the shell index lock) landed in #20** and is deleted from this list, per the rule
+> at the top. It closed `H12` and `R2`. Numbering below is unchanged so that references to items by
+> number in commits and PRs keep resolving.
 
 ### 2. `doctor.sh` reports `$CLAUDE_MEMORY_HOME` subdirectory sizes
 
@@ -43,13 +33,16 @@ Four cheapest items in the repo, all attacking one class: things that fail witho
 
 ### 3. Cap `semantic-index.log`
 
-- **Goal:** the one unbounded append in the system.
-- **Files:** [`hooks/semantic-index-refresh.sh`](../hooks/semantic-index-refresh.sh) — same file as
-  item 1, do them together.
-- **Diff plan:** before appending, truncate to the last 256 KB when the file exceeds 1 MB
-  (`tail -c` into a temp, then `mv`). No logrotate dependency.
+- **Goal:** the one unbounded append in the system. **Still open after #20** — `logBanner()` appends
+  and nothing truncates.
+- **Files:** [`hooks/lib/hook-io.mjs`](../hooks/lib/hook-io.mjs) — `logBanner()`, now that the hook
+  is Node. Fixing it there covers `distill.log` and `graphgen.log` at the same time, which the
+  original shell-only fix would not have.
+- **Diff plan:** in `logBanner()`, before appending, truncate to the last 256 KB when the file
+  exceeds 1 MB. Node has no `tail -c`, so read the last 256 KB with a positioned `fs.readSync` and
+  rewrite — no dependency, and the whole file never enters memory.
 - **Risk: low.**
-- **~10 min.**
+- **~20 min.**
 
 ### 4. `chmod 0600` the daemon socket
 
@@ -138,17 +131,23 @@ Four cheapest items in the repo, all attacking one class: things that fail witho
 
 These two are the entire irreversible-data-loss surface. Neither has a test.
 
-### 9. Test `prune-logs.sh`
+### 9. Port `prune-logs.sh` to Node
+
+Restated after #20: **port it, do not just test it.** It is a loop over files with per-item date
+parsing, which is what the fork-count rule sends to Node — the 2026-08-17 sweep only missed it
+because it is not a hook. Porting gets the test for free and removes the portability trap; testing
+the shell version keeps the trap and buys less.
 
 - **Goal:** it `mv`s vault files, has a 90-day horizon, and has almost certainly never run on real
-  data. Its BSD `date -j -f` path is the one you run and the one CI cannot reach.
-- **Files:** new test driving the script via `execFileSync`, or an extension of `release.sh`'s
-  selftest pattern.
-- **Diff plan:** synthetic directory with dated filenames straddling the cutoff; run; assert exactly
-  the old ones moved into `Archive/` and that nothing was deleted. Assert on the parsed epoch rather
-  than the platform, so both `date` implementations are covered.
-- **Risk: low.** Test-only.
-- **~40 min.** Best coverage-per-hour in the repo.
+  data. Its BSD `date -j -f` path is the one you run and the one CI cannot reach — the branch CI
+  *could* test is the one you never execute.
+- **Files:** new `scripts/prune-logs.mjs` + `scripts/lib/prune-logs.mjs` + test; delete the `.sh`;
+  update the invocation in [`commands/prune.md`](../commands/prune.md).
+- **Diff plan:** ~25 lines. Dates come from the filename (`YYYY-MM-DD-*.md`), never mtime — Synology
+  churns mtime, which is the same fact behind `R1`. Keep move-only, never delete. Test a synthetic
+  directory straddling the cutoff and assert exactly the old files moved into `Archive/`.
+- **Risk: low.** Move-only, and the port is mechanical.
+- **~45 min.** Still the best coverage-per-hour in the repo.
 
 ### 10. Test `vault-memory-sync.sh`
 
@@ -219,10 +218,13 @@ These two are the entire irreversible-data-loss surface. Neither has a test.
 
 ### 15. Declined: relocate `paths.mjs`
 
-`paths.mjs` is the only real layer in the system and it is misfiled under `hooks/`, so seven files
-reach up through `../../hooks/lib/` to import it. Moving it touches seven import sites, the CI globs
+`paths.mjs` is the only real layer in the system and it is misfiled under `hooks/`, so eight files
+reach up through `../../hooks/lib/` to import it. Moving it touches those import sites, the CI globs
 and CLAUDE.md — **for conceptual clarity and no behaviour change.** Worst impact-per-hour in this
 backlog. Recorded so it is not rediscovered as a good idea later.
+
+**Still declined after #20**, which rewrote this file without moving it. Rewriting it was the moment
+a relocation would have been cheapest, and it still did not pay for itself.
 
 ---
 
@@ -230,13 +232,17 @@ backlog. Recorded so it is not rediscovered as a good idea later.
 
 | PR | Items | Effort | Buys |
 | --- | --- | ---: | --- |
-| 1 | 1–4 | ~1 h | four silent failures become visible; two are deletions |
+| ~~1~~ | ~~1–4~~ → **2, 3, 4** | ~50 min | item 1 landed in #20; the rest still make silent failures visible |
 | 2 | 5 | ~1.5 h | kills the highest-probability failure (needs a minor bump) |
 | 3 | 6, 8 | ~1.25 h | two pure extractions, both with tests |
 | 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12 |
-| 5 | 9, 10 | ~2 h | coverage on the only two scripts that can lose data |
+| 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
 | 7 | 13, 14 | ~30 min | rot removal |
 
-Items 1, 3 and 15 are net deletions or non-work. **Only items 5 and 7 change behaviour** —
+Items 3 and 15 are net deletions or non-work. **Only items 5, 7 and 9 change behaviour** —
 everything else is observation, extraction, or tests.
+
+Item **11** (CI enforcing the entry/`lib` rule) got cheaper: #20 added three compliant entries, so
+the rule now holds in 8 of 12 rather than 5 of 9, and the allowlist it would need is down to four
+names.

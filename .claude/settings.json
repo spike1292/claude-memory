@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk grep *)",
+      "Bash(sed -n '/## The one-paragraph read/,/^---/p' docs/architecture.md)"
+    ]
+  }
+}
