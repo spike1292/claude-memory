@@ -20,11 +20,20 @@
 // particular is a non-trivial sed over git remote URLs — there is one copy of it again.
 import assert from 'node:assert';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
+import {
+  countLines,
+  detach,
+  findClaude,
+  markerPath,
+  nowSeconds,
+  readMarker,
+  withinDebounce,
+  writeMarker,
+} from './hook-io.mjs';
 
 // DISTILL_VAULT stays supported for dry runs against a throwaway vault; otherwise this is
 // exactly paths.vault() — env, then config.json, then the default.
@@ -296,34 +305,11 @@ export function todayStr(d = new Date()) {
 
 // ---------------------------------------------------------------- environment
 
-function which(cmd) {
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    const p = path.join(dir, cmd);
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return p;
-    } catch {
-      /* next */
-    }
-  }
-  return null;
-}
+// findClaude lives in hook-io.mjs: graph-staleness-check probes the same four locations, and while
+// one list was here and the other was in bash they drifted without anything noticing.
 
-function findClaude() {
-  for (const cand of [
-    which('claude'),
-    path.join(os.homedir(), '.claude/local/claude'),
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-  ]) {
-    if (cand && fs.existsSync(cand)) return cand;
-  }
-  return null;
-}
-
-/** project_key via vault-env.sh — one implementation. Falls back to the cwd-slug if bash or
- *  git is unavailable, which is what the shell version does too. */
+/** project_key via paths.mjs, the one resolver. Falls back to the cwd-slug when git is
+ *  unavailable — a hook must get an answer, never an exception. */
 export function projectKey(cwd) {
   try {
     return paths.projectKey(cwd);
@@ -542,4 +528,70 @@ export function distill(transcript, cwd) {
   // /memory:prune's purge — the distiller only keeps additions fresh.
   reindex(cwd, slug);
   return { written, merged, slug };
+}
+
+// ---------------------------------------------------------------- gate (SessionEnd + Stop)
+
+/** Below this a session has no lesson in it; distilling would be noise with an LLM call attached. */
+export const MIN_MESSAGES = 15;
+/** Stop only distils a LONG session — a normal one ends via SessionEnd first. */
+export const STOP_MIN_MESSAGES = 400;
+/** …and at most this often, so a hard-killed long session loses at most two hours of lessons. */
+export const STOP_DEBOUNCE_SECONDS = 7200;
+
+/**
+ * Decide whether this event should distil, without spawning or writing.
+ *
+ * Dual trigger, and the two are not the same job:
+ *   - SessionEnd is authoritative and always runs on a non-trivial session. Once per session keeps
+ *     Insights signal-dense; distilling per turn would bury the lessons in churn.
+ *   - Stop is a CRASH FALLBACK. It fires constantly during normal work, so it is gated hard.
+ */
+export function gatePlan(p, { now = nowSeconds() } = {}) {
+  // The headless extractor runs as a `claude` session, whose Stop fires this hook again. Without
+  // this the distiller distils its own distillation, recursively.
+  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: 'child run' };
+  // Claude Code's own Stop-loop guard. Absent on SessionEnd, harmless there.
+  if (p?.stop_hook_active === true) return { run: false, reason: 'stop_hook_active' };
+
+  const transcript = p?.transcript_path;
+  if (!transcript) return { run: false, reason: 'no transcript path' };
+  try {
+    if (!fs.statSync(transcript).isFile()) return { run: false, reason: 'transcript not a file' };
+  } catch {
+    return { run: false, reason: 'transcript missing' };
+  }
+
+  const lines = countLines(transcript);
+  if (lines < MIN_MESSAGES) return { run: false, reason: 'trivial session', lines };
+
+  const sid = p?.session_id || 'nosession';
+  const marker = markerPath(`distill-${sid}`);
+
+  if (p?.hook_event_name !== 'SessionEnd') {
+    if (lines < STOP_MIN_MESSAGES) return { run: false, reason: 'stop: session too short', lines };
+    if (withinDebounce(readMarker(marker), STOP_DEBOUNCE_SECONDS, now))
+      return { run: false, reason: 'stop: debounced', lines };
+  }
+
+  return { run: true, transcript, marker, now, lines };
+}
+
+/**
+ * Gate, then detach the worker.
+ *
+ * The worker is this module's own entry, re-invoked with argv — one file, two modes, because the
+ * gate and the work are the same hook and splitting them into two entries would put the contract
+ * in two places.
+ */
+export function gate(p) {
+  const plan = gatePlan(p);
+  if (!plan.run) return plan;
+  writeMarker(plan.marker, plan.now);
+  detach(
+    process.execPath,
+    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, p?.cwd || process.cwd()],
+    { cwd: p?.cwd, logFile: path.join(paths.stateDir('logs'), 'distill.log') },
+  );
+  return plan;
 }

@@ -1,7 +1,10 @@
 // Tests for hooks/lib/paths.mjs. Run: node --test hooks/lib/paths.test.mjs
 //
-// The shell is the oracle throughout: every project-key assertion compares against vault-env.sh
-// itself, never a hard-coded string, so these cannot drift away from the implementation.
+// The oracle used to be vault-env.sh — every project-key assertion ran the shell and compared.
+// That stopped meaning anything on 2026-08-18, when resolution became single-implementation and
+// the shell started ASKING Node: the comparison would have passed by construction while testing
+// nothing. The oracle is now the EXPECTED KEY, written out, plus a table over the URL shapes the
+// old sed pipeline handled.
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -9,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync as run } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { vaultEnvSh } from './paths.mjs';
+import { normaliseRemote, legacyKey } from './paths.mjs';
 
 const MODULE = fileURLToPath(new URL('./paths.mjs', import.meta.url));
 
@@ -17,8 +20,6 @@ test('paths', async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paths-'));
   process.env.CLAUDE_MEMORY_HOME = path.join(tmp, 'state');
 
-  const shell = (d) =>
-    run('bash', ['-c', '. "$0"; project_key "$1"', vaultEnvSh, d], { encoding: 'utf8' }).trim();
   // A fresh process per call — short-lived hooks are the whole reason the disk cache exists,
   // and an in-process Map would hide every bug this is meant to catch.
   const fresh = (d) =>
@@ -49,8 +50,9 @@ test('paths', async (t) => {
       'origin',
       'https://gitlab.example.com/Team/Alpha.git',
     ]);
-    assert.strictEqual(fresh(repo), shell(repo), 'cold lookup must match the shell');
-    assert.strictEqual(fresh(repo), shell(repo), 'cached lookup must match the shell');
+    const ALPHA = 'gitlab.example.com-team-alpha';
+    assert.strictEqual(fresh(repo), ALPHA, 'cold lookup');
+    assert.strictEqual(fresh(repo), ALPHA, 'cached lookup must agree with the cold one');
 
     // A changed remote changes the key, and the cache must not outlive it. Size is what
     // discriminates here; this assertion failed for real when the stamp was seconds-only.
@@ -62,8 +64,11 @@ test('paths', async (t) => {
       'origin',
       'https://gitlab.example.com/Team/Beta.git',
     ]);
-    assert.strictEqual(fresh(repo), shell(repo), 'stale key served after the remote changed');
-    assert.ok(fresh(repo).endsWith('beta'), 'same-second remote change must invalidate');
+    assert.strictEqual(
+      fresh(repo),
+      'gitlab.example.com-team-beta',
+      'same-second remote change must invalidate — this is what the size is for',
+    );
 
     // The nastiest shape: same second AND identical byte length, so neither mtime nor size moves.
     // Only the inode does. This is the case a seconds-only stamp would have missed forever.
@@ -77,23 +82,23 @@ test('paths', async (t) => {
     ]);
     assert.strictEqual(
       fresh(repo),
-      shell(repo),
-      'shell and node must agree after a same-length change',
-    );
-    assert.ok(
-      fresh(repo).endsWith('beto'),
+      'gitlab.example.com-team-beto',
       'same-second, same-length remote change must invalidate — this is what the inode is for',
     );
 
     const sub = path.join(repo, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
-    assert.strictEqual(fresh(sub), shell(sub), 'a subdirectory must key to the same project');
+    assert.strictEqual(
+      fresh(sub),
+      'gitlab.example.com-team-beto',
+      'a subdirectory must key to the same project',
+    );
   });
 
   await t.test('a non-git dir falls back to the path slug', () => {
     const plain = path.join(tmp, 'plain');
     fs.mkdirSync(plain);
-    assert.strictEqual(fresh(plain), shell(plain), 'non-git dir must fall back to the path slug');
+    assert.strictEqual(fresh(plain), legacyKey(plain), 'non-git dir falls back to the path slug');
   });
 
   await t.test('a corrupt cache degrades to the shell instead of throwing', () => {
@@ -102,8 +107,39 @@ test('paths', async (t) => {
     const cf = path.join(process.env.CLAUDE_MEMORY_HOME, 'cache', 'project-keys.json');
     fs.mkdirSync(path.dirname(cf), { recursive: true });
     fs.writeFileSync(cf, '{ not json');
-    assert.strictEqual(fresh(repo), shell(repo), 'corrupt cache must fall back, not throw');
+    assert.strictEqual(
+      fresh(repo),
+      'gitlab.example.com-team-beto',
+      'corrupt cache must recompute, not throw — this runs inside hooks',
+    );
   });
 
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// The five `sed -e` expressions this replaced, one case each. Ported 2026-08-18; before that the
+// only check on them was that Node forked bash to run the same pipeline.
+test('normaliseRemote reproduces the sed pipeline', () => {
+  const cases = [
+    ['https://gitlab.example.com/Team/Alpha.git', 'gitlab.example.com-team-alpha'],
+    ['git://example.com/a/b.git', 'example.com-a-b'],
+    // scp syntax: the FIRST colon becomes a slash, and only the first (sed had no /g).
+    ['git@github.com:spike1292/claude-memory.git', 'github.com-spike1292-claude-memory'],
+    ['ssh://git@example.com:22/a/b.git', 'example.com-22-a-b'],
+    // Credentials are stripped, never keyed on.
+    ['https://user:token@example.com/a/b.git', 'example.com-a-b'],
+    ['https://example.com/a/b/', 'example.com-a-b'],
+    ['https://example.com/a/b///', 'example.com-a-b'],
+    ['https://example.com/a/b', 'example.com-a-b'],
+  ];
+  for (const [url, want] of cases) assert.strictEqual(normaliseRemote(url), want, url);
+});
+
+test('normaliseRemote lowercases ASCII ONLY, like tr A-Z a-z', () => {
+  // The porting hazard: toLowerCase() is unicode-aware and would map these, where the shell's
+  // `tr 'A-Z' 'a-z'` leaves them alone. A host with a non-ASCII capital would key differently on
+  // the two sides and silently split one project's vault folder in two.
+  assert.strictEqual(normaliseRemote('https://EXAMPLE.com/A/B'), 'example.com-a-b');
+  assert.strictEqual(normaliseRemote('https://exämple.com/Ä/b'), 'exämple.com-Ä-b');
+  assert.strictEqual(normaliseRemote('https://example.com/İ/b'), 'example.com-İ-b');
 });

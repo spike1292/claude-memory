@@ -197,7 +197,7 @@ stale=$(find "$STATE/run" -name 'search-*.sock' ! -name "search-$model.sock" 2>/
 
 echo
 echo "recall"
-if [ "$(config_get recall 2>/dev/null)" = "true" ]; then
+if [ "$(recall_config)" = "true" ]; then
   ok "per-prompt recall armed (\"recall\": true in $(basename "$(config_file)"))"
 elif [ "${MEMORY_RECALL_ENABLED:-}" = "1" ]; then
   warn "recall armed by env var only" \

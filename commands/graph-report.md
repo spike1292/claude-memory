@@ -11,7 +11,7 @@ description: (Re)generate the codebase graph digest from codebase-memory-mcp int
 
 Generate a "God Nodes"-style codebase digest so future sessions read one summary instead of many files. Use the `codebase-memory-mcp` tools — do NOT read source files for this.
 
-1. Slug: `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), **NOT the checkout path** — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. `graph-staleness-check.sh` calls `resolve_vault` too; using anything else makes the background regen and a manual run write to two different files.
+1. Slug: `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), **NOT the checkout path** — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. `hooks/graph-staleness-check.mjs` resolves the vault the same way (via `paths.mjs`, which is what `vault-env.sh` now asks); using anything else makes the background regen and a manual run write to two different files.
    Note the **MCP project name is not the slug** — `codebase-memory-mcp` keys on the cwd path *without* a leading dash (e.g. `Users-you-Development-Frontend`). Get it from `list_projects` rather than constructing it.
 2. Ensure the graph is fresh:
    - `index_status` — is this repo indexed? If not, `index_repository` first.

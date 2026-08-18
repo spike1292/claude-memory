@@ -9,6 +9,50 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **The last three gate hooks are Node.** `semantic-index-refresh`, `graph-staleness-check` and
+  `distill-session` were bash; they are now thin entries over tested `lib/` modules, and the three
+  `.sh` files are deleted. Only `hooks/vault-memory-sync.sh` and `scripts/doctor.sh` remain shell.
+  The 2026-08-17 rule kept them in bash on a floor of ~5 ms — but none of them was a *bare* gate:
+  each sourced `vault-env.sh` (15 ms) and forked `git`/`jq` several times, and `distill-session.sh`
+  parsed its payload with five separate `jq` pipelines. Measured on the gate path, local-disk vault,
+  n=30: 148.3 ms → **140.7 ms** total, the win carried entirely by the distiller. Rationale and the
+  full table in [docs/decisions/2026-08-18-node-hooks.md](docs/decisions/2026-08-18-node-hooks.md).
+  Test count 76 → 99; the ported decisions (24h and 2h debounces, the >400-message Stop threshold,
+  short-sha staleness) had no tests at all while they lived in shell.
+
+- **One implementation of the gate plumbing.** New `hooks/lib/hook-io.mjs` holds the stdin payload
+  parser, debounce markers, `detach()` and `findClaude()`. The last of those had already drifted:
+  `graph-staleness-check.sh` probed four `claude` locations in bash while `distill-session.mjs`
+  probed the same four in Node, with nothing keeping them in step.
+
+- **Debounce markers and background logs move into `$CLAUDE_MEMORY_HOME`.** From
+  `~/.cache/claude-distill/` and `~/.cache/claude-graphgen/` to `cache/` and `logs/` under the one
+  machine-local root, so there is a single directory to inspect, size and clear. Costs one missed
+  debounce per marker at upgrade — one extra background run, never a wrong one.
+
+- **Resolution is single-implementation.** `hooks/lib/vault-env.sh` was the source of truth for the
+  vault path, `$CLAUDE_MEMORY_HOME`, recall arming and `project_key`, and `hooks/lib/paths.mjs`
+  mirrored all of it — forking bash for `project_key` so the sed pipeline at least had one home.
+  Node resolves now and shell asks: `vault-env.sh` `eval`s one `node scripts/env.mjs` call and went
+  from **167 lines to 85**, keeping every function name so both callers barely changed. The five
+  `sed -e` expressions are `normaliseRemote()`, with a test table over the eight URL shapes they
+  handled and one for the ASCII-lowercase hazard (`tr 'A-Z' 'a-z'` is ASCII-only where
+  `toLowerCase()` is not, and a non-ASCII capital in a host name would have split one project's
+  vault folder in two). Measured, local-disk vault: shell callers **+27.2 ms** (34.3 → 61.5), paid
+  by one SessionStart hook and by `/memory:doctor`; Node `projectKey` on a cache miss **−17.9 ms**
+  (82.2 → 64.3), paid back to every other hook. Rationale, the degraded no-Node path, and the
+  subshell trap that makes eager loading a correctness requirement:
+  [docs/decisions/2026-08-18-single-resolver.md](docs/decisions/2026-08-18-single-resolver.md).
+
+### Removed
+
+- **The redundant semantic-index lock.** `$CLAUDE_MEMORY_HOME/.semantic-index.lock` guarded the same
+  file as the indexer's own per-model `db/.index-<model>.lock`, at a coarser scope, and its only
+  observable effect was a **silent** skip: on contention it exited 0 with no output, so a session
+  that indexed nothing looked identical to one that had nothing to index.
+
 ### Fixed
 
 - **`/memory:doctor` measured the symlink instead of the shared `node_modules`.** `du` without `-L`

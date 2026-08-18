@@ -8,6 +8,10 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
+  gatePlan,
+  MIN_MESSAGES,
+  STOP_MIN_MESSAGES,
+  STOP_DEBOUNCE_SECONDS,
   slugify,
   extractJson,
   todayStr,
@@ -32,9 +36,10 @@ test('distill-session', async (t) => {
     assert.strictEqual(todayStr(new Date(2026, 7, 6)), '2026-08-06');
   });
 
-  await t.test('projectKey agrees with vault-env.sh across URL forms', () => {
-    // project_key must agree with hooks/lib/vault-env.sh across URL forms. It now IS vault-env.sh,
-    // so this asserts that sed pipeline rather than a second copy of it.
+  await t.test('projectKey handles every remote URL form', () => {
+    // Expected keys are written out, never compared against another implementation: the sed
+    // pipeline this used to defer to became normaliseRemote() in paths.mjs on 2026-08-18, and a
+    // comparison would now pass by construction. Same reason paths.test.mjs lost its shell oracle.
     const r = path.join(tmpBase, 'r');
     for (const [url, want] of [
       ['git@gitlab.example.com:TeamName/Frontend.git', 'gitlab.example.com-teamname-frontend'],
@@ -149,10 +154,11 @@ test('distill-session', async (t) => {
 
   await t.test('the entry still runs when reached through a symlinked dir', () => {
     // Plugins are installed through symlinked dirs — a version-pinned cache dir, or a checkout
-    // linked into ~/.claude/plugins — and distill-session.sh hands node a BASH_SOURCE-derived path
-    // that still contains the link. Run the entry with no args through one: it must reach its lib
-    // and print the usage line. Assert on OUTPUT, because a broken import path would also exit
-    // non-zero and look like the expected failure.
+    // linked into ~/.claude/plugins — and the gate hands node a path that still contains the link.
+    // Run the entry through one: it must reach its lib and print the usage line. Assert on OUTPUT,
+    // because a broken import path would also exit non-zero and look like the expected failure.
+    // ONE arg is the probe: since the shell gate was ported, NO args means "gate on stdin", which
+    // is correctly silent — the one-arg form is what still reports usage.
     // Probe the ENTRY, never this test file: symlinking our own directory and re-running
     // `basename(self)` spawns the test file again, and each copy spawns another. That recursion
     // hung for two minutes before it was caught.
@@ -163,11 +169,11 @@ test('distill-session', async (t) => {
     // Left in place the child would register tests instead of running main(), print no usage line,
     // and fail this assertion for a reason that has nothing to do with the guard. Strip it.
     const { NODE_TEST_CONTEXT: _drop, ...env } = process.env;
-    // No args means main() prints usage to stderr and exits 1, so execFileSync throws — the output
-    // is the signal here, not the status. Silence is the failure being guarded against.
+    // One arg prints usage to stderr and exits 1, so execFileSync throws — the output is the
+    // signal here, not the status. Silence is the failure being guarded against.
     let viaLink = '';
     try {
-      execFileSync(process.execPath, [path.join(linkRoot, path.basename(entry))], {
+      execFileSync(process.execPath, [path.join(linkRoot, path.basename(entry)), 'only-one-arg'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         env,
@@ -249,3 +255,104 @@ test('distill-session', async (t) => {
 });
 
 // ---------------------------------------------------------------- main
+
+// ---------------------------------------------------------------- the gate
+
+const transcriptWith = (lines) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-gate-'));
+  const f = path.join(d, 'transcript.jsonl');
+  fs.writeFileSync(f, '{}\n'.repeat(lines));
+  return f;
+};
+
+test('gatePlan refuses to distil its own extractor run', () => {
+  // The headless extractor is a `claude` session whose Stop fires this hook again. Without the
+  // guard the distiller distils its own distillation, recursively, at one LLM call per level.
+  const prev = process.env.CLAUDE_DISTILL_CHILD;
+  process.env.CLAUDE_DISTILL_CHILD = '1';
+  try {
+    const p = gatePlan({ hook_event_name: 'SessionEnd', transcript_path: transcriptWith(500) });
+    assert.strictEqual(p.run, false);
+    assert.strictEqual(p.reason, 'child run');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_DISTILL_CHILD;
+    else process.env.CLAUDE_DISTILL_CHILD = prev;
+  }
+});
+
+test('gatePlan honours Claude Code stop_hook_active', () => {
+  const p = gatePlan({
+    hook_event_name: 'Stop',
+    stop_hook_active: true,
+    transcript_path: transcriptWith(500),
+  });
+  assert.strictEqual(p.run, false);
+  assert.strictEqual(p.reason, 'stop_hook_active');
+});
+
+test('gatePlan needs a transcript that exists', () => {
+  assert.strictEqual(gatePlan({ hook_event_name: 'SessionEnd' }).reason, 'no transcript path');
+  assert.strictEqual(
+    gatePlan({ hook_event_name: 'SessionEnd', transcript_path: '/nope/nope.jsonl' }).reason,
+    'transcript missing',
+  );
+});
+
+test('SessionEnd distils any non-trivial session; Stop does not', () => {
+  const short = transcriptWith(MIN_MESSAGES + 5);
+  assert.strictEqual(
+    gatePlan({ hook_event_name: 'SessionEnd', transcript_path: short }).run,
+    true,
+    'SessionEnd is authoritative',
+  );
+  // Stop fires constantly during normal work — it is a crash fallback, not a second trigger.
+  const p = gatePlan({ hook_event_name: 'Stop', transcript_path: short });
+  assert.strictEqual(p.run, false);
+  assert.strictEqual(p.reason, 'stop: session too short');
+});
+
+test('a trivial session is skipped on every event', () => {
+  const tiny = transcriptWith(MIN_MESSAGES - 1);
+  for (const ev of ['SessionEnd', 'Stop']) {
+    const p = gatePlan({ hook_event_name: ev, transcript_path: tiny });
+    assert.strictEqual(p.run, false, ev);
+    assert.strictEqual(p.reason, 'trivial session', ev);
+  }
+});
+
+test('Stop distils a LONG session, then debounces it', () => {
+  const long = transcriptWith(STOP_MIN_MESSAGES + 1);
+  const sid = `gate-test-${process.pid}`;
+  const now = 1_700_000_000;
+
+  const first = gatePlan(
+    { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+    { now },
+  );
+  assert.strictEqual(first.run, true, 'no marker yet — must run');
+
+  fs.writeFileSync(first.marker, `${now}\n`);
+  try {
+    const soon = gatePlan(
+      { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+      { now: now + STOP_DEBOUNCE_SECONDS - 1 },
+    );
+    assert.strictEqual(soon.run, false);
+    assert.strictEqual(soon.reason, 'stop: debounced');
+
+    const later = gatePlan(
+      { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+      { now: now + STOP_DEBOUNCE_SECONDS },
+    );
+    assert.strictEqual(later.run, true, 'the window is open at exactly the boundary');
+
+    // SessionEnd is never debounced: it is the authoritative pass.
+    const end = gatePlan(
+      { hook_event_name: 'SessionEnd', transcript_path: long, session_id: sid },
+      { now: now + 1 },
+    );
+    assert.strictEqual(end.run, true);
+  } finally {
+    fs.rmSync(first.marker, { force: true });
+  }
+});

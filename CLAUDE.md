@@ -101,10 +101,18 @@ same file as the CLI, importing one helper ran the whole hook — spawning a hea
 writing notes, reindexing — which happened three times and needed an entry-point guard to suppress.
 The split retired that guard entirely rather than making it more careful.
 
-**Two runtimes, two mirrors of the same resolution logic.** `hooks/lib/vault-env.sh` is the
-source of truth for vault path, `$CLAUDE_MEMORY_HOME`, recall arming, and `project_key`.
-`hooks/lib/paths.mjs` mirrors it for Node, shelling out for `project_key` only — that sed pipeline
-over git remote URLs stays single-implementation. Change one, check the other.
+**Resolution is single-implementation: `hooks/lib/paths.mjs`.** Vault path, `$CLAUDE_MEMORY_HOME`,
+recall arming, `project_key` and `legacy_key` are resolved in Node and nowhere else.
+`hooks/lib/vault-env.sh` no longer resolves anything — it `eval`s one `node scripts/env.mjs` call
+and exposes the same function names it always did. There is nothing to keep in step any more; the
+old "change one, check the other" rule is retired.
+
+Two consequences worth knowing before you touch it. **Values are `eval`ed**, so
+`shellQuote()` in `hooks/lib/env-shell.mjs` is a correctness boundary, not politeness — it is
+tested against bash itself. And **the accessors run in `$(...)` subshells**, so `vault-env.sh` loads
+eagerly in the parent shell at source time; a caller needing a different directory must call
+`_memory_env_load "$dir"` itself, which `vault-memory-sync.sh` does. Without that each accessor
+forks node again.
 
 There is **no Python.** `distill-session.py` was ported to `distill-session.mjs` on 2026-08-16; it
 now imports `paths.mjs` rather than carrying a third copy of the resolution logic, and CI fails if
@@ -185,21 +193,30 @@ Do not write code that assumes either is present, and do not describe a missing 
 State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
 `context-mode` was gone, which was never true.
 
-**Shell vs Node in hooks: fork count decides, not language.** bash's floor is ~5 ms and Node's
-~40 ms, but a fork costs ~3.5 ms *each*, so a hook that loops over notes belongs in Node while a
-**gate** that decides cheaply and spawns belongs in bash. Numbers, what is ported, and what must
-not be:
-[docs/decisions/2026-08-17-shell-vs-node-hooks.md](docs/decisions/2026-08-17-shell-vs-node-hooks.md).
+**Two shell files remain: `hooks/vault-memory-sync.sh` and `scripts/doctor.sh`.** Every other hook
+is Node. `hooks/lib/hook-io.mjs` is the shared plumbing for the gates — stdin payload, debounce
+markers, `findClaude()`, `detach()` — and it exists because three bash scripts had each grown their
+own copy of all four, already drifted.
 
-Three things from it that bite in the moment: **do not port `vault-memory-sync.sh`** (it moves
-files and repoints symlinks in a live vault, and has cost 24 notes once); **quote no timing without
-saying whether the vault was cloud-backed or pinned offline**, which alone moves a hook 166 ms vs
-131 ms; and **measure against a vault with real note counts** — the shell link lint looked like a
-74 ms hook in this repo, which has no L1 notes, while taking 10.9 s on a 49-note project.
+**Fork count decides, not language — but count them before quoting a floor.** bash's floor is ~5 ms
+and Node's ~40 ms, so a hook that loops over notes belongs in Node and a bare **gate** belongs in
+bash. The three gates ported on 2026-08-18 were not bare: each sourced `vault-env.sh` (15 ms) and
+forked `git`/`jq` several times, so they ran at 43–58 ms, and moving them to Node was a net **−7.6
+ms**. A floor is not a budget:
+[docs/decisions/2026-08-18-node-hooks.md](docs/decisions/2026-08-18-node-hooks.md), superseding
+[2026-08-17](docs/decisions/2026-08-17-shell-vs-node-hooks.md).
 
-`vault-env.sh` reads the same project-key cache `paths.mjs` writes, so shell hooks no longer fork
-git for it. Both sides stamp with **whole-second** mtime; a float would make every shell lookup a
-silent miss.
+Three things that still bite: **do not port `vault-memory-sync.sh`** (it moves files and repoints
+symlinks in a live vault, and has cost 24 notes once — the reason is risk, not language, and it
+needs a characterisation test first); **quote no timing without saying whether the vault was
+cloud-backed or pinned offline**, which alone moves a hook 166 ms vs 131 ms; and **measure against a
+vault with real note counts** — the shell link lint looked like a 74 ms hook in this repo, which has
+no L1 notes, while taking 10.9 s on a 49-note project.
+
+The project-key cache (`cache/project-keys.json`) is now Node's alone; shell reads it only by
+asking Node. Its stamp is `<whole seconds>:<size>:<inode>` and all three fields are load-bearing —
+seconds alone leave a *permanent* hole, because a `git remote set-url` in the same second is never
+noticed afterwards.
 
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.mjs` warns rather than blocking a write, and the heavy hooks
