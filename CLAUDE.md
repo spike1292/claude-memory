@@ -199,6 +199,16 @@ Do not write code that assumes either is present, and do not describe a missing 
 State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
 `context-mode` was gone, which was never true.
 
+**Route heavy output through context-mode rather than `Bash`/`Read`** — a `node --test` run, an
+eval sweep, `--coverage`/`--dupes`/`--clusters`, a fetched page. Only what the sandboxed code
+prints enters the context. `Bash` and `Read` stay right for the carve-outs: reading a file in order
+to `Edit` it, mutating commands, and short fixed output; file writes never go through it, since the
+subprocess filesystem is discarded. The MCP tools are **deferred** — calling one directly fails
+with `InputValidationError`, so load the schemas once with
+`ToolSearch("select:mcp__plugin_context-mode_context-mode__ctx_execute,…ctx_batch_execute")` at the
+first heavy step. That round trip is why *small* outputs stay on the always-loaded tools. This
+governs tool use only; nothing in the repo may assume context-mode is installed (asked 2026-08-18).
+
 **Two shell files remain: `hooks/vault-memory-sync.sh` and `scripts/doctor.sh`.** Every other hook
 is Node. `hooks/lib/hook-io.mjs` is the shared plumbing for the gates — stdin payload, debounce
 markers, `findClaude()`, `detach()` — and it exists because three bash scripts had each grown their
