@@ -40,7 +40,12 @@ else
     fail "node $nv is below 22.5" "the engine uses the built-in node:sqlite, absent before 22.5. Upgrade node."
   fi
 fi
-command -v jq      >/dev/null 2>&1 && ok "jq"      || fail "jq not on PATH"      "every bash hook parses its stdin payload with jq. brew install jq"
+# Was a hard fail while every hook was bash and parsed its payload with jq. After the 2026-08-18
+# port that is ONE hook — vault-memory-sync.sh — and it degrades: `jq ... || true` then falls back
+# to $PWD, which at SessionStart is normally the right directory anyway. A warning states the real
+# cost; a failure would send someone installing jq to fix something that is not broken.
+command -v jq      >/dev/null 2>&1 && ok "jq"      || warn "jq not on PATH" \
+  "only vault-memory-sync.sh needs it, to read cwd from the hook payload; without it that hook falls back to \$PWD, which is wrong only when Claude Code reports a cwd different from the shell's. brew install jq"
 command -v claude  >/dev/null 2>&1 && ok "claude CLI" \
   || warn "claude CLI not on PATH" "the distiller and the graph-report refresh shell out to it headlessly; both degrade to no-ops."
 
