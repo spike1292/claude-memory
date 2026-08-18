@@ -46,6 +46,36 @@ export function pruneTargets(binDir, platform = process.platform, arch = process
   return out;
 }
 
+/**
+ * GPU execution-provider blobs. On linux, onnxruntime-node's own install script downloads a
+ * CUDA/TensorRT build on top of the bundled binaries — CI measured node_modules still at 363 MB
+ * after every other prune (2026-08-18). Nothing here asks for a GPU provider: the pipeline runs the
+ * default CPU EP at batch size 1, and macOS has never had these files at all, so the CPU path is
+ * the only one this plugin has ever exercised. They are dlopen'd lazily by name, so deleting them
+ * is inert unless someone adds `executionProviders: ['cuda']`.
+ * `libonnxruntime_providers_shared` stays — it is the small loader shim, not a provider.
+ */
+const GPU_BLOB = /_providers_(cuda|tensorrt|rocm|migraphx)/;
+
+export function providerBlobs(binDir) {
+  const out = [];
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (GPU_BLOB.test(e.name)) out.push(p);
+    }
+  };
+  walk(binDir);
+  return out;
+}
+
 // --- unused packages ------------------------------------------------------------------------
 // @huggingface/transformers hard-depends on sharp (image pipeline) and onnxruntime-web (browser
 // WASM backend). Neither runs on the text-embedding path, together they are 147 MB, and npm has

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   pruneTargets,
+  providerBlobs,
   findPackages,
   isStub,
   bytes,
@@ -20,15 +21,21 @@ const modules = path.join(root, 'node_modules');
 let freed = 0;
 const done = [];
 
-const drop = (dir, label) => {
-  freed += bytes(dir);
-  fs.rmSync(dir, { recursive: true, force: true });
-  done.push(label);
+const drop = (target, label) => {
+  const size = bytes(target);
+  freed += size;
+  fs.rmSync(target, { recursive: true, force: true });
+  if (label) done.push(label);
+  return size;
 };
 
 try {
   const binDir = path.join(modules, 'onnxruntime-node', 'bin');
   for (const dir of pruneTargets(binDir)) drop(dir, `ort-node ${path.relative(binDir, dir)}`);
+
+  let gpu = 0;
+  for (const blob of providerBlobs(binDir)) gpu += drop(blob, '') || 0;
+  if (gpu) done.push('gpu execution providers');
 
   for (const dir of findPackages(modules, STUBBED)) {
     if (isStub(dir)) continue; // already slimmed

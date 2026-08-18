@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pruneTargets, findPackages, isStub, STUBBED } from './slim-install.mjs';
+import { pruneTargets, providerBlobs, findPackages, isStub, STUBBED } from './slim-install.mjs';
 
 // A fake onnxruntime-node bin/ tree. The dangerous failure is picking the wrong directory,
 // so every case here is about what pruneTargets refuses to return.
@@ -111,4 +111,33 @@ test('the shipped stubs are what isStub accepts', () => {
     assert.ok(isStub(dir), `stubs/${name} must carry the stub version`);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name, name);
   }
+});
+
+test('providerBlobs takes GPU providers and leaves the CPU runtime and loader shim', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slim-gpu-'));
+  const dir = path.join(root, 'napi-v6/linux/x64');
+  fs.mkdirSync(dir, { recursive: true });
+  const files = [
+    'libonnxruntime_providers_cuda.so',
+    'libonnxruntime_providers_tensorrt.so',
+    'libonnxruntime_providers_shared.so', // the loader shim — must survive
+    'libonnxruntime.so.1.24.3', // the CPU runtime — must survive
+    'onnxruntime_binding.node',
+  ];
+  for (const f of files) fs.writeFileSync(path.join(dir, f), 'x');
+  const got = providerBlobs(root)
+    .map((p) => path.basename(p))
+    .sort();
+  assert.deepEqual(got, [
+    'libonnxruntime_providers_cuda.so',
+    'libonnxruntime_providers_tensorrt.so',
+  ]);
+});
+
+test('providerBlobs on a macOS tree finds nothing to do', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slim-gpu-mac-'));
+  const dir = path.join(root, 'napi-v6/darwin/arm64');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'libonnxruntime.1.24.3.dylib'), 'x');
+  assert.deepEqual(providerBlobs(root), []);
 });

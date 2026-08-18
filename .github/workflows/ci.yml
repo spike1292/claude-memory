@@ -164,6 +164,8 @@ jobs:
           npm ci
           mb=$(du -sm node_modules | cut -f1)
           echo "node_modules: ${mb} MB"
+          # Printed always, so a failure here says what grew instead of just how much.
+          du -sm node_modules/* node_modules/*/* 2>/dev/null | sort -rn | head -8
           # ~55 MB slimmed on linux/x64, 380 MB unslimmed. Anything near the ceiling means the
           # postinstall stopped matching what it deletes.
           [ "$mb" -lt 100 ] || { echo "::error::node_modules is ${mb} MB — slim-install did not apply"; exit 1; }

@@ -32,7 +32,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Verified: `--check-embedding` cosine 1.000000, full suite passing, `npm ci` reproducible. npm's
   own `overrides` cannot do this — pointed at a local stub it writes a lockfile that `npm ci` then
   rejects, and Claude Code installs plugins with `npm ci`. The packages are still *downloaded*;
-  only the disk that the version-pinned plugin cache keeps is reclaimed.
+  only the disk that the version-pinned plugin cache keeps is reclaimed. On linux it also drops
+  onnxruntime's CUDA and TensorRT execution providers, which its own install script downloads on top
+  of the bundled binaries — nothing here asks for a GPU provider, and macOS has never had them, so
+  the CPU path is the only one this plugin has ever run.
 
 ## [0.3.0] - 2026-08-18
 
