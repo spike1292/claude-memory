@@ -1,8 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(rtk grep *)",
-      "Bash(sed -n '/## The one-paragraph read/,/^---/p' docs/architecture.md)"
+      "Bash(git ls-tree *)",
+      "Bash(git diff *)",
+      "Bash(git switch *)",
+      "Bash(git push *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr edit *)",
+      "Bash(node --test *)",
+      "Bash(npx --yes prettier@3.6.2 --check *)",
+      "Bash(bash -n *)"
     ]
   }
 }
