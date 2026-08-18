@@ -48,7 +48,17 @@ export function vault() {
   );
 }
 
-/** Per-prompt recall is off unless explicitly armed. Mirrors recall_enabled(). */
+/**
+ * Which source decided the vault — for /memory:doctor, so "wrong vault" is diagnosable.
+ * Must stay in step with vault(): same order, same branches.
+ */
+export function vaultSource() {
+  if (process.env.CLAUDE_VAULT) return 'CLAUDE_VAULT env';
+  if (config().vault) return configFile();
+  return 'built-in default';
+}
+
+/** Per-prompt recall is off unless explicitly armed. */
 export function recallEnabled() {
   return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;
 }
@@ -167,6 +177,57 @@ function writeKeyCache(all) {
  * `hooks/lib/vault-env.sh` reads this same cache, which is why the stamp is a string both `stat`
  * and `fs.statSync` can produce identically. See the stamp construction below.
  */
+/**
+ * Normalise a git remote URL into a project key.
+ *
+ * This was five `sed -e` expressions in vault-env.sh until 2026-08-18, and Node forked bash to run
+ * them so there would be ONE implementation. The fork was the expensive half of that bargain, so
+ * the pipeline moved here instead and the shell side now asks Node. Each step below is the sed
+ * expression it replaces, in the same order — sed applies -e in sequence to the same line.
+ *
+ * ASCII lowercase on purpose, NOT toLowerCase(): the shell used `tr 'A-Z' 'a-z'`, which is
+ * ASCII-only, while toLowerCase() is unicode-aware and maps things like 'İ' to a two-code-point
+ * sequence. This is the same porting hazard as JS `\w` being ASCII where Python's is not, in the
+ * opposite direction — a host name with a non-ASCII capital would key differently and silently
+ * split one project's vault folder in two.
+ */
+export function normaliseRemote(url) {
+  const asciiLower = (t) => t.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+  return asciiLower(
+    String(url)
+      .replace(/^[a-z+][a-z+]*:\/\//, '') // s#^[a-z+][a-z+]*://##   scheme
+      .replace(/^[^@/]*@/, '') // s#^[^@/]*@##            credentials, never keyed on
+      .replace(':', '/') // s#:#/#                  FIRST colon only: scp syntax
+      .replace(/\.git$/, '') // s#\.git$##
+      .replace(/\/*$/, ''), // s#/*$##                 trailing slashes
+  ).replace(/\//g, '-'); // s#/#-#g
+}
+
+const gitOut = (dir, args) => {
+  try {
+    return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * The project key for a directory, computed for real.
+ *
+ * Identifies the PROJECT, not the checkout path, so one repo maps to one vault folder on every
+ * machine. Falls back to the repo directory name, then to the legacy cwd-slug for non-git dirs.
+ */
+export function computeProjectKey(dir) {
+  const url = gitOut(dir, ['remote', 'get-url', 'origin']);
+  if (url) {
+    const key = normaliseRemote(url);
+    if (key) return key;
+  }
+  const top = gitOut(dir, ['rev-parse', '--show-toplevel']);
+  if (top) return normaliseRemote(path.basename(top));
+  return legacyKey(dir);
+}
+
 export function projectKey(dir = process.cwd()) {
   if (keyCache.has(dir)) return keyCache.get(dir);
 
@@ -175,9 +236,9 @@ export function projectKey(dir = process.cwd()) {
   if (cfg === undefined) {
     stamp = '0'; // no repo: key is a pure function of the path
   } else if (typeof cfg === 'string') {
-    // "<whole seconds>:<size>:<inode>", because vault-env.sh reads this same file and must compute
-    // the identical value: `stat` yields whole seconds on both BSD and GNU, and a float millisecond
-    // stamp would mismatch every time, silently making the shell side a permanent cache miss.
+    // "<whole seconds>:<size>:<inode>". Whole seconds is now only a format choice — vault-env.sh
+    // stopped reading this file on 2026-08-18, when resolution became single-implementation — but
+    // the three fields are still load-bearing.
     //
     // Seconds alone are not enough, and the hole they leave is permanent rather than momentary: a
     // `git remote set-url` in the same second as the cached stamp is never noticed, because nothing
@@ -200,9 +261,7 @@ export function projectKey(dir = process.cwd()) {
     return hit.key;
   }
 
-  const out = execFileSync('bash', ['-c', `. "$0"; project_key "$1"`, vaultEnvSh, dir], {
-    encoding: 'utf8',
-  }).trim();
+  const out = computeProjectKey(dir);
   keyCache.set(dir, out);
   if (all) writeKeyCache({ ...all, [dir]: { key: out, stamp } });
   return out;

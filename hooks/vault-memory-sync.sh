@@ -35,6 +35,9 @@ cwd=$(cat | jq -r '.cwd // empty' 2>/dev/null || true)
 # Two different names, deliberately:
 #   slug = cwd with / -> -   : Claude Code owns ~/.claude/projects/<slug>/, we can't rename it.
 #   key  = git remote ident  : the vault folder, stable across machines and checkout paths.
+# One load, in THIS shell: the accessors below run in $(...) subshells, where a load would not
+# survive. cwd comes from the hook payload and is not necessarily $PWD.
+_memory_env_load "$cwd"
 slug=$(legacy_key "$cwd")
 key=$(project_key "$cwd")
 

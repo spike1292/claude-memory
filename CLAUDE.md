@@ -101,10 +101,18 @@ same file as the CLI, importing one helper ran the whole hook — spawning a hea
 writing notes, reindexing — which happened three times and needed an entry-point guard to suppress.
 The split retired that guard entirely rather than making it more careful.
 
-**Two runtimes, two mirrors of the same resolution logic.** `hooks/lib/vault-env.sh` is the
-source of truth for vault path, `$CLAUDE_MEMORY_HOME`, recall arming, and `project_key`.
-`hooks/lib/paths.mjs` mirrors it for Node, shelling out for `project_key` only — that sed pipeline
-over git remote URLs stays single-implementation. Change one, check the other.
+**Resolution is single-implementation: `hooks/lib/paths.mjs`.** Vault path, `$CLAUDE_MEMORY_HOME`,
+recall arming, `project_key` and `legacy_key` are resolved in Node and nowhere else.
+`hooks/lib/vault-env.sh` no longer resolves anything — it `eval`s one `node scripts/env.mjs` call
+and exposes the same function names it always did. There is nothing to keep in step any more; the
+old "change one, check the other" rule is retired.
+
+Two consequences worth knowing before you touch it. **Values are `eval`ed**, so
+`shellQuote()` in `hooks/lib/env-shell.mjs` is a correctness boundary, not politeness — it is
+tested against bash itself. And **the accessors run in `$(...)` subshells**, so `vault-env.sh` loads
+eagerly in the parent shell at source time; a caller needing a different directory must call
+`_memory_env_load "$dir"` itself, which `vault-memory-sync.sh` does. Without that each accessor
+forks node again.
 
 There is **no Python.** `distill-session.py` was ported to `distill-session.mjs` on 2026-08-16; it
 now imports `paths.mjs` rather than carrying a third copy of the resolution logic, and CI fails if
@@ -205,9 +213,10 @@ cloud-backed or pinned offline**, which alone moves a hook 166 ms vs 131 ms; and
 vault with real note counts** — the shell link lint looked like a 74 ms hook in this repo, which has
 no L1 notes, while taking 10.9 s on a 49-note project.
 
-`vault-env.sh` reads the same project-key cache `paths.mjs` writes, so the two remaining shell
-files do not fork git for it. Both sides stamp with **whole-second** mtime; a float would make every
-shell lookup a silent miss.
+The project-key cache (`cache/project-keys.json`) is now Node's alone; shell reads it only by
+asking Node. Its stamp is `<whole seconds>:<size>:<inode>` and all three fields are load-bearing —
+seconds alone leave a *permanent* hole, because a `git remote set-url` in the same second is never
+noticed afterwards.
 
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.mjs` warns rather than blocking a write, and the heavy hooks

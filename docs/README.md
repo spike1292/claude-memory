@@ -14,6 +14,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Bun: evaluated and declined](decisions/2026-08-17-bun.md) | Why the plugin is Node-only. The blocker is `node:sqlite`, not the native deps. |
 | [Shell vs Node in hooks](decisions/2026-08-17-shell-vs-node-hooks.md) | Fork count decides, not language. What is ported, what must not be, and the measurement traps. |
 | [The last three gate hooks move to Node](decisions/2026-08-18-node-hooks.md) | Supersedes the "do not port" list above. The floors were right; they were quoted about hooks that never ran at them. |
+| [One resolver: Node resolves, shell asks](decisions/2026-08-18-single-resolver.md) | Retires the "two mirrors" rule. What it cost the shell side, and what it bought. |
 
 ## Guides
 
