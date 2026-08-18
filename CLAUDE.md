@@ -91,6 +91,12 @@ vault resolves to, so isolate `HOME`, not just `CLAUDE_VAULT`, when testing hook
 
 ## Architecture
 
+**Full map: [docs/architecture.md](docs/architecture.md)** — the three homes, the module graph, the
+six key flows as diagrams, and the invariants table with an *enforced by* column. Its second half,
+"how things really work", records where this section's rules do not hold in the code: the entry/`lib`
+inversion, the mutual `hooks/`↔`scripts/` dependency, the four implicit services, and the twelve
+load-bearing hacks. Read it before a refactor; edit it in place when the code moves.
+
 **Every Node hook and script is a thin entry over a `lib/` module.** `hooks/<name>.mjs` and
 `scripts/<name>.mjs` own argv, stdin and stdout and nothing else; the logic and its tests live in
 `hooks/lib/<name>.mjs` + `<name>.test.mjs`. `hooks/hooks.json` and `commands/*.md` name the entry
