@@ -133,9 +133,10 @@ errs toward abstaining.
 any miss — including its 700 ms timeout expiring during the ~1.5 s warm-up — so redundant spawns are
 routine; `--serve` probes the socket and exits in ~55 ms rather than stealing it, and only an
 unbound socket (`ECONNREFUSED`) may be unlinked. Both rules exist because breaking either costs
-gigabytes, not milliseconds: six servers ran at once on a 16 GB machine, and because attention is
-O(seq²) and onnxruntime's arena never shrinks, an unclamped query left two servers holding 8.8 GB of
-dirty `MALLOC_LARGE` each. `embed()` clamps to `MAX_CHARS` for the same reason it pins the batch —
+gigabytes, not milliseconds: six servers ran at once on a 16 GB machine, and a query was bounded
+only by bge-m3's own 8192-token max — attention is heads x seq² per layer, ~4.3 GB for one of 24
+layers at that length, and onnxruntime's arena never shrinks, so it left two servers holding 8.8 GB
+of dirty `MALLOC_LARGE` each. `embed()` clamps to `MAX_CHARS` for the same reason it pins the batch —
 the index path and the query path must embed identically, and only documents were being chunked.
 
 **And exactly one server across all projects.** A warm one is 800 MB–1.4 GB, so one per indexed repo

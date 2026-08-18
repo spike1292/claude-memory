@@ -116,17 +116,22 @@ async function embed(texts) {
   // session (one question). With batch 1 the padding is gone and both sides agree by construction.
   const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
   // Clamp HERE for the same reason the batch is pinned here: both sides must embed identically.
-  // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3) but nothing capped a QUERY, and the
-  // recall hook embeds the user's whole prompt verbatim. A pasted stack trace went in at 57k chars
-  // — 32x longer than anything in the index, so it was also being compared against a length the
+  // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3), but a QUERY was capped only by the
+  // model itself — the pipeline passes truncation:true, so bge-m3's tokenizer cut at its
+  // model_max_length of 8192 TOKENS. That is a cap, not a runaway, and it is still ~18x the token
+  // count of anything in the index: the recall hook embeds the user's whole prompt verbatim, and a
+  // pasted stack trace went in at 57k chars. So a query was also being compared against a length the
   // index never contains.
   //
-  // The memory cost is the sharp end. Attention is O(seq^2) per layer and bge-m3 accepts 8192
-  // tokens across 24 layers, so one long prompt allocates multi-GB activations — and onnxruntime's
-  // arena allocator keeps whatever high-water mark it reaches for the life of the process, which
-  // for --serve is 30 idle minutes. Measured 2026-08-17 on a 16GB machine: two resident servers
-  // holding 8.8G of dirty MALLOC_LARGE each, ~7.4G of it compressed; killing them returned it.
-  // A server that has only ever seen <=1800-char inputs stays at ~450M.
+  // 8192 is where the memory goes. Attention materialises heads x seq^2 scores per layer, and at
+  // seq 8192 that is 16 * 8192^2 * 4B = ~4.3G for ONE of 24 layers. onnxruntime's arena then keeps
+  // whatever high-water mark it reaches for the life of the process, which for --serve was 30 idle
+  // minutes. Measured 2026-08-17 on a 16GB machine: two resident servers holding 8.8G of dirty
+  // MALLOC_LARGE each, ~7.4G of it compressed; killing them returned it. 1800 chars is ~450 tokens,
+  // an 18x cut in seq and ~330x in seq^2, and a server that has only seen such inputs stays ~450M.
+  //
+  // Clamping the INPUT is the cheap half. The allocator itself is still unbounded — see
+  // enableCpuMemArena in session_options if a future model or a longer MAX_CHARS makes that bite.
   const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
   const vecs = [];
   for (let i = 0; i < clamped.length; i += B) {
