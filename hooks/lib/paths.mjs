@@ -178,8 +178,9 @@ function writeKeyCache(all) {
  * opposite direction — a host name with a non-ASCII capital would key differently and silently
  * split one project's vault folder in two.
  */
+const asciiLower = (t) => t.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+
 export function normaliseRemote(url) {
-  const asciiLower = (t) => t.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
   return asciiLower(
     String(url)
       .replace(/^[a-z+][a-z+]*:\/\//, '') // s#^[a-z+][a-z+]*://##   scheme
@@ -211,7 +212,13 @@ export function computeProjectKey(dir) {
     if (key) return key;
   }
   const top = gitOut(dir, ['rev-parse', '--show-toplevel']);
-  if (top) return normaliseRemote(path.basename(top));
+  // asciiLower ONLY, not normaliseRemote(). The shell this replaced ran
+  //     basename "$_top" | tr 'A-Z' 'a-z'
+  // on this branch — no `.git` strip, no colon rewrite, no slash mapping. Running the full pipeline
+  // here (as the 2026-08-18 port briefly did) silently re-keys a repo that has no `origin` remote:
+  // a checkout in `foo.git/` became `foo`, one in `a:b/` became `a-b`, and a changed key means a
+  // different vault folder. Stability is the entire job of this function.
+  if (top) return asciiLower(path.basename(top));
   return legacyKey(dir);
 }
 

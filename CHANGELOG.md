@@ -9,6 +9,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A repo with no `origin` remote could change project key.** When the remote-URL normaliser moved
+  from `vault-env.sh` into `paths.mjs`, the *other* branch of `computeProjectKey` — the fallback to
+  the repository directory name — started running that whole pipeline too. The shell it replaced
+  only lowercased. A checkout in `foo.git/` therefore keyed as `foo`, and one in `a:b/` as `a-b`,
+  which means a different vault folder for anyone in that shape. Restored to lowercase-only, pinned
+  by a test. Only ever present in this unreleased section, never in a published version.
+
 ### Changed
 
 - **The last three gate hooks are Node.** `semantic-index-refresh`, `graph-staleness-check` and

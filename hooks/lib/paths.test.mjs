@@ -101,7 +101,18 @@ test('paths', async (t) => {
     assert.strictEqual(fresh(plain), legacyKey(plain), 'non-git dir falls back to the path slug');
   });
 
-  await t.test('a corrupt cache degrades to the shell instead of throwing', () => {
+  await t.test('a repo with NO origin remote keys on the directory name, lowercased only', () => {
+    // The shell this replaced ran `basename "$_top" | tr 'A-Z' 'a-z'` on this branch. The
+    // 2026-08-18 port ran the whole normaliseRemote() pipeline instead, which also strips a
+    // trailing `.git` — silently re-keying such a repo to a DIFFERENT vault folder. `.git` in the
+    // name is what makes this visible; the lowercase is what the branch is actually for.
+    const bare = path.join(tmp, 'Foo.git');
+    fs.mkdirSync(bare);
+    run('git', ['init', '-q', bare]);
+    assert.strictEqual(fresh(bare), 'foo.git', 'must NOT strip .git — this is not a remote URL');
+  });
+
+  await t.test('a corrupt cache recomputes instead of throwing', () => {
     // This runs inside hooks, so it must never throw.
     const repo = path.join(tmp, 'repo');
     const cf = path.join(process.env.CLAUDE_MEMORY_HOME, 'cache', 'project-keys.json');
