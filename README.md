@@ -25,6 +25,9 @@ never sent anywhere.**
 the package directory exists while the runtime is unusable. `/memory:install` closes that gap,
 migrates any state from a previous install, and warms the model.
 
+It also slims `node_modules` from 380 MB to 59 MB — the dependency tarballs carry every platform's
+native runtime plus a browser WASM backend and an image pipeline that nothing here executes.
+
 Without it, everything except semantic search still works.
 
 ### Requirements

@@ -15,6 +15,7 @@
     "onnxruntime-node@1.24.3": true
   },
   "scripts": {
+    "postinstall": "node scripts/slim-install.mjs",
     "format": "npx --yes prettier@3.6.2 --write .",
     "format:check": "npx --yes prettier@3.6.2 --check ."
   }

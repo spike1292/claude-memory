@@ -62,7 +62,17 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    cd "$MEM" && node -e "await import('onnxruntime-node'); console.log('onnxruntime ok')" --input-type=module
    ```
 
-6. **Warm the model into `$STATE/models`.** First use otherwise downloads ~700 MB at an
+6. **Slim the install.** The same skipped-lifecycle-script gap as step 5, and worth 320 MB: the
+   tarballs carry every platform's native runtime plus a browser WASM backend and an image pipeline
+   this plugin never executes. Run it *after* the rebuild, which is what fetches the binary for
+   *this* platform.
+   ```bash
+   cd "$MEM" && node scripts/slim-install.mjs && du -sh node_modules
+   ```
+   Expect ~59 MB. It is idempotent and prints nothing on a second run. If it reports a failure,
+   nothing is broken — you keep a 380 MB install.
+
+7. **Warm the model into `$STATE/models`.** First use otherwise downloads ~700 MB at an
    unpredictable moment, and — if the cache dir were wrong — into the plugin dir, where the next
    `/plugin update` would discard it.
    ```bash
@@ -72,7 +82,7 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    Report the size. If `$STATE/models` is empty but a model loaded, the cache redirect is broken —
    say so loudly rather than moving on.
 
-7. **Write the settings file.** Ask the user for the vault path — it is theirs, not a guess to make.
+8. **Write the settings file.** Ask the user for the vault path — it is theirs, not a guess to make.
    Preserve any keys already in the file rather than overwriting it wholesale.
    ```bash
    cat > "$STATE/config.json" <<'JSON'
@@ -89,7 +99,7 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
 
    Omit `vault` only if it really is `~/Documents/ClaudeVault`.
 
-8. **Optionally arm per-prompt recall** by setting `"recall": true`. It ships inert, because
+9. **Optionally arm per-prompt recall** by setting `"recall": true`. It ships inert, because
    injecting into every prompt changes how every session reads. Mention it; do not enable it unasked.
 
-9. **Finish with `/memory:doctor`** and report its output verbatim.
+10. **Finish with `/memory:doctor`** and report its output verbatim.

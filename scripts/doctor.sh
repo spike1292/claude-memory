@@ -79,6 +79,14 @@ else
   else
     fail "onnxruntime-node present but will not load" "its postinstall was skipped. Run /memory:install (npm rebuild onnxruntime-node)"
   fi
+  # Same skipped-lifecycle-script gap, different symptom: nothing breaks, the install is just
+  # 320 MB of binaries that cannot load here (other platforms, browser WASM, image pipeline).
+  nm_mb=$(du -sm "$ROOT/node_modules" 2>/dev/null | cut -f1)
+  if [ "${nm_mb:-0}" -gt 150 ]; then
+    warn "node_modules is ${nm_mb} MB" "unslimmed. Run /memory:install, or: (cd $ROOT && node scripts/slim-install.mjs)"
+  else
+    ok "node_modules slimmed (${nm_mb:-?} MB)"
+  fi
 fi
 
 if [ -d "$STATE/models" ] && [ -n "$(ls -A "$STATE/models" 2>/dev/null)" ]; then

@@ -99,6 +99,13 @@ jobs:
                second runtime, and note that porting between the two is not mechanical
                (JS `\w` is ASCII-only; `toISOString()` is UTC where `date.today()` is local).
 
+            10. Install weight. Every dependency ships into a user's version-pinned plugin
+                cache, so a new one in `package.json` needs justifying, and `devDependencies`
+                are not an escape hatch (Claude Code's `npm ci` installs them). `sharp` and
+                `onnxruntime-web` are replaced by stubs after install — flag any code that
+                calls into them, and any change to `scripts/slim-install.mjs` that could
+                delete a path this platform loads from.
+
             Also apply ordinary judgement — correctness, races, error handling, and
             over-engineering. This codebase prefers the stdlib and the shortest thing that
             works; an abstraction with one caller is a finding.

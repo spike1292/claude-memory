@@ -28,12 +28,30 @@ npm run format                                 # prettier --write .   (CI runs f
 
 **Prettier is pinned and invoked via `npx`, never a devDependency.** Claude Code auto-runs `npm ci`
 on plugin install and that installs devDependencies, so a `prettier` entry there would ship into
-every user's version-pinned plugin cache — already 381 MB — to format code they will never edit.
+every user's version-pinned plugin cache to format code they will never edit.
 Bump the version in `package.json`'s scripts and in `.github/workflows/ci.yml` together.
 
 **It formats code only.** `.prettierignore` excludes `*.md`, `*.yml` and `package-lock.json`:
 CLAUDE.md and `commands/*.md` are read by Claude Code as instructions, the workflow comments record
 dated measurements, and Prettier reflows prose. Formatting a generated lockfile buys nothing.
+
+**`node_modules` is slimmed after install and that is load-bearing, not cosmetic.** A
+`postinstall` runs `scripts/slim-install.mjs`, which takes 380 MB down to 59 MB: it deletes
+onnxruntime-node's binaries for every platform but this one (176 MB, bundled in the tarball, so npm
+cannot skip them) and replaces `sharp` and `onnxruntime-web` with the ~1 KB stubs in `stubs/`
+(147 MB of image pipeline and browser WASM backend that no text-embedding path touches). Three
+things about it:
+
+- **Stub, never delete.** Both are *static* imports in `transformers.node.mjs`; removing them fails
+  module resolution before any code runs. The stubs throw when touched, so a wrong-backend
+  regression is loud rather than a silent WASM fallback.
+- **npm `overrides` cannot do this.** Pointed at a local stub, npm writes a lockfile it then
+  rejects itself (`npm ci`: "Missing: sharp@ from lock file"), and Claude Code installs plugins with
+  `npm ci`. Workspace overrides install the real package anyway. Measured 2026-08-18.
+- **It fails safe, which means it fails silently.** An upstream layout change makes it prune
+  nothing and everything keeps working at 380 MB. The `install` job in `ci.yml` is the only thing
+  that notices — it is the one place a real `npm ci` runs, since every other suite mocks the
+  embedding runtime.
 
 **Concurrency is pinned to 1 in CI on purpose.** The suites share `$CLAUDE_MEMORY_HOME` (the
 project-key cache) and the per-model index, and `hooks/lib/paths.test.mjs` asserts that two git

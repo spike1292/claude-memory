@@ -9,6 +9,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **The install is 380 MB → 59 MB.** A `postinstall`
+  (`scripts/slim-install.mjs`) strips what this plugin can never execute:
+  onnxruntime-node ships every platform's native runtime in one tarball (176 MB of it unloadable on
+  any given machine), and `@huggingface/transformers` hard-depends on `onnxruntime-web` (130 MB
+  browser WASM backend) and `sharp` + `@img` (17 MB image pipeline) that no text-embedding path
+  touches. The two packages are replaced by ~1 KB stubs from `stubs/` rather than deleted, because
+  both are *static* imports in `transformers.node.mjs` — resolution fails before any code runs — and
+  a stub that throws turns a wrong-backend regression into a loud error instead of a silent one.
+  Verified: `--check-embedding` cosine 1.000000, full suite passing, `npm ci` reproducible. npm's
+  own `overrides` cannot do this — pointed at a local stub it writes a lockfile that `npm ci` then
+  rejects, and Claude Code installs plugins with `npm ci`. The packages are still *downloaded*;
+  only the disk that the version-pinned plugin cache keeps is reclaimed.
+
 ## [0.3.0] - 2026-08-18
 
 ### Changed
