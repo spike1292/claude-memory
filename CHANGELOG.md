@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/memory:doctor` measured the symlink instead of the shared `node_modules`.** `du` without `-L`
+  stats the link itself, so once the runtime moved to `$CLAUDE_MEMORY_HOME` the size check read 0 MB
+  and passed by measuring nothing — precisely the case it exists to police. Found running
+  `/memory:install` against a real shared install.
+
 ## [0.3.1] - 2026-08-18
 
 ### Changed
