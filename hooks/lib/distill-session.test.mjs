@@ -36,9 +36,10 @@ test('distill-session', async (t) => {
     assert.strictEqual(todayStr(new Date(2026, 7, 6)), '2026-08-06');
   });
 
-  await t.test('projectKey agrees with vault-env.sh across URL forms', () => {
-    // project_key must agree with hooks/lib/vault-env.sh across URL forms. It now IS vault-env.sh,
-    // so this asserts that sed pipeline rather than a second copy of it.
+  await t.test('projectKey handles every remote URL form', () => {
+    // Expected keys are written out, never compared against another implementation: the sed
+    // pipeline this used to defer to became normaliseRemote() in paths.mjs on 2026-08-18, and a
+    // comparison would now pass by construction. Same reason paths.test.mjs lost its shell oracle.
     const r = path.join(tmpBase, 'r');
     for (const [url, want] of [
       ['git@gitlab.example.com:TeamName/Frontend.git', 'gitlab.example.com-teamname-frontend'],

@@ -1,10 +1,11 @@
-// Node-side mirror of vault-env.sh. Everything resolves relative to this file, so the
-// plugin works from its version-pinned cache dir, from a dev checkout, and via symlink.
+// THE resolver. Vault path, $CLAUDE_MEMORY_HOME, recall arming, project_key and legacy_key are
+// resolved here and nowhere else. Everything resolves relative to this file, so the plugin works
+// from its version-pinned cache dir, from a dev checkout, and via symlink.
 //
-// vault-env.sh stays the single source of truth for project_key (non-trivial sed over
-// git remote URLs); this module shells out to it once and caches the answer. resolve_vault
-// and memory_home are two lines each, so they are reimplemented here rather than paying a
-// subprocess for them.
+// The direction reversed on 2026-08-18. vault-env.sh used to be the source of truth and this was
+// its Node-side mirror, forking bash for project_key so the sed pipeline had one implementation.
+// Now vault-env.sh evals `node scripts/env.mjs` and this module owns the rules —
+// docs/decisions/2026-08-18-single-resolver.md.
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -15,7 +16,6 @@ export const libDir = path.dirname(fileURLToPath(import.meta.url));
 export const hooksDir = path.dirname(libDir);
 export const pluginRoot = path.dirname(hooksDir);
 export const scriptsDir = path.join(pluginRoot, 'scripts');
-export const vaultEnvSh = path.join(libDir, 'vault-env.sh');
 
 /**
  * User settings: $CLAUDE_MEMORY_HOME/config.json — the same convention ponytail and
@@ -119,11 +119,11 @@ const keyCache = new Map();
  * Returns the config path (cacheable, validated by its mtime), `undefined` when there is no repo
  * at all (cacheable — the key is then a pure function of the path), or `null` when `.git` is a
  * FILE, i.e. a worktree or submodule, whose config lives somewhere this walk cannot cheaply
- * confirm (not cacheable — always ask the shell).
+ * confirm (not cacheable — always recompute).
  *
  * This is NOT a second implementation of project_key: it never derives a key, only answers
  * "has anything that could change the key been touched?". Getting it wrong costs a cache miss,
- * never a wrong answer, because vault-env.sh remains the only thing that computes the key.
+ * never a wrong answer, because computeProjectKey() below is the only thing that derives one.
  */
 function gitConfigFor(dir) {
   let d = path.resolve(dir);
@@ -164,19 +164,6 @@ function writeKeyCache(all) {
   }
 }
 
-/**
- * Stable per-project identifier. Delegates to vault-env.sh so there is one implementation.
- *
- * That delegation costs a bash+git subprocess — measured 72ms on 2026-08-17, which was the single
- * largest cost in the per-prompt recall hook and in the per-write validate-note hook, and three
- * times what switching the whole runtime to Bun would have saved. Short-lived hooks cannot reuse
- * the in-process Map, so the answer is cached on disk and validated against a stamp taken from the
- * git config that determines it: `git remote set-url` rewrites that file, so a changed remote is a
- * miss on the next call rather than a stale key forever.
- *
- * `hooks/lib/vault-env.sh` reads this same cache, which is why the stamp is a string both `stat`
- * and `fs.statSync` can produce identically. See the stamp construction below.
- */
 /**
  * Normalise a git remote URL into a project key.
  *
@@ -228,6 +215,19 @@ export function computeProjectKey(dir) {
   return legacyKey(dir);
 }
 
+/**
+ * Stable per-project identifier, cached on disk.
+ *
+ * The cache is why this is not just `computeProjectKey`: short-lived hooks cannot reuse the
+ * in-process Map, and forking git per hook was the single largest cost in the per-prompt recall
+ * hook and in the per-write validate-note hook — measured 72 ms on 2026-08-17, three times what
+ * switching the whole runtime to Bun would have saved. (That 72 ms was a bash fork wrapping a git
+ * fork; the bash half went on 2026-08-18, the git half did not, so the cache still earns its keep.)
+ *
+ * Validated against a stamp taken from the git config that determines the key: `git remote set-url`
+ * rewrites that file, so a changed remote is a miss on the next call rather than a stale key
+ * forever. See the stamp construction below for why all three fields are needed.
+ */
 export function projectKey(dir = process.cwd()) {
   if (keyCache.has(dir)) return keyCache.get(dir);
 

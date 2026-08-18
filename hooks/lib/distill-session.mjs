@@ -20,7 +20,6 @@
 // particular is a non-trivial sed over git remote URLs — there is one copy of it again.
 import assert from 'node:assert';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -309,8 +308,8 @@ export function todayStr(d = new Date()) {
 // findClaude lives in hook-io.mjs: graph-staleness-check probes the same four locations, and while
 // one list was here and the other was in bash they drifted without anything noticing.
 
-/** project_key via vault-env.sh — one implementation. Falls back to the cwd-slug if bash or
- *  git is unavailable, which is what the shell version does too. */
+/** project_key via paths.mjs, the one resolver. Falls back to the cwd-slug when git is
+ *  unavailable — a hook must get an answer, never an exception. */
 export function projectKey(cwd) {
   try {
     return paths.projectKey(cwd);
