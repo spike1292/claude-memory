@@ -34,6 +34,20 @@ so, and say precisely what is degraded.
 **On wording:** the warning used to claim the vault "stops being searchable". That was never true,
 and overstating a degradation is how a warning gets ignored.
 
+### The CLI is not the whole tool — the plugin also ships an MCP server
+
+Everything above is about the **CLI**, because the CLI is all this repo touches: `distill-session`
+and `doctor.sh` probe `command -v context-mode` and shell out to it to refresh the `ctx_search`
+index, and nothing else.
+
+Installed separately as a Claude Code plugin, `context-mode` also exposes an MCP server whose
+tools run commands and code in a sandbox — `ctx_execute`, `ctx_execute_file` and
+`ctx_batch_execute` — returning only what the code prints. **No plugin code path calls them and
+none is on the retrieval path**; they matter to whoever is *working on* this repo, and `CLAUDE.md`
+says when to reach for them. They are deferred MCP tools, so they need a `ToolSearch` before the
+first call. Verified live on 2026-08-18; if a future session finds the names changed, this section
+and the `CLAUDE.md` paragraph move together.
+
 ## codebase-memory-mcp (the `Graph/` layer)
 
 L4 is the only layer this plugin does not write. `/memory:graph-report` asks the
