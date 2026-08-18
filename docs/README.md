@@ -21,6 +21,7 @@ Dated, and superseded rather than edited when the answer changes.
 | | |
 | --- | --- |
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
+| [Refactor backlog](refactor-backlog.md) | Atomic tasks ordered by impact per hour, each tracing to a gap named in the architecture guide. Delete items as they land. |
 | [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
 | [CI, review, and releases](ci-and-releases.md) | Branch protection, the review workflows, the release flow. |
 

@@ -9,6 +9,9 @@ does, which seams are missing, and which shortcuts are holding weight. Part 2 ex
 gap is not documented anywhere else, and every entry in it has already cost something or is
 positioned to.
 
+The fixes for what Part 2 records live in [refactor-backlog.md](refactor-backlog.md), ordered by
+impact per hour.
+
 Keeping this current: see [Maintaining this document](#maintaining-this-document).
 
 ---
