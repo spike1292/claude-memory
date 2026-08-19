@@ -2,6 +2,10 @@
 
 **Date:** 2026-08-15
 **Status:** approved, not yet implemented
+**Frozen snapshot.** Every filename below is as of 2026-08-15 and several no longer exist —
+the six `.sh` hooks were ported to Node (#20, 2026-08-18) and `scripts/prune-logs.sh` on
+2026-08-19. Read `docs/architecture.md` for what the repo is now; this file records what was
+decided, not what is there.
 **Target repo:** `github.com/spike1292/claude-memory` (public)
 
 ## Context

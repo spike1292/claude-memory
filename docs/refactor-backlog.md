@@ -77,37 +77,41 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 
 ## Wave 4 — cover the destructive scripts
 
-These two are the entire irreversible-data-loss surface. Neither has a test.
+These two were the entire irreversible-data-loss surface. Both landed on 2026-08-19; the wave is
+empty, and what is left of it is the follow-up named at the end of item 10 below.
 
-### 9. Port `prune-logs.sh` to Node
+> **Item 9 (port `prune-logs.sh` to Node) landed on 2026-08-19** and is deleted from this list, per
+> the rule at the top. `scripts/prune-logs.mjs` + `scripts/lib/prune-logs.mjs` and a test per
+> branch; the `.sh` is gone and `commands/prune.md` calls the new entry. The unreachable-branch
+> problem it was named for is gone with it — there is no longer a BSD `date -j -f` arm that CI
+> cannot run. Three deliberate behaviour changes are recorded in the module's own comments: a
+> filename that matches the date pattern but is not a calendar date (`2026-02-31`) is now skipped
+> rather than normalised to 2026-03-03, a name that already exists in `Archive/` is left in place
+> rather than overwritten, and `Archive/` is created only when something moves. Reviewing the port
+> found five defects *in the port*, all fixed with a regression test rather than disclosed: an
+> out-of-range `PRUNE_DAYS` archived the whole directory, `PRUNE_DAYS=" "` did the same through a
+> 0-day window, an unpadded cutoff year did it a third time at `PRUNE_DAYS=375000`, a symlinked
+> log was invisible to both the moved and the skipped list, and a mid-run failure reported nothing
+> about what had already moved.
 
-Restated after #20: **port it, do not just test it.** It is a loop over files with per-item date
-parsing, which is what the fork-count rule sends to Node — the 2026-08-17 sweep only missed it
-because it is not a hook. Porting gets the test for free and removes the portability trap; testing
-the shell version keeps the trap and buys less.
-
-- **Goal:** it `mv`s vault files, has a 90-day horizon, and has almost certainly never run on real
-  data. Its BSD `date -j -f` path is the one you run and the one CI cannot reach — the branch CI
-  *could* test is the one you never execute.
-- **Files:** new `scripts/prune-logs.mjs` + `scripts/lib/prune-logs.mjs` + test; delete the `.sh`;
-  update the invocation in [`commands/prune.md`](../commands/prune.md).
-- **Diff plan:** ~25 lines. Dates come from the filename (`YYYY-MM-DD-*.md`), never mtime — Synology
-  churns mtime, which is the same fact behind `R1`. Keep move-only, never delete. Test a synthetic
-  directory straddling the cutoff and assert exactly the old files moved into `Archive/`.
-- **Risk: low.** Move-only, and the port is mechanical.
-- **~45 min.** Still the best coverage-per-hour in the repo.
-
-### 10. Test `vault-memory-sync.sh`
-
-- **Goal:** 160 lines, no test, moves files and repoints a live symlink in a cloud-synced directory.
-  It has cost 24 notes once (`H4`).
-- **Files:** new test with an isolated `HOME` and a synthetic vault.
-- **Diff plan:** **isolate `HOME`, not just `CLAUDE_VAULT`** — the script repoints the live
-  `~/.claude/projects/*/memory`. Assert: notes survive a `legacy_key` → `project_key` migration, the
-  symlink resolves where expected, and nothing is deleted. This is a *characterisation* test; it
-  does not violate the standing "do not port" rule.
-- **Risk: medium** to write (the isolation is fiddly), **low** to merge.
-- **~90 min.**
+> **Item 10 (test `vault-memory-sync.sh`) landed on 2026-08-19** and is deleted from this list, per
+> the rule at the top. `hooks/vault-memory-sync.test.mjs` drives the 163-line script as a black box
+> — spawn bash, hook payload on stdin, assert on the filesystem — from a scratch `HOME` per
+> subtest, with a built rather than inherited child env; 12 cases, and mutation-checked on a
+> throwaway copy of the repo, so it is known to fail when the script is broken rather than merely
+> known to be green. **The fence in `H4` stays**: the script is still bash and still must not be
+> ported. What the test changes is that a port is now *diffable* against a baseline, which was the
+> stated precondition, not permission to do it.
+>
+> Three defects in the script itself are recorded there as `CHARACTERISED, NOT ENDORSED` with a
+> passing assertion each, deliberately unfixed because a fix without this test is what lost the 24
+> notes: `mv -n` skips a same-named note and the following `rm -rf` then deletes it, a subdirectory
+> under a real memory dir is deleted rather than migrated, and the refusal to merge a
+> legacy-slug folder into an existing destination is silent, so those notes are stranded forever.
+> **The first two are silent note loss on the next SessionStart and want their own PR** — the
+> test that had to come first now exists. Two branches stay uncovered: the `~/.claude/CLAUDE.md`
+> migration and the `Commands/` stub `rmdir`, where mutants that turn them into `rm -rf` still
+> survive.
 
 ---
 
@@ -180,12 +184,15 @@ a relocation would have been cheapest, and it still did not pay for itself.
 | ~~2~~ | ~~5~~ | — | landed in #27: killed the highest-probability failure; no bump needed, it forces no re-index |
 | ~~3~~ | ~~6, 8~~ | — | landed 2026-08-19 as #28: two extractions with tests; `R4` narrowed, not closed — item 7 closed it |
 | ~~4~~ | ~~7~~ | — | landed 2026-08-19: the structural fix; `G1`'s last hole and `R4` both closed, three of `H6`'s four forks gone. Items 11 and 12 are now unblocked |
-| 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
+| ~~5~~ | ~~9, 10~~ | — | landed 2026-08-19: the log pruner is Node and tested; `vault-memory-sync.sh` has a characterisation baseline and keeps its fence. Both scripts that can lose data are now covered |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
 | 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |
+| 8 | *new* | ~1 h | fix the two silent-note-loss paths item 10 characterised — now unblocked, and the only known data-loss bugs left |
 
-Item 15 is non-work. **Of what is left, only item 9 changes behaviour** — everything else is
-observation, extraction, or tests. (Item 7 was the other one, and it landed.)
+Item 15 is non-work. **Of what was numbered here, nothing left changes behaviour** — it is all
+observation, extraction, or tests. (Items 7 and 9 were the two that did, and both landed.) The
+unnumbered row 8 is the exception and is deliberately behaviour-changing: it is the fix for the two
+data-loss paths item 10 pinned down.
 
 Item **11** (CI enforcing the entry/`lib` rule) got cheaper twice: #20 added three compliant
 entries, and item 7 took the last hook entry that had no twin at all. The mechanical form of the

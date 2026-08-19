@@ -33,6 +33,13 @@ below is what stands in for a second reader — it comments, it never approves.
   because it suppresses `ExperimentalWarning` precisely because `node:sqlite` emits one, so such an
   import would pass silently. Matches the import, not the string: both `lib/` files mention
   `node:sqlite` in prose.
+- **every path a command or hook invokes is tracked** — each `$MEM`/`${CLAUDE_PLUGIN_ROOT}`
+  path in `commands/*.md` and `hooks/hooks.json`, plus whatever each `.mjs` entry statically
+  imports, must be a file `git ls-files` knows. CI only ever sees committed content and
+  `node --test` is discovery-based, so a commit that forgets a new file is green on a repo
+  where a command invokes something that does not exist and its tests have silently vanished.
+  `git ls-files` rather than `test -e`, because an untracked file passes an existence check
+  in the working tree where the mistake is made.
 - `scripts/release.sh --selftest` (bash, 13 cases — `node --test` cannot run it)
 - `bash -n` over every shell file
 - **no Python dependency** — fails on any `.py` file or shell script calling `python`

@@ -78,7 +78,7 @@ failures loud".
 
 The highest-probability failure on the list: `scripts/memory-semantic.mjs:387` filters on exact
 mtime equality (`known.get(f.full) !== f.mtime`) while `scripts/prune-logs.sh`'s own header records
-that Synology churns mtime.
+that Synology churns mtime. (That header now lives in `scripts/prune-logs.mjs`, ported in Run 5.)
 
 Add a `hash` column to the `chunks` schema (`:105`) and a `contentHash` helper + test in
 `scripts/lib/memory-semantic.mjs`. Two-level check: mtime matches → skip without reading (fast path
@@ -149,6 +149,14 @@ files.
 
 The `HOME` isolation is the fiddly part, so item 10 gets its own verify agent that runs the new test
 against a scratch `HOME` and confirms the real `~/.claude` was untouched.
+
+**Corrected after the run.** The "~25 lines" for item 9 was the *shell script's* size, not the
+port's: 42 lines of entry plus a 111-line twin plus 176 lines of test, because the behaviour the
+25 lines had was mostly undefined rather than absent — an impossible date, a name that already
+exists in `Archive/`, a hostile `PRUNE_DAYS`. A port estimate that counts the source lines is
+counting the wrong thing. The `HOME`-isolation verify agent was worth its cost and found nothing
+wrong with the isolation; what it did not cover, and what a later pass added, is whether the new
+test *fails* when the script is broken.
 
 ### Run 6 → PR F · items 11, 12, 14 · ~2.5 h
 
@@ -411,10 +419,17 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
 - **Run 3 — landed as [#28](https://github.com/spike1292/claude-memory/pull/28)**, merged
   2026-08-19. Items 6 and 8 deleted from the backlog; `R4` narrowed and one bare `'(card)'` left in
   `hooks/memory-recall.mjs` for Run 4 to take.
-- **Run 4 — in flight** on `refactor/recall-lib-twin` (item 7, and the site Run 3 deferred).
-- Runs 5–6 not started.
+- **Run 4 — landed as [#29](https://github.com/spike1292/claude-memory/pull/29)**, merged
+  2026-08-19. Item 7 deleted from the backlog, along with the site Run 3 deferred; `G1`'s last hole
+  and `R4` both closed, and items 11 and 12 unblocked.
+- **Run 5 — in flight** on `test/destructive-scripts` (items 9 and 10, two implementers in
+  parallel as planned). Both items are done and both are deleted from the backlog; the wave it
+  belongs to is empty, and it leaves behind one *new* piece of work — the two silent-note-loss
+  paths item 10 characterised in `vault-memory-sync.sh`, which are now the largest known
+  irreversible-loss risk in the repo and have, for the first time, a test to be fixed against.
+- Run 6 not started.
 
-### What Runs 1–3 taught, folded back into the plan
+### What Runs 1–5 taught, folded back into the plan
 
 - **Two of the three findings in the second review round were introduced by the first round.** A
   review pass is itself a change, and needs reviewing. The Review phase runs on the final diff, not
@@ -444,6 +459,24 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
   line it was inserting after. The `Document` phase now **merges into the existing headings**: one
   `Added`/`Changed`/`Removed`/`Fixed`/`Security` per section, Keep a Changelog order, and no agent
   creates a `### ` of its own.
+- **A known defect gets fixed, or gets a code comment and a test. Never a bullet in the PR body.**
+  Three runs in a row disclosed a real defect in prose and shipped it anyway — disclosure reads as
+  diligence and still leaves the bug, and a PR body is the one artefact nobody re-reads after
+  merge. Run 5 hit it from both sides on the same branch, which is what settled the rule: the log
+  pruner's port had four defects of its own (an out-of-range `PRUNE_DAYS` archived the *whole*
+  directory while printing a cheerful success line), and every one is fixed with a regression test
+  instead of a paragraph. The other side is the legitimate exception and it has a price: the three
+  defects in `vault-memory-sync.sh` are genuinely not safe to fix in the same PR as its first
+  test, so each carries a `CHARACTERISED, NOT ENDORSED` comment **and** a passing assertion that
+  pins the current behaviour — a defect a test asserts cannot be silently re-broken, and cannot be
+  silently forgotten either, because changing it means changing a test. The rule is therefore not
+  "always fix"; it is that prose is never the only place a defect is recorded.
+- **A characterisation test has to be shown to fail.** A test written against code that already
+  exists is green by construction, which proves nothing about whether it would notice a
+  regression. Run 5's suite was mutation-checked on a throwaway copy of the repo — revert `cp -n`
+  to a move, drop the no-merge guard, delete the `cat | jq` line — and the first pass found two
+  mutants that survived, one of them on the line deciding *which* project's symlink gets
+  repointed. That gap was invisible from a green run and from reading the file.
 - **"Breaking" is a claim about the failure mode, not about the schema.** Run 2 was planned as a
   minor bump because it adds a column. The reviewer who killed the forced `--rebuild` was reasoning
   about `semantic-index-refresh` running detached with rows written outside a transaction — a fact
