@@ -592,7 +592,7 @@ test('mtimeCache: serves cached until the source is newer, and reloads on a fail
   assert.equal(cache.size(), 2, 'projects are cached independently');
 });
 
-// R4 in docs/architecture.md: the card heading is a wire value with one producer here and three
+// R4 in docs/architecture.md: the card heading is a wire value with one producer here and four
 // consumers — buildBundle below, two SQL reads in scripts/memory-semantic.mjs, and a bare literal in
 // hooks/memory-recall.mjs. A rename that misses one is silent: the keyword arm SELECTs 0 rows and
 // the hook abstains, which is what it does whenever it has nothing to say. Asserting
@@ -615,8 +615,12 @@ test('CARD: chunkNote emits it and every consumer still agrees', () => {
   // path. This assertion is the only thing watching it.
   const here = path.dirname(fileURLToPath(import.meta.url));
   const recall = fs.readFileSync(path.join(here, '../../hooks/memory-recall.mjs'), 'utf8');
+  // Matched loosely on purpose: prettier owns .mjs formatting, so re-wrapping that SELECT string —
+  // or any whitespace edit inside it — would fail an exact-text assertion with a message about a
+  // rename that never happened. This fails only on the drift it exists to catch (2026-08-19).
+  const cardSelect = new RegExp(`WHERE\\s+heading\\s*=\\s*'${CARD.replace(/[()]/g, '\\$&')}'`);
   assert.ok(
-    recall.includes(`WHERE heading = '${CARD}'`),
+    cardSelect.test(recall),
     'hooks/memory-recall.mjs still spells the card heading out — change it in step with CARD',
   );
 });

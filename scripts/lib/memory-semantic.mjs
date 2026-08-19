@@ -666,11 +666,16 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
 // re-implemented ranking would eventually answer differently from the eval harness, and the whole
 // point of the harness is that it measures what a session actually gets.
 //
-// `layer` was `val('--layer')`, a module-level binding in the entry, so it could not travel with the
-// body — it is now the last parameter and both call sites pass that same binding. Everything else is
-// byte-for-byte what ran in the entry (moved 2026-08-19); the arms and their weights are measured
-// numbers and this move is not the place to touch them.
-export function searchIn(index, q, qvec, k, layer = null) {
+// `preFiltered` is the one thing that could not travel with the body: it was `val('--layer')`, a
+// module-level binding in the entry. It is NOT a layer to filter by — nothing here filters — it only
+// says the caller already narrowed the corpus, so the reserve that guarantees Memory rows a share of
+// the results would be reserving inside a single layer and is switched off. Named for what it does
+// after review on 2026-08-19 flagged that `searchIn(idx, q, v, 5, 'Memory')` reads like a filter and
+// silently is not one. Both call sites pass the same `--layer` binding, now as a boolean.
+//
+// Everything else is byte-for-byte what ran in the entry (moved 2026-08-19); the arms and their
+// weights are measured numbers and this move is not the place to touch them.
+export function searchIn(index, q, qvec, k, preFiltered = false) {
   const { rowsUsed, lexDocs } = index;
   // best chunk per note, so one long note cannot fill the whole result list
   const best = new Map();
@@ -708,7 +713,7 @@ export function searchIn(index, q, qvec, k, layer = null) {
     }
   }
   // Layer quota — OFF by default, refuted at k=5 on both case sets (see fuseReserved).
-  const reserve = layer ? 0 : Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
+  const reserve = preFiltered ? 0 : Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
   const base = fused ?? sorted.slice(0, k);
   return reserve > 0
     ? fuseReserved(fused ? base.map((x) => x) : sorted, k, reserve, (x) => x.r.layer === 'Memory')

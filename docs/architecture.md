@@ -208,7 +208,7 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
               │  request: indexFor(slug) ─▶ mtimeCache keyed on the .db mtime
               │                             (stat fails -> NaN -> always reload)
               │           embed(QUERY_PREFIX + q)  [clamped to MAX_CHARS]
-              │           searchIn(index, q, qvec, k)
+              │           searchIn(index, q, qvec, k, preFiltered)
               │              ├─ vector arm: linear cosine scan (no ANN)
               │              ├─ lexical arm: BM25 k1=1.2 b=0.75
               │              └─ fuseRRF(k=60, w=2)

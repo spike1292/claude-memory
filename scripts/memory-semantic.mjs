@@ -27,21 +27,16 @@ import {
   QUERY_PREFIX,
   DOC_PREFIX,
   RRF_K,
-  DEFAULT_FUSE_W,
   DEFAULT_FUSE_LEX,
   stripFrontmatter,
   CARD,
   chunkNote,
   contentHash,
-  fuseReserved,
   cosine,
   assertVectorWidth,
   clusterNotes,
   centroid,
   samefolderPairs,
-  lexTokens,
-  bm25,
-  fuseRRF,
   socketIsLive,
   singleFlight,
   mtimeCache,
@@ -807,7 +802,7 @@ if (flag('--serve')) {
         const { q, k = 5, slug = SLUG } = msg;
         const index = indexFor(slug);
         const [qv] = await embed([QUERY_PREFIX + q]);
-        const top = searchIn(index, q, qv, k, layer);
+        const top = searchIn(index, q, qv, k, Boolean(layer));
         sock.end(
           JSON.stringify({
             slug,
@@ -899,7 +894,7 @@ if (flag('--serve')) {
   }
   const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
   queries.forEach((q, qi) => {
-    const top = searchIn(selfIndex, q, qvecs[qi], K, layer);
+    const top = searchIn(selfIndex, q, qvecs[qi], K, Boolean(layer));
     // --json: one machine-readable line per query, so the eval harness can score a whole case set in
     // a single process (the model loads once, not once per question).
     if (flag('--json')) {

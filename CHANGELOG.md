@@ -56,7 +56,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   opens the database, and `lib/` may not import `node:sqlite`. The test rigs a corpus where the
   vector arm, the keyword arm and the fusion of the two produce three *different* orderings, so a
   dead arm cannot pass: with one arm's ranking as the expected answer, the pooling-style failure
-  that once cost 25% vs 68% @5 would have been invisible. **Nothing a session sees changes** — this
+  of the kind this repo has already paid for once would have been invisible. **Nothing a session sees changes** — this
   buys the ranking its first regression net, not a better ranking.
 
 - **The card-chunk sentinel `'(card)'` is a constant, `CARD`, with a divergence test behind it.**
