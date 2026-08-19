@@ -16,7 +16,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { activeModel } from './lib/model-default.mjs';
 import * as paths from '../hooks/lib/paths.mjs';
-import { evalBody, pickSentence, metrics, RECALL_KS } from './lib/memory-eval.mjs';
+import { evalBody, pickSentence, metrics, lexicalRank, RECALL_KS } from './lib/memory-eval.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -118,7 +118,10 @@ if (flag('--generate')) {
     '\n⚠ These are EXTRACTED SENTENCES, not paraphrases — the note contains them verbatim,',
   );
   console.log(
-    '  so BM25 finds them trivially (measured: lexical recall@1 97.5% vs semantic 62.5%).',
+    '  so BM25 finds them trivially (2026-08-15 real-vault set: lexical recall@1 97.5% vs semantic 62.5%;',
+  );
+  console.log(
+    '  the lexical arm has since moved to the shared tokeniser, worth ~5 points on the bench set).',
   );
   console.log(
     '  Useful as a lexical-recall floor and an index-coverage check; NOT a paraphrase test.',
@@ -172,43 +175,13 @@ if (mode === 'semantic') {
 } else {
   // Lexical arm: a local BM25 stand-in, NOT ctx_search. It exists so a retrieval change can be
   // compared against a keyword baseline on the same cases inside one process. It does not reproduce
-  // context-mode's ranking, and a number from it is not a claim about ctx_search.
-  const notes = allNotes().map((n) => ({
-    ...n,
-    toks: evalBody(fs.readFileSync(n.file, 'utf8'))
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2),
-  }));
-  const df = new Map();
-  for (const n of notes) for (const t of new Set(n.toks)) df.set(t, (df.get(t) || 0) + 1);
-  const avgdl = notes.reduce((a, n) => a + n.toks.length, 0) / notes.length;
-  const N = notes.length;
-  ranked = cases.map((c) => {
-    const qt = c.q
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2);
-    const scored = notes.map((n) => {
-      const tf = new Map();
-      for (const t of n.toks) tf.set(t, (tf.get(t) || 0) + 1);
-      let s = 0;
-      for (const t of qt) {
-        const f = tf.get(t) || 0;
-        if (!f) continue;
-        const idf = Math.log(1 + (N - (df.get(t) || 0) + 0.5) / ((df.get(t) || 0) + 0.5));
-        s += (idf * (f * 2.2)) / (f + 1.2 * (1 - 0.75 + (0.75 * n.toks.length) / avgdl));
-      }
-      return { note: n.note, s };
-    });
-    return {
-      q: c.q,
-      results: scored
-        .sort((a, b) => b.s - a.s)
-        .slice(0, K)
-        .map((x) => ({ note: x.note })),
-    };
-  });
+  // context-mode's ranking, and a number from it is not a claim about ctx_search — nor about the
+  // recall hook, which scores a different document unit. See lexicalRank's comment.
+  ranked = lexicalRank(
+    allNotes().map((n) => ({ note: n.note, text: evalBody(fs.readFileSync(n.file, 'utf8')) })),
+    cases.map((c) => c.q),
+    K,
+  );
 }
 
 const perCase = cases.map((c, i) => {

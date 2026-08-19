@@ -64,6 +64,23 @@ what a user's setup depends on: config keys, command names, vault layout, and
   printing a success line — the `NaN-NaN-NaN` defect in another disguise, past both of its guards.
   Measured against a synthetic logs directory under a scratch `$HOME`, never the vault.
 
+- **CI fails an entry that has no `lib/` twin.** The entry/`lib` split is this repo's central
+  structural claim — `hooks/hooks.json` and `commands/*.md` name the *entry* paths, so those
+  filenames are a contract and the logic belongs in the twin where it can be imported and tested
+  without running the hook — and until now nothing checked it. `docs/architecture.md`'s invariants
+  table said `NOTHING` in the enforced-by column, which was honest and had been true since the
+  table was written. The new step loops every non-test `hooks/*.mjs` and `scripts/*.mjs` and fails
+  with an `::error file=…::` naming the fix, unless the entry is allowlisted with a stated reason;
+  the allowlist is one name, `scripts/env.mjs`, whose twin is `hooks/lib/env-shell.mjs` — neither
+  same-named nor in the sibling directory, because it renders what `paths.mjs` resolves and belongs
+  beside it. A hardcoded floor fails the step if the globs ever stop matching, since two steps in
+  that file had already shipped checking nothing.
+  **It checks that the twin exists, not that the entry delegates to it** — an empty twin passes,
+  and the three entries that keep their real logic beside a twin still pass. What it closes is the
+  shape the recall hook was in until this branch's predecessor: an entry with no twin at all, and
+  therefore exempt from *every* CI invariant, because all of them key off the `lib/` boundary. The
+  invariants row reads `CI (partial)` for that reason.
+
 - **CI fails when a command or hook names a path that is not a tracked file.** `node --test` is
   discovery-based and CI only ever sees committed content, so a commit that forgets a new file is
   fully green on a repo that is broken. This branch nearly shipped it: `git rm scripts/prune-logs.sh`
@@ -138,6 +155,57 @@ what a user's setup depends on: config keys, command names, vault layout, and
   only — no hook, script or command reads these files.
 
 ### Changed
+
+- **BREAKING — `ctx_search` source labels now carry the project key, the same identity as the vault
+  folder they index. Run `/memory:prune` once per project to clear the old rows.** `reindex()` in
+  `hooks/lib/distill-session.mjs` labelled sources `vault-<layer>-<basename(cwd)>` while indexing
+  `VAULT/<layer>/<project_key>` — two identity schemes on adjacent lines (`H7`, backlog item 14).
+  Both sides now derive from one `slug`, so a checkout at `~/work/mem` of the repo keyed
+  `github.com-spike1292-claude-memory` indexes under `vault-memory-github.com-spike1292-claude-memory`
+  instead of `vault-memory-mem`, and the SessionStart retrieval guidance in `vault-memory-sync.sh`
+  emits `vault-memory-$key` to match. Breaking by this file's own definition: it forces a re-index.
+  **Nothing purges the old rows automatically.** They are live, not theoretical — a project measured on
+  2026-08-19 had 262 of them written that same day — and `sources.label` is `<source>:<file_path>`,
+  so the old and new rows coexist and every note returns twice, halving the effective result window.
+  context-mode's only automatic eviction is a 14-day staleness sweep on `indexed_at`, and it cannot
+  help while a source is being rewritten. `/memory:prune` therefore now runs its purge-then-reindex
+  even when nothing was deleted, and re-indexes all four layers rather than two — a project-scoped
+  purge followed by two `ctx_index` calls used to leave `Logs` and `Graph` empty until the next
+  SessionEnd, which was a pre-existing defect this change made visible. That prune is the migration,
+  and it is a one-time cost: after it, the labels agree. Users without context-mode are unaffected — this is the optional second
+  index, never the plugin's own.
+  Two things the backlog item had wrong, corrected in code comments, `docs/architecture.md` H7 and
+  `commands/prune.md` rather than repeated: context-mode partitions its content DB by checkout path
+  (`--project cwd` → its own `<hash>.db`), so two checkouts of one repo never shared an index and
+  the old scheme could not overwrite itself — the cost was a label that named the checkout instead
+  of the notes, so nothing else in the system could reconstruct it. And the invariant that holds is
+  **label == indexed directory**, not label == `projectKey(cwd)`: `distill()` falls back to
+  `legacyKey` on a vault that SessionStart has not migrated yet, and both sides move together.
+
+- **`MIN_SCORE = 6.0` finally has a case set behind it — and the sweep says it is too low, so it is
+  recorded rather than changed.** It was the one retrieval number in the repo with only a prose
+  comment, against the convention that every figure names the case set it came from. Swept on the
+  synthetic bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 100/300/1000 notes) over the
+  80 on-topic prompts that script emits, with the 28 questions of the authored case set — which ask
+  about *this* repo — as an off-topic control against the bench corpus, where every fire is by
+  construction noise. **6.0 is not too high**: the weakest on-topic prompt scores 15.2-20.3, so no
+  gate up to 12 suppresses a single one of the 80. **It is too low**: it sits inside the off-topic
+  band and lets 17/19/28 of the 28 through, where ~14 halves that at zero on-topic cost at all three
+  corpus sizes. Left at 6.0 deliberately — moving it changes behaviour on every prompt, absolute
+  BM25 is corpus-scaled, and the off-topic control is contaminated (both corpora are software
+  prose). The numbers, the instrument and that reasoning are in the comment beside the constant.
+
+- **`--mode lexical` in the eval was not the instrument the plan assumed, and was itself a
+  fork.** The premise for the item above was that #29 had made recall's BM25 and the eval's one
+  implementation. It had not: the eval entry still inlined its own tokeniser (no stopword removal,
+  no query-term de-duplication) and its own BM25, an `H6` fork `docs/architecture.md` never listed
+  — and it scores *whole notes* where the hook scores only the `(card)` chunk. On the bench cases
+  the two disagree hard: gold at rank 1 for 50%/25% against `keywordArm`'s 100%/100%. The ranking
+  moved to `lexicalRank()` in `scripts/lib/memory-eval.mjs` over the shared `lexTokens`/`bm25`,
+  where it is testable; unlike the recall merge this one *did* move numbers (bench `cases-paraphrase`
+  recall@1 55.0% → 50.0%), so the figures it invalidated are now dated in `commands/eval.md` and in
+  the `--generate` output. `commands/eval.md` and the architecture guide now say plainly that a
+  number from this mode says nothing about `MIN_SCORE`. Five dead imports left the lib with it.
 
 - **`hooks/memory-recall.mjs` has a `lib/` twin, and the recall path has its first tests.** The
   UserPromptSubmit hook was 253 lines with no lib and no test — the last entry exempt from all four
@@ -253,6 +321,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
   that indexed nothing looked identical to one that had nothing to index.
 
 ### Fixed
+
+- **`reindex()` called a bare `which`, so every distillation aborted right after writing its notes
+  — on unreleased `main` only.** #20 deleted `distill-session.mjs`'s local copy of `which` without
+  adding an import; the ReferenceError killed the child after `writeNotes()` and before the ctx and
+  semantic refreshes, and nothing noticed because the hook detaches and its stderr goes to
+  `distill.log`. `hook-io.mjs` now exports the one copy. Listed for the record, not as a user-facing
+  fix: v0.3.1 still carries the local definition and no release followed it.
 
 - **The index no longer re-embeds a note whose content did not change.** `--index` keyed its whole
   incremental decision on exact mtime equality, and the vault sits on Synology Drive, which rewrites

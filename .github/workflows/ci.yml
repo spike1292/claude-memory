@@ -125,6 +125,42 @@ jobs:
           fi
           echo "node:sqlite confined to entry points"
 
+      # The entry/lib split is this repo's central structural claim — hooks/hooks.json and
+      # commands/*.md name the ENTRY paths, so those filenames are a contract and the logic belongs
+      # in the lib/ twin, where it can be imported and tested without running the hook. Nothing
+      # enforced it until 2026-08-19: docs/architecture.md's invariants table said "nothing" in the
+      # enforced-by column, and the allowlist only got small enough to be honest once the last
+      # untwinned entries were ported.
+      #
+      # EXISTENCE ONLY, and that limit is the point: memory-semantic.mjs, memory-eval.mjs and
+      # memory-audit-checks.mjs all have twins and still carry the real logic in the entry. A green
+      # check here is not evidence that entries are thin — do not later read it as one.
+      #
+      # *.test.mjs is not an entry: hooks/vault-memory-sync.test.mjs tests a SHELL hook, and a naive
+      # glob would demand a lib/ twin for a test file.
+      - name: Every entry has a lib/ twin
+        run: |
+          rc=0; n=0
+          for f in hooks/*.mjs scripts/*.mjs; do
+            case "$f" in *.test.mjs) continue ;; esac
+            n=$((n + 1))
+            d=${f%/*}; b=${f##*/}
+            if [ -f "$d/lib/$b" ]; then continue; fi
+            case "$f" in
+              # env.mjs renders what paths.mjs resolves, so its logic lives in
+              # hooks/lib/env-shell.mjs beside paths.mjs. A scripts/lib/env.mjs would file
+              # hook-resolution infra under scripts/, split from the module it exists to serve.
+              scripts/env.mjs) continue ;;
+            esac
+            echo "::error file=$f::no lib/ twin — move the logic into $d/lib/$b and leave argv/stdin/stdout in the entry, or allowlist $f in this step with a stated reason"
+            rc=1
+          done
+          # 16 entries on 2026-08-19. A glob that stops matching would pass this step by checking
+          # nothing, which two steps in this file have already shipped doing.
+          [ "$n" -ge 14 ] || { echo "::error::found only $n entries — the glob broke"; exit 1; }
+          [ "$rc" = 0 ] || exit 1
+          echo "$n entries, each with a lib/ twin or an allowlisted reason"
+
       # `node --test` is discovery-based and CI only ever sees TRACKED files, so a commit that
       # forgets a new file is fully green on a repo that is broken: on 2026-08-19 the prune-logs
       # port had `git rm scripts/prune-logs.sh` staged while the .mjs entry, its lib/ twin and both

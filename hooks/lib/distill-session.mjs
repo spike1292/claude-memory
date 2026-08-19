@@ -31,6 +31,7 @@ import {
   markerPath,
   nowSeconds,
   readMarker,
+  which,
   withinDebounce,
   writeMarker,
 } from './hook-io.mjs';
@@ -443,12 +444,27 @@ function reindex(cwd, slug) {
     refreshOwnIndex(cwd);
     return;
   }
-  for (const [layer, label] of [
-    ['Insights', `vault-insights-${(path.basename(cwd) || 'vault').toLowerCase()}`],
-    ['Memory', `vault-memory-${(path.basename(cwd) || 'vault').toLowerCase()}`],
-    ['Logs', `vault-logs-${(path.basename(cwd) || 'vault').toLowerCase()}`],
-    ['Graph', `vault-graph-${(path.basename(cwd) || 'vault').toLowerCase()}`],
-  ]) {
+  // The source label carries the SAME identity as the directory indexed on the next line: both are
+  // `slug`. Until 2026-08-19 the label used `path.basename(cwd)` while the directory used `slug` —
+  // two identity schemes on adjacent lines, so a checkout in `~/work/mem` of the repo keyed
+  // `github.com-spike1292-claude-memory` indexed that project's notes under the source
+  // `vault-memory-mem`.
+  //
+  // What that actually cost is narrower than it looks, and the narrower version is the reason:
+  // context-mode partitions its content DB by checkout path (`--project cwd` → its own
+  // `<hash>.db`), so two checkouts of one repo never shared an index and the old scheme could not
+  // write duplicate rows over the same notes on its own. The harm was that the label did not name
+  // the thing it indexed. Retrieval guidance has to tell Claude which source to scope to; with the
+  // label derived from the checkout directory, that string differed per machine and per clone
+  // while the notes it pointed at were one shared vault folder, and a human re-indexing by hand
+  // (as /memory:prune does) had to reconstruct a name nothing else in the system uses. Now the
+  // label is derivable from the note path, because it IS the note path's key.
+  //
+  // The property to preserve is "label == indexed directory", NOT "label == projectKey(cwd)":
+  // `slug` falls back to `legacyKey` above when the vault has not been migrated yet, and legacyKey
+  // is a raw cwd slug that can carry uppercase. Keep deriving both from the same `slug`.
+  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph']) {
+    const label = `vault-${layer.toLowerCase()}-${slug}`;
     const d = path.join(VAULT, layer, slug);
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
     try {

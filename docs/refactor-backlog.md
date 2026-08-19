@@ -10,6 +10,16 @@ Written 2026-08-18 against `e16c41d`. **Delete items as they land** rather than 
 the changelog is the record of what shipped. If an item is declined, keep it with a one-line reason
 so it is not rediscovered as a good idea later (see item 15).
 
+> **This backlog is complete as of 2026-08-19.** All fourteen numbered items of work have landed —
+> item 1 in #20 before the plan was written, items 2-14 across the six runs of
+> [the plan](plans/2026-08-18-refactor-backlog.md) (#24, #27, #28, #29, #30, and this PR for 11, 12
+> and 14). Item 15 is declined and is kept on purpose.
+> **Nothing below is open.** The file is now a record of what was decided and what each closure
+> actually cost — several of those costs were not what the item predicted, and those corrections
+> are the part worth reading. Do not add new items here: `docs/architecture.md`'s Part 2 is where
+> gaps are recorded, and a new list should be written against a fresh audit of it rather than
+> appended to a finished one.
+
 ---
 
 ## Wave 1 — make silent failures loud
@@ -64,7 +74,7 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 > `console.log` + `process.exit(1)` on an unknown model — a line on the hook's **stdout**, which
 > Claude Code injects as context, on every prompt of a disarmed install. Anything reachable from a
 > hook's `lib/` twin is uncatchable by construction; that is the rule, not the milliseconds.
-> The `MIN_SCORE` gate still has no case set behind it — that is item 12, unchanged.
+> The `MIN_SCORE` gate got its case set later the same day; see the item 12 note below.
 
 > **Item 8 (move `searchIn()` into the lib) landed on 2026-08-19**, with item 6, and is deleted from
 > this list, per the rule at the top. It narrows `G1`: the body moved unchanged into
@@ -117,32 +127,34 @@ empty, and what is left of it is the follow-up named at the end of item 10 below
 
 ## Wave 5 — make the paper invariants real
 
-### 11. CI: every entry has a `lib/` twin, or is allowlisted
+> **Item 11 (CI: every entry has a `lib/` twin) landed on 2026-08-19** and is deleted from this
+> list, per the rule at the top. The step is *Every entry has a lib/ twin* in `ci.yml`'s `test` job;
+> the allowlist is the one name the re-count below predicted, `scripts/env.mjs`, carrying its reason
+> as a shell comment on the `case` arm so an added arm without one shows up in the diff. It fires on
+> a planted untwinned entry in both directories, and a hardcoded floor fails the step if the globs
+> ever stop matching — two steps in that file had already shipped checking nothing.
+>
+> **The invariants row it flips reads `CI (partial)`, not `CI`, and the difference is the item's
+> honest limit.** The check can see only that `<dir>/lib/<name>.mjs` *exists*; an empty, unimported
+> twin passes it, and the three entries that keep their real logic beside a twin
+> (`memory-semantic.mjs`, `memory-audit-checks.mjs`, `memory-eval.mjs`) pass it too. What it does
+> close is the shape `hooks/memory-recall.mjs` was in until item 7: an entry with **no twin at
+> all**, and therefore exempt from every other CI invariant, since all of them key off the `lib/`
+> boundary. `G1` in [architecture.md](architecture.md) says the same, because a check read as
+> stronger than it is would be the exact mistake that table exists to prevent.
 
-- **Goal:** the entry/`lib` rule is enforced by nothing today, and all four existing CI checks are
-  *exempt by construction* for logic left in an entry file.
-- **Files:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-- **Diff plan:** loop `hooks/*.mjs` and `scripts/*.mjs`; fail when no `lib/<name>.mjs` exists and the
-  file is not on an explicit allowlist carrying a stated reason. **Do this after item 7**, so the
-  allowlist starts empty or near-empty. Match the existing steps' style: a comment saying why, and an
-  `::error::` naming the fix.
-- **Risk: low.** Flip that row in [architecture.md](architecture.md)'s invariants table from
-  `NOTHING` to `CI` in the same PR.
-- **~30 min.**
-
-### 12. Give `MIN_SCORE = 6.0` a case set
-
-- **Goal:** the one number in the repo that breaks the "no retrieval number without a case set"
-  convention. Item 7 landed on 2026-08-19, so it is now testable and now shares the lib's BM25.
-- **Files:** [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) /
-  [`scripts/lib/memory-eval.mjs`](../scripts/lib/memory-eval.mjs), then `MIN_SCORE` in
-  [`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs).
-- **Diff plan:** `--mode lexical` used to measure the *lib's* BM25 and not recall's. Since item 7
-  they are one implementation, so it is now the right instrument — run it against the versioned
-  authored case set and record the sweep in a comment beside the constant, the way `MIN_COS` already
-  does.
-- **Risk: low** technically; the cost is the eval run, not the diff.
-- **~1 h.**
+> **Item 12 (give `MIN_SCORE = 6.0` a case set) landed on 2026-08-19** and is deleted from this
+> list, per the rule at the top. **Its diff plan was wrong** and is worth recording: it assumed that
+> because item 7 made recall share the lib's BM25, `--mode lexical` was now the right instrument.
+> It is not — that mode scores *whole notes*, while the hook scores only the `(card)` chunk, and on
+> the bench vault's own cases the two put gold at rank 1 for 50%/25% against `keywordArm`'s
+> 100%/100%. The sweep therefore ran `keywordArm`'s own ranking over cards and was checked against
+> `keywordArm` itself on 120/120 cases. `--mode lexical` was still carrying its own tokeniser and
+> its own BM25 — an `H6` fork nobody had listed — and now calls `lexicalRank()` over the shared
+> pair. **`MIN_SCORE` was measured and deliberately left at 6.0**: it suppresses none of the 80
+> on-topic prompts at any gate up to 12, but it also sits inside the off-topic band, and ~14 would
+> halve the false fires at no on-topic cost. Moving it is a behaviour change on every prompt; the
+> evidence is in the comment, the decision is not this item's to take.
 
 ---
 
@@ -152,17 +164,13 @@ empty, and what is left of it is the follow-up named at the end of item 10 below
 > this list, per the rule at the top. The frozen figures were replaced by the command that
 > measures them.
 
-### 14. Decide `H7`, then act once
-
-- **Goal:** `reindex()` in [`hooks/lib/distill-session.mjs`](../hooks/lib/distill-session.mjs) labels
-  `ctx_search` sources by `basename(cwd)` while indexing directories by `project_key`. Two identity
-  schemes, adjacent lines.
-- **Diff plan:** **this needs a decision, not a patch.** The `vault-memory-<repo>` basename form is
-  what the SessionStart retrieval guidance tells Claude to use, so changing it orphans existing ctx
-  indexes and contradicts documented advice. Either change both sides and reindex, or add one comment
-  stating the split is deliberate. Do not leave it undocumented.
-- **Risk: medium** if changed (orphans indexes), **none** if documented.
-- **~15 min to document, ~1 h to change.**
+> **Item 14 (`H7`, the two adjacent identity schemes) landed on this branch** and is deleted from
+> this list, per the rule at the top. It was decided the change way: both sides now derive from one
+> `slug`, and the SessionStart retrieval guidance in `vault-memory-sync.sh` emits `vault-memory-$key`
+> to match. The decision it was waiting on turned on a fact the item had wrong — orphaning "existing
+> ctx indexes" sounded like one shared index, and context-mode partitions its content DB per
+> checkout — so what is orphaned is old-label rows inside each store, and `/memory:prune` carries
+> the one-time purge that clears them.
 
 ### 15. Declined: relocate `paths.mjs`
 
@@ -185,19 +193,20 @@ a relocation would have been cheapest, and it still did not pay for itself.
 | ~~3~~ | ~~6, 8~~ | — | landed 2026-08-19 as #28: two extractions with tests; `R4` narrowed, not closed — item 7 closed it |
 | ~~4~~ | ~~7~~ | — | landed 2026-08-19: the structural fix; `G1`'s last hole and `R4` both closed, three of `H6`'s four forks gone. Items 11 and 12 are now unblocked |
 | ~~5~~ | ~~9, 10~~ | — | landed 2026-08-19: the log pruner is Node and tested; `vault-memory-sync.sh` has a characterisation baseline and keeps its fence. Both scripts that can lose data are now covered |
-| 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
-| 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |
-| 8 | *new* | ~1 h | fix the two silent-note-loss paths item 10 characterised — now unblocked, and the only known data-loss bugs left |
+| ~~6~~ | ~~11, 12, 14~~ | — | landed 2026-08-19: one paper invariant becomes partly enforced, `MIN_SCORE` gets its case set, `H7` closes. 13 had already landed in #24, so runs 6 and 7 merged into one |
+| ~~7~~ | ~~13~~ | — | landed in #24 |
+| 8 | *new* | ~1 h | **the only work this file leaves behind**: fix the two silent-note-loss paths item 10 characterised. Never numbered here — write it against `H4`, not against this list |
 
-Item 15 is non-work. **Of what was numbered here, nothing left changes behaviour** — it is all
-observation, extraction, or tests. (Items 7 and 9 were the two that did, and both landed.) The
-unnumbered row 8 is the exception and is deliberately behaviour-changing: it is the fix for the two
-data-loss paths item 10 pinned down.
+Item 15 is non-work, and every numbered row above is struck. The unnumbered row 8 is what survives
+the backlog: the two silent-note-loss paths in `hooks/vault-memory-sync.sh` that item 10
+characterised but deliberately did not fix. It is the only known irreversible-loss risk left, it is
+now unblocked by the test that had to come first, and it is deliberately behaviour-changing —
+which is why it was never folded into a run of extractions and tests.
 
-Item **11** (CI enforcing the entry/`lib` rule) got cheaper twice: #20 added three compliant
-entries, and item 7 took the last hook entry that had no twin at all. The mechanical form of the
-check — does `<dir>/lib/<name>.mjs` exist for every non-test `hooks/*.mjs` and `scripts/*.mjs` —
-now fails on exactly **one** file, `scripts/env.mjs`, whose twin is `hooks/lib/env-shell.mjs`:
-neither same-named nor in the sibling directory (see `B1`). So the allowlist is one name with one
-stated reason, not the four it would have needed before. Re-counted 2026-08-19 by running that
-loop; the older "four names" figure predates items 7 and 8.
+**Two things this sequencing got wrong, kept because they are the reusable lesson.** The estimates
+held for the extractions and failed for the measurements: item 12's "~1 h" bought a sweep that
+first had to establish its own instrument, because the plan's premise — that item 7 made
+`--mode lexical` the right one — was false. And an item's *stated* reason can be false while the
+item is still right: item 14 was justified by two checkouts sharing a ctx index, which context-mode
+never allowed, and the real payoff was that the source label became derivable from the note path.
+Both corrections are recorded where the code is, not only here.

@@ -356,3 +356,78 @@ test('Stop distils a LONG session, then debounces it', () => {
     fs.rmSync(first.marker, { force: true });
   }
 });
+
+// The ctx source label and the indexed directory must carry the SAME identity (item 14, unified
+// 2026-08-19). Before that the label was `vault-<layer>-${basename(cwd)}` while the directory was
+// `VAULT/<layer>/<project_key>` — so this repo, checked out as `mem-checkout`, indexed
+// `Memory/github.com-spike1292-claude-memory` under the source `vault-memory-mem-checkout`: a name
+// that named the checkout rather than the notes, and that no other part of the system could
+// reconstruct. (It did NOT put two labels in one index — context-mode partitions its content DB by
+// checkout path — see the comment on `reindex()`.) Driven end to end through the entry with a fake
+// `context-mode` on PATH, because that is the only place the two halves are visible together;
+// `reindex()` is deliberately not exported.
+//
+// This asserts the post-migration case, where `slug` is `projectKey(cwd)`. The invariant is the
+// weaker "label == indexed directory": on the pre-migration fallback path `slug` is `legacyKey`
+// and both sides move together. That path is not covered here.
+test('the ctx source label carries the same key as the directory it indexes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-'));
+  const repo = path.join(root, 'mem-checkout');
+  const vault = path.join(root, 'vault');
+  const bin = path.join(root, 'bin');
+  const log = path.join(root, 'ctx.log');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph'])
+    fs.mkdirSync(path.join(vault, layer, slug), { recursive: true });
+  fs.mkdirSync(path.join(vault, 'permanent'), { recursive: true });
+
+  // Records argv instead of indexing. `context-mode` is optional and never installed by CI.
+  fs.writeFileSync(
+    path.join(bin, 'context-mode'),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\n`,
+  );
+  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  execFileSync(process.execPath, [entry, transcript, repo], {
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+  const sources = calls.map((l) => l.split(' --source ')[1]);
+  assert.deepStrictEqual(sources.slice(0, 4), [
+    `vault-insights-${slug}`,
+    `vault-memory-${slug}`,
+    `vault-logs-${slug}`,
+    `vault-graph-${slug}`,
+  ]);
+  assert.strictEqual(sources[4], 'vault-permanent', 'permanent/ keeps its cross-project label');
+  // The directory on the same command line carries the same identity — that is the whole point.
+  for (const [i, layer] of ['Insights', 'Memory', 'Logs', 'Graph'].entries())
+    assert.ok(
+      calls[i].includes(path.join(vault, layer, slug)),
+      `${layer}: label and directory must agree`,
+    );
+  // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
+  assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
+  fs.rmSync(root, { recursive: true, force: true });
+});
