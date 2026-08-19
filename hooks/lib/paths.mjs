@@ -63,6 +63,14 @@ export function recallEnabled() {
   return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;
 }
 
+// env -> config.json -> default, the order every setting resolves in. Anything unparseable or
+// non-positive falls through to the default rather than disabling a timer: a typo'd env var must
+// not leave a 1.3GB model resident forever.
+const positiveMs = (envName, configKey, fallback) => {
+  const n = Number(process.env[envName] ?? config()[configKey]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
 /**
  * How long a resident --serve sits idle before dropping the MODEL (but staying alive).
  *
@@ -73,9 +81,7 @@ export function recallEnabled() {
  * a cold start, and questions the keyword arm can answer cost nothing at all.
  */
 export function modelIdleMs() {
-  const raw = process.env.MEMORY_MODEL_IDLE_MS ?? config().modelIdleMs;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 5 * 60 * 1000;
+  return positiveMs('MEMORY_MODEL_IDLE_MS', 'modelIdleMs', 5 * 60 * 1000);
 }
 
 /**
@@ -91,9 +97,7 @@ export function modelIdleMs() {
  * pointed a relocating hook at an empty vault.
  */
 export function serveIdleMs() {
-  const raw = process.env.MEMORY_SERVE_IDLE_MS ?? config().serveIdleMs;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 30 * 60 * 1000;
+  return positiveMs('MEMORY_SERVE_IDLE_MS', 'serveIdleMs', 30 * 60 * 1000);
 }
 
 /**

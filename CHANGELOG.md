@@ -156,6 +156,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **The env → `config.json` → default parse for a numeric setting is written once**, as
+  `positiveMs()` in `hooks/lib/paths.mjs`, where `modelIdleMs()` and `serveIdleMs()` each carried
+  their own copy. Same resolution order, same fall-through on an unparseable value.
+
+- **`hooks/memory-recall.mjs` spawns the search server through `detach()`** instead of its own
+  `spawn(..., {detached, stdio:'ignore'}).unref()`, which was a second copy of the same contract.
+  `hooks/lib/hook-io.mjs` qualifies for a static import there because its module scope is imports
+  and constants — the rule that governs that file's imports is unchanged.
+
 - **BREAKING — `ctx_search` source labels now carry the project key, the same identity as the vault
   folder they index. Run `/memory:prune` once per project to clear the old rows.** `reindex()` in
   `hooks/lib/distill-session.mjs` labelled sources `vault-<layer>-<basename(cwd)>` while indexing
@@ -308,15 +317,45 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Removed
 
+- **`--layer`, and the `preFiltered` plumbing it had become.** Measured-refuted on 2026-08-15 (EN
+  recall@5 67.9% → 53.6%): it filters the corpus instead of re-ranking it, so gold answers that live
+  in Insights are deleted from the window rather than out-ranked. It then took two documents and a
+  test assertion to tell people not to pass it — including a rule in the retrieval guidance injected
+  into every session. `memory-semantic.mjs --query`, `memory-eval.mjs --run` and `searchIn()` no
+  longer accept it; the refutation itself is kept in `commands/eval.md`, which is where someone
+  proposing layer scoping again will meet it. Passing `--layer` is now an ignored argument rather
+  than an error. `MEMORY_FUSE_RESERVE`, the layer *quota* — also refuted, also off by default — is
+  unchanged and now has the `searchIn` test the flag used to share.
+
+- **`--size` and `--clusters --members`.** No command ever passed either. `--members` capped the
+  printed membership at 6 with a `--members 99` hint, in a command whose own step 2 is "read every
+  member note in full" — so the cap is gone rather than the flag alone, and `--clusters` now prints
+  every member. Minimum cluster size is a constant 4.
+
+- **`docs/refactor-backlog.md`.** All fourteen items had landed or been declined and the file said
+  so in its own header; it outlived its execution, which by CLAUDE.md's rule makes it a decision
+  record or nothing. The changelog and #20, #24, #27–#31 are what shipped, the lessons were already
+  in [the orchestration record](docs/decisions/2026-08-19-orchestrated-change.md), the open work it
+  pointed at is `H4` in `docs/architecture.md` — and the one *declined* item, relocating
+  `paths.mjs`, moved there too, since a rejected idea that leaves no trace gets rediscovered as a
+  good one.
+
+- **`docs/superpowers/specs/2026-08-15-claude-memory-plugin-design.md`.** The original extraction
+  spec, superseded by `docs/architecture.md`; its only inbound link was the index row listing it.
+
+- **`extractBlockScalar`'s `key` parameter and the `reviewPrompt` wrapper around it**, and the
+  `CARD`/`STOP`/`lexTokens`/`bm25` re-export shim in `scripts/lib/memory-semantic.mjs`. One key was
+  ever passed, and one implementation does not need two import paths — consumers take the lexical
+  vocabulary from `scripts/lib/lexical.mjs` directly, as `hooks/lib/memory-recall.mjs` already did.
+
 - **`docs/plans/2026-08-18-refactor-backlog.md`.** Its sixth and last run merged, so it went, under
   the rule it was added with: a plan whose steps have all shipped is deleted and the changelog
   becomes the record. The half of it that was not specific to that backlog — the
   `Implement → Verify → Document → Review → Land` shape, and the nine lessons the runs paid for —
   was rewritten as [a decision record](docs/decisions/2026-08-19-orchestrated-change.md) first,
   which is what CLAUDE.md means when it says a plan outliving its execution becomes one. It batched the backlog's thirteen open items into six PRs — #24, #27, #28,
-  #29, #30, #31 — and `docs/refactor-backlog.md` keeps the more useful half, which is what each item
-  actually cost versus what it predicted. `docs/plans/` and its convention in CLAUDE.md stay; there
-  is simply no plan open.
+  #29, #30, #31. (The backlog it worked from went the same way later in the day; see above.)
+  `docs/plans/` and its convention in CLAUDE.md stay; there is simply no plan open.
 
 - `scripts/prune-logs.sh` — replaced by `scripts/prune-logs.mjs`, which is invoked through `node`
   rather than executed as a shell script. `/memory:prune` is unchanged for anyone who runs the

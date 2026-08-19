@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractBlockScalar, reviewPrompt } from './review-prompt.mjs';
+import { reviewPrompt } from './review-prompt.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflow = path.join(root, '.github', 'workflows', 'claude-review.yml');
@@ -12,7 +12,7 @@ test('extracts a block scalar and dedents it', () => {
   const yaml = ['jobs:', '  step:', '    prompt: |', '      line one', '      line two', ''].join(
     '\n',
   );
-  assert.equal(extractBlockScalar(yaml, 'prompt'), 'line one\nline two');
+  assert.equal(reviewPrompt(yaml), 'line one\nline two');
 });
 
 test('a following key at the same indent ends the block', () => {
@@ -23,26 +23,22 @@ test('a following key at the same indent ends the block', () => {
     '    claude_args: |',
     '      --allowedTools "x"',
   ].join('\n');
-  assert.equal(extractBlockScalar(yaml, 'prompt'), 'mine');
+  assert.equal(reviewPrompt(yaml), 'mine');
 });
 
 test('blank lines inside the block are content, not a terminator', () => {
   const yaml = ['    prompt: |', '      one', '', '      two', '    next: 1'].join('\n');
-  assert.equal(extractBlockScalar(yaml, 'prompt'), 'one\n\ntwo');
+  assert.equal(reviewPrompt(yaml), 'one\n\ntwo');
 });
 
 test('relative indentation inside the block survives', () => {
   const yaml = ['    prompt: |', '      top', '        nested', '    next: 1'].join('\n');
-  assert.equal(extractBlockScalar(yaml, 'prompt'), 'top\n  nested');
+  assert.equal(reviewPrompt(yaml), 'top\n  nested');
 });
 
 test('a missing key returns null rather than throwing', () => {
-  assert.equal(extractBlockScalar('jobs:\n  step:\n    run: echo hi\n', 'prompt'), null);
-  assert.equal(
-    extractBlockScalar('    prompt: |\n', 'prompt'),
-    null,
-    'an empty block is also null',
-  );
+  assert.equal(reviewPrompt('jobs:\n  step:\n    run: echo hi\n'), null);
+  assert.equal(reviewPrompt('    prompt: |\n'), null, 'an empty block is also null');
 });
 
 // This is the check that matters, and the reason there is no separate CI step: restructure the

@@ -12,7 +12,7 @@
 //
 // Usage:
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
-//   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--layer Memory] [--json]
+//   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
 //   node --test scripts/lib/memory-eval.test.mjs
 //
 // Cases live in ~/.claude/data/eval-cases-<slug>-<style>.jsonl and are GITIGNORED: they contain

@@ -35,8 +35,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { detach } from './lib/hook-io.mjs';
 import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
 import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memory-recall.mjs';
 
@@ -121,18 +121,11 @@ try {
     });
 
   const semantic = fs.existsSync(sockPath) ? await askServer(prompt) : null;
-  if (!semantic) {
-    // Detached, stdio ignored, unref'd: this process must be free to exit immediately.
-    try {
-      spawn(process.execPath, [path.join(scriptsDir, 'memory-semantic.mjs'), '--serve'], {
-        cwd,
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch {
-      /* best effort; keyword search still answers this prompt */
-    }
-  }
+  // detach() is the shared contract — detached, stdio ignored, unref'd — and it swallows its own
+  // failures, because keyword search still answers this prompt. It is safe above the try only
+  // because hook-io.mjs imports nothing that can throw or print at module scope; see the header.
+  if (!semantic)
+    detach(process.execPath, [path.join(scriptsDir, 'memory-semantic.mjs'), '--serve'], { cwd });
 
   const fromServer = semanticArm(semantic?.results);
   if (fromServer) {

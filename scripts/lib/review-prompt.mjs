@@ -15,7 +15,8 @@
  * exits SUCCESS, so the check goes green having read nothing.
  *
  * A hand-rolled block-scalar reader rather than a YAML dependency: one `prompt: |` key, and every
- * dependency ships into a user's version-pinned plugin cache.
+ * dependency ships into a user's version-pinned plugin cache. One key, so it is not parameterised
+ * by one either — a `key` argument with a single argument ever passed was deleted 2026-08-19.
  */
 
 /** Indentation width of a line, or null for a blank one (blanks never close a block scalar). */
@@ -25,14 +26,14 @@ function indentOf(line) {
 }
 
 /**
- * Pull the value of a `<key>: |` block scalar out of YAML text.
+ * The review instructions: the dedented body of the workflow's `prompt: |` block scalar.
  *
- * Returns the dedented body, or null when the key is absent — null rather than a throw, because
- * every caller wants to say something better than a stack trace about a workflow it could not read.
+ * Returns null when the key is absent — null rather than a throw, because the caller wants to say
+ * something better than a stack trace about a workflow it could not read.
  */
-export function extractBlockScalar(yaml, key) {
+export function reviewPrompt(yaml) {
   const lines = yaml.split('\n');
-  const start = lines.findIndex((l) => new RegExp(`^\\s*${key}:\\s*\\|`).test(l));
+  const start = lines.findIndex((l) => /^\s*prompt:\s*\|/.test(l));
   if (start === -1) return null;
 
   const keyIndent = indentOf(lines[start]);
@@ -51,9 +52,4 @@ export function extractBlockScalar(yaml, key) {
 
   const margin = Math.min(...body.filter((l) => l.trim() !== '').map(indentOf));
   return body.map((l) => l.slice(margin)).join('\n');
-}
-
-/** The review instructions, given the text of `claude-review.yml`. */
-export function reviewPrompt(workflowYaml) {
-  return extractBlockScalar(workflowYaml, 'prompt');
 }

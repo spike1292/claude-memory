@@ -7,7 +7,7 @@
 //
 // Usage:
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
-//   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--layer Memory] [--json]
+//   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
 //
 // Cases live in $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they contain vault content.
 // Regenerate only with --force; a changed case set invalidates every past number.
@@ -158,7 +158,6 @@ const KS = RECALL_KS.filter((k) => k <= K);
 let ranked; // [{q, results:[{note}]}]
 if (mode === 'semantic') {
   const args = ['--json', '-k', String(K), repo];
-  if (val('--layer')) args.push('--layer', val('--layer'));
   // Forward the vault override, or the child searches the REAL vault while this process scores
   // against the benchmark one — two different note sets, one silent mismatch.
   if (val('--vault')) args.push('--vault', val('--vault'));
@@ -208,7 +207,7 @@ if (flag('--json')) {
   process.exit(0);
 }
 console.log(
-  `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}${val('--layer') ? ` · layer ${val('--layer')}` : ''}`,
+  `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
 );
 for (const k of KS)
   console.log(

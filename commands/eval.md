@@ -56,9 +56,10 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    - `node "$MEM/scripts/memory-semantic.mjs" --query "..." -k 5` — vectors, wins on described-not-named questions. It is the only channel that bridges "firewall"→`WAF` or "short outage"→`cutover`.
    - the `MEMORY.md` MOC hooks, which are auto-loaded and therefore have 100% L1 coverage by construction — a note reachable from its hook is not truly lost, whatever search returns.
 
-   ⚠ **`--layer Memory` is REFUTED for the semantic tool** (measured 2026-08-15: EN @5 67.9% →
-   53.6%). It filters the note set instead of re-ranking it, so gold answers living in Insights are
-   deleted from the window rather than out-ranked. The 2026-08-14 advice to scope by layer still
+   ⚠ **Scoping the semantic tool by layer is REFUTED** (measured 2026-08-15: EN @5 67.9% →
+   53.6%). Filtering the note set instead of re-ranking it deletes gold answers living in Insights
+   from the window rather than out-ranking them; the `--layer` flag that did it was removed on
+   2026-08-19. The 2026-08-14 advice to scope by layer still
    holds for `ctx_search`, which is a separate index with a separate failure. A layer *quota*
    (`MEMORY_FUSE_RESERVE`) was also tried and refuted: at k=5 it changes nothing, because the top-5
    already contains a Memory note — just not the right one. The misses are the gold note losing to a

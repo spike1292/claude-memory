@@ -16,10 +16,8 @@ import os from 'node:os';
 import path from 'node:path';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
-  CARD,
   MAX_CHARS,
   MODELS,
-  bm25,
   centroid,
   chunkNote,
   clusterNotes,
@@ -34,11 +32,11 @@ import {
   mtimeCache,
   singleFlight,
   fuseReserved,
-  lexTokens,
   samefolderPairs,
   socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
+import { CARD, bm25, lexTokens } from './lexical.mjs';
 
 test('scoring, chunking and fusion', () => {
   const fm = stripFrontmatter('---\nname: x\ndescription: "A thing"\n---\nbody here\n');
@@ -752,9 +750,9 @@ test('searchIn: RRF fuses both arms, and neither arm alone gives the answer', ()
   }
 });
 
-// The `layer` argument only gates the layer quota: `--layer` already filtered the corpus, so
-// reserving slots for Memory inside an all-Memory window would be a no-op that still reorders.
-test('searchIn: a layer-filtered query disables the reserve, an unfiltered one applies it', () => {
+// MEMORY_FUSE_RESERVE is the only thing that promotes a Memory row into the window. It is 0 by
+// default and refuted at k=5; this pins what it does when someone turns it on.
+test('searchIn: the reserve promotes an L1 note into the window', () => {
   const vec = (x) => {
     const f = new Float32Array(DIM);
     f[0] = x;
@@ -774,14 +772,15 @@ test('searchIn: a layer-filtered query disables the reserve, an unfiltered one a
   process.env.MEMORY_FUSE_RESERVE = '1';
   try {
     assert.deepEqual(
-      searchIn(index, 'zzz', qvec, 2, null).map((x) => x.r.note),
+      searchIn(index, 'zzz', qvec, 2).map((x) => x.r.note),
       ['i1', 'm1'],
-      'unfiltered: the weakest Insights note gives up its slot to L1',
+      'the weakest Insights note gives up its slot to L1',
     );
+    process.env.MEMORY_FUSE_RESERVE = '0';
     assert.deepEqual(
-      searchIn(index, 'zzz', qvec, 2, 'Memory').map((x) => x.r.note),
+      searchIn(index, 'zzz', qvec, 2).map((x) => x.r.note),
       ['i1', 'i2'],
-      'layer-filtered: reserve is off, so the window is pure cosine order',
+      'reserve off: the window is pure cosine order',
     );
   } finally {
     if (w === undefined) delete process.env.MEMORY_FUSE_W;
