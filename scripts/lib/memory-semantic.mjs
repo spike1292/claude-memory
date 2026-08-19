@@ -32,7 +32,7 @@
 //
 // Usage:
 //   node ~/.claude/scripts/memory-semantic.mjs --dupes                # same-folder near-duplicates
-//   node ~/.claude/scripts/memory-semantic.mjs --clusters [--size 4]  # topics with no permanent/ note
+//   node ~/.claude/scripts/memory-semantic.mjs --clusters               # topics with no permanent/ note
 //   node ~/.claude/scripts/memory-semantic.mjs --index [repo-dir]     # build/refresh (idempotent)
 //   node ~/.claude/scripts/memory-semantic.mjs --query "how long was the site down" [-k 5]
 //   node --test scripts/lib/memory-semantic.test.mjs
@@ -44,11 +44,11 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { activeModel } from './model-default.mjs';
-// The lexical vocabulary lives in its own import-free module because the recall hook needs it
-// ABOVE its fail-open try, and this module's scope exits the process on an unknown model. Re-
-// exported so there is still one implementation and every existing consumer imports it from here.
+// The lexical vocabulary lives in its own import-free module because the recall hook needs it ABOVE
+// its fail-open try, and this module's scope exits the process on an unknown model. Consumers
+// import it from there directly — the re-export that used to sit here was deleted 2026-08-19: a
+// second import path for one implementation is a second thing to keep in step.
 import { CARD, STOP, lexTokens, bm25 } from './lexical.mjs';
-export { CARD, STOP, lexTokens, bm25 };
 import * as paths from '../../hooks/lib/paths.mjs';
 
 // Which sibling servers should this one evict?
@@ -431,7 +431,7 @@ export function chunkNote(name, raw) {
 }
 
 // Corpus competition, fixed the way the eval skill always described it: a SEPARATE result window,
-// not a replaced one. `--layer Memory` filters the corpus, so L1 notes stop being buried only
+// not a replaced one. The deleted `--layer Memory` filtered the corpus, so L1 notes stopped being buried only
 // because every Insights note is deleted from the window — measured 2026-08-15, that costs EN @5
 // 67.9% -> 53.6%, because plenty of gold answers ARE Insights notes. Reserving slots instead lets
 // the ~47 L1 notes surface without evicting the ~990 Insights ones.
@@ -557,9 +557,7 @@ export function samefolderPairs(items, minScore) {
 // silently per-model — today already produced four of those (pooling, dedup threshold, chunk size,
 // batch). RRF consumes RANKS, so it cannot be broken by a model with a compressed similarity band,
 // which is exactly how e5-multi failed. One knob: how much a vector rank outweighs a keyword rank.
-// STOP and lexTokens are defined in ./lexical.mjs and re-exported at the top of this file.
-
-// bm25 is defined in ./lexical.mjs and re-exported at the top of this file.
+// STOP, lexTokens and bm25 are defined in ./lexical.mjs; import them from there.
 
 // `w` weights the vector rank against the keyword rank. w=0 is keyword-only, a large w is
 // vector-only. RRF_K flattens the top of the curve so rank 1 vs 2 is not a landslide.
@@ -635,16 +633,13 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
 // re-implemented ranking would eventually answer differently from the eval harness, and the whole
 // point of the harness is that it measures what a session actually gets.
 //
-// `preFiltered` is the one thing that could not travel with the body: it was `val('--layer')`, a
-// module-level binding in the entry. It is NOT a layer to filter by — nothing here filters — it only
-// says the caller already narrowed the corpus, so the reserve that guarantees Memory rows a share of
-// the results would be reserving inside a single layer and is switched off. Named for what it does
-// after review on 2026-08-19 flagged that `searchIn(idx, q, v, 5, 'Memory')` reads like a filter and
-// silently is not one. Both call sites pass the same `--layer` binding, now as a boolean.
+// It once took a `preFiltered` flag, set when `--layer` had narrowed the corpus so the Memory
+// reserve would not be reserving inside a single layer. `--layer` was deleted on 2026-08-19 as
+// measured-refuted, and with it the only caller that ever passed true.
 //
 // Everything else is byte-for-byte what ran in the entry (moved 2026-08-19); the arms and their
 // weights are measured numbers and this move is not the place to touch them.
-export function searchIn(index, q, qvec, k, preFiltered = false) {
+export function searchIn(index, q, qvec, k) {
   const { rowsUsed, lexDocs } = index;
   // best chunk per note, so one long note cannot fill the whole result list
   const best = new Map();
@@ -682,7 +677,7 @@ export function searchIn(index, q, qvec, k, preFiltered = false) {
     }
   }
   // Layer quota — OFF by default, refuted at k=5 on both case sets (see fuseReserved).
-  const reserve = preFiltered ? 0 : Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
+  const reserve = Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
   const base = fused ?? sorted.slice(0, k);
   return reserve > 0
     ? fuseReserved(fused ? base.map((x) => x) : sorted, k, reserve, (x) => x.r.layer === 'Memory')

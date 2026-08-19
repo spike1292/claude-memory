@@ -22,9 +22,9 @@ Dated, and superseded rather than edited when the answer changes.
 | | |
 | --- | --- |
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
-| [Refactor backlog](refactor-backlog.md) | Atomic tasks ordered by impact per hour, each tracing to a gap named in the architecture guide. Delete items as they land. |
 | [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
 | [CI, review, and releases](ci-and-releases.md) | Branch protection, the review workflows, the release flow. |
+| [Ponytail audit, 2026-08-19](2026-08-19-ponytail-audit.md) | A repo-wide scan for over-engineering: nine proposed cuts, ranked, none applied. |
 
 ## Plans
 
@@ -36,16 +36,11 @@ step has shipped — the changelog is the record from then on.
 
 None open. The refactor-backlog plan lived here from 2026-08-18 until 2026-08-19, when its sixth
 and last run merged and it was deleted under the rule above — #24, #27, #28, #29, #30 and #31 are
-what it produced, [the backlog](refactor-backlog.md) records what each item actually cost, and the
-part of it that was not specific to that backlog was rewritten as
-[a decision record](decisions/2026-08-19-orchestrated-change.md), which is what the rule means by a
-plan becoming one.
-
-## Specs
-
-| | |
-| --- | --- |
-| [Plugin design](superpowers/specs/2026-08-15-claude-memory-plugin-design.md) | The original extraction of the memory system into a plugin. |
+what it produced, the changelog records what shipped, and the part of it that was not specific to
+that backlog was rewritten as [a decision record](decisions/2026-08-19-orchestrated-change.md),
+which is what the rule means by a plan becoming one. The backlog itself outlived its execution and
+went the same way; what survived it is in `architecture.md` — Part 2's open markers, and the one
+item that was declined.
 
 ## Conventions for these documents
 

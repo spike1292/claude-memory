@@ -7,7 +7,7 @@
 //
 // Usage:
 //   node memory-semantic.mjs --index [dir] [--rebuild]
-//   node memory-semantic.mjs --query "question" [-k 5] [--layer Memory] [--json]
+//   node memory-semantic.mjs --query "question" [-k 5] [--json]
 //   node memory-semantic.mjs --serve | --coverage | --dupes | --clusters | --check-embedding
 //   node --test scripts/lib/memory-semantic.test.mjs
 import fs from 'node:fs';
@@ -16,6 +16,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../hooks/lib/paths.mjs';
+import { CARD } from './lib/lexical.mjs';
 import {
   MODELS,
   MODEL_KEY,
@@ -26,7 +27,6 @@ import {
   QUERY_PREFIX,
   DOC_PREFIX,
   DEFAULT_FUSE_LEX,
-  CARD,
   chunkNote,
   contentHash,
   cosine,
@@ -537,7 +537,7 @@ if (flag('--index')) {
 
 if (flag('--clusters')) {
   const min = Number(val('--min') || PROFILE.clusterMin);
-  const minSize = Number(val('--size') || 4);
+  const minSize = 4; // no caller ever set this; --size deleted 2026-08-19
   const cards = db
     .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
     .all(CARD)
@@ -593,11 +593,11 @@ if (flag('--clusters')) {
         ? `   nearest permanent/: ${best.note} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)} — borderline; check whether it should absorb this`
         : `   no permanent/ note covers this (best ${best.note ?? 'n/a'} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)})`,
     );
-    // /memory:synthesize needs the whole membership, not a preview — it must read every note.
-    const showMembers = Number(val('--members') || 6);
-    for (const x of g.slice(0, showMembers)) console.log(`   · [${x.layer}] ${x.note}`);
-    if (g.length > showMembers)
-      console.log(`   · …and ${g.length - showMembers} more (--members 99)`);
+    // Every member, never a preview: /memory:synthesize step 2 must read every note in the cluster,
+    // and a truncated list is how a synthesis silently gets built from part of one. The 6-member
+    // cap and its `--members` escape hatch were deleted 2026-08-19 — nothing ever passed the flag,
+    // and clusters are a handful of notes each.
+    for (const x of g) console.log(`   · [${x.layer}] ${x.note}`);
     console.log('');
   }
   const shown = Math.min(gaps, Number(val('--top') || 8));
@@ -653,10 +653,6 @@ if (!queries.length && !flag('--serve')) {
   process.exit(1);
 }
 const K = Number(val('-k') || 5);
-// --layer Memory gives L1 its own result window. Without it the ~990 Insights notes bury the ~47
-// Memory ones: measured 2026-08-14, gold L1 notes sat at rank 20 and 35 unscoped, top-3 scoped.
-// Same corpus-competition effect BM25 shows — a bigger k does not fix it, a separate window does.
-const layer = val('--layer');
 const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
 
 /**
@@ -684,18 +680,12 @@ function loadIndex(slug) {
     // Same guard the CLI applies, per index: vectors from another model are noise that looks like a
     // score, and in a multi-project server one stale index must not be answered from.
     //
-    // Asked of the WHOLE index, not of the --layer slice. Scoped to the slice, an index with the
-    // wrong model but nothing in that layer reported "no chunks in layer X" — a true statement that
-    // sends you looking for missing notes instead of at the rebuild you actually need.
     const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
     const total = idb.prepare('SELECT COUNT(*) c FROM chunks').get().c;
     if (total && stored !== MODEL)
       throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
-    const rows = layer
-      ? idb.prepare('SELECT note, layer, heading, text, vec FROM chunks WHERE layer = ?').all(layer)
-      : idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
-    if (!rows.length)
-      throw new Error(layer ? `no chunks in layer ${layer}` : 'empty index — run --index first');
+    const rows = idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
+    if (!rows.length) throw new Error('empty index — run --index first');
     return buildBundle(slug, dbPath, rows, {
       dropAliases: process.env.MEMORY_NO_ALIAS_CHUNKS === '1',
       lexMode: LEX_MODE,
@@ -798,7 +788,7 @@ if (flag('--serve')) {
         const { q, k = 5, slug = SLUG } = msg;
         const index = indexFor(slug);
         const [qv] = await embed([QUERY_PREFIX + q]);
-        const top = searchIn(index, q, qv, k, Boolean(layer));
+        const top = searchIn(index, q, qv, k);
         sock.end(
           JSON.stringify({
             slug,
@@ -890,7 +880,7 @@ if (flag('--serve')) {
   }
   const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
   queries.forEach((q, qi) => {
-    const top = searchIn(selfIndex, q, qvecs[qi], K, Boolean(layer));
+    const top = searchIn(selfIndex, q, qvecs[qi], K);
     // --json: one machine-readable line per query, so the eval harness can score a whole case set in
     // a single process (the model loads once, not once per question).
     if (flag('--json')) {

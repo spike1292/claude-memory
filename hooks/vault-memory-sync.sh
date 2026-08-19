@@ -148,9 +148,7 @@ on identifiers. Local embeddings, so private notes never leave the machine.
    arm is keyword-only: "firewall" never matches \`WAF\`, "short outage" never matches \`cutover\`, and
    generic words are weighted to nothing. Do not search the user's phrasing verbatim; restate it as
    the terms the answer would be written in, and search both.
-2. **Do NOT pass \`--layer\` to narrow results.** It filters the note set instead of re-ranking it,
-   deleting gold answers that live in another layer. Measured: EN recall@5 67.9% → 53.6%.
-3. **If \`ctx_search\` is available, scope it to the layer you want** — unscoped, it is
+2. **If \`ctx_search\` is available, scope it to the layer you want** — unscoped, it is
    Insights-dominated (many small dense notes outrank few large ones). Project facts →
    \`vault-memory-$key\`; "have I hit this before" → \`vault-insights-$key\`. Answer an L1 miss
    by scoping, not by piling on aliases. It is an optional second index (context-mode); when it is

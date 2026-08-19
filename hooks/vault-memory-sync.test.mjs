@@ -8,7 +8,7 @@
 // hook payload on stdin, then assert on the filesystem it left behind. `node --test` discovers
 // `hooks/*.test.mjs` exactly as it discovers `hooks/lib/*.test.mjs`, so CI needed no change.
 //
-// This is a CHARACTERISATION test, written 2026-08-19 as item 10 of docs/refactor-backlog.md. It
+// This is a CHARACTERISATION test, written 2026-08-19 as item 10 of the refactor backlog (deleted; see H4 in docs/architecture.md). It
 // records what the script does TODAY so a future port can be diffed against it. Several assertions
 // below record behaviour that is arguably wrong; each is marked `CHARACTERISED, NOT ENDORSED` and
 // says what the defect is. Do not "fix" the script to make one of those pass differently without
@@ -224,7 +224,11 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     // The standing retrieval rules go to stdout, which Claude Code injects as session context.
     assert.match(stdout, /# Memory \(plugin: /);
     assert.match(stdout, new RegExp(`Memory/${key}/`));
-    assert.match(stdout, /Do NOT pass .?--layer/, 'the --layer warning must survive');
+    assert.match(
+      stdout,
+      /Expand the query into domain vocabulary/,
+      'the retrieval rules must survive',
+    );
   });
 
   await t.test('legacy_key -> project_key migration: every note survives, none deleted', () => {

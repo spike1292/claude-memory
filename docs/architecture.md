@@ -9,10 +9,12 @@ does, which seams are missing, and which shortcuts are holding weight. Part 2 ex
 gap is not documented anywhere else, and every entry in it has already cost something or is
 positioned to.
 
-The fixes for what Part 2 records lived in [refactor-backlog.md](refactor-backlog.md). **That list
-is finished as of 2026-08-19** — every numbered item landed or was declined — so it is now a record
-of what was done, not a queue. What is still open is stated here, in the `CLOSED`/open markers of
-Part 2, and nowhere else.
+The fixes for what Part 2 records were tracked in a refactor backlog from 2026-08-18 until
+2026-08-19, when its last item landed and the file was deleted — #20, #24, #27, #28, #29, #30 and
+#31 are what it produced, the changelog is the record, and the lessons the runs paid for were
+rewritten as [a decision record](decisions/2026-08-19-orchestrated-change.md). **What is still open
+is stated here**, in the `CLOSED`/open markers of Part 2, and nowhere else. One item was declined
+rather than done and is kept below so it is not rediscovered as a good idea.
 
 Keeping this current: see [Maintaining this document](#maintaining-this-document).
 
@@ -326,7 +328,7 @@ exists because a comment once claimed a CI check that did not exist.
 | Formatting | **CI** `format` job — `prettier@3.6.2 --check` | **excludes `*.md`, `*.yml`, lockfile** |
 | Test concurrency is 1 | **CI** run command | shared `$CLAUDE_MEMORY_HOME`; `paths.test.mjs` asserts two writes in the same second |
 | `main` is protected | **GitHub settings** (not in this repo) | admins and force-pushes included |
-| One index per model; a wrong-model index is refused | **code** — `loadIndex()` checks `meta.model` | asked of the whole index, not the `--layer` slice |
+| One index per model; a wrong-model index is refused | **code** — `loadIndex()` checks `meta.model` | asked of the whole index, before any ranking |
 | Vectors are the profile's width | **code** — `assertVectorWidth()` | guards the mixed 384/1024 corruption that created the lock |
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
@@ -389,9 +391,8 @@ test.
 The split was drawn along *"is it testable?"*, not *"is it a boundary?"*. `searchIn()` — the
 function that decides what you actually see — stayed on the untested side until 2026-08-19, when it
 moved to `lib/` unchanged and got its first test. It was always pure (a bundle in, ranked rows out),
-so nothing but the argv-derived `--layer` binding held it there. That binding is now a last
-parameter, `preFiltered` — a boolean saying the corpus was already narrowed, not a layer to filter
-by; it only switches off the reserve that would otherwise guarantee Memory rows a share of results.
+so nothing but an argv-derived `--layer` binding held it there. That flag was measured-refuted and
+deleted on 2026-08-19, and the `preFiltered` parameter it had become went with it.
 `loadIndex()` stays, and stays untested: it opens the database, and `lib/` may not import
 `node:sqlite`. That is the shape of the remaining gap — what is left in the entry is left there
 *because* of a CI rule, not by accident.
@@ -614,6 +615,14 @@ vault, concentrated in the vault-mutating movers. Both were covered on 2026-08-1
 #10). Coverage is not the same as safety here — the pruner's defects were fixed, the sync
 script's three were only pinned, so the two silent-loss paths in `H4` are still live and are now
 the largest known irreversible-loss risk in the system.
+
+## Declined, and kept declined
+
+**Relocating `paths.mjs` out of `hooks/lib/`.** It is the only real layer in the system and it is
+misfiled: eight files reach up through `../../hooks/lib/` to import it. Moving it touches those
+import sites, the CI globs and CLAUDE.md — **for conceptual clarity and no behaviour change.**
+Still declined after #20, which rewrote the file without moving it: that was the moment a
+relocation would have been cheapest, and it still did not pay for itself.
 
 ## The one-paragraph read
 
