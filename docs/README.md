@@ -33,9 +33,9 @@ like — where a decision record says why something already is the way it is. Pl
 visible to whoever reads the repo. Keep the Status section current, and delete a plan once every
 step has shipped — the changelog is the record from then on.
 
-| | |
-| --- | --- |
-| [Refactor backlog, via 6 workflows](plans/2026-08-18-refactor-backlog.md) | How the backlog's 13 items are batched into six PRs, why the batching is what it is, and the review phase each run carries. |
+None open. The refactor-backlog plan lived here from 2026-08-18 until 2026-08-19, when its sixth
+and last run merged and it was deleted under the rule above — #24, #27, #28, #29, #30 and #31 are
+what it produced, and [the backlog](refactor-backlog.md) records what each item actually cost.
 
 ## Specs
 
