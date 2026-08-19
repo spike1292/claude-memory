@@ -224,10 +224,12 @@ ms**. A floor is not a budget:
 
 Three things that still bite: **do not port `vault-memory-sync.sh`** (it moves files and repoints
 symlinks in a live vault, and has cost 24 notes once — the reason is risk, not language, and it
-needs a characterisation test first); **quote no timing without saying whether the vault was
-cloud-backed or pinned offline**, which alone moves a hook 166 ms vs 131 ms; and **measure against a
-vault with real note counts** — the shell link lint looked like a 74 ms hook in this repo, which has
-no L1 notes, while taking 10.9 s on a 49-note project.
+needed a characterisation test first, which `hooks/vault-memory-sync.test.mjs` has been since
+2026-08-19 — the fence stays, the precondition is simply no longer what holds it up); **quote no
+timing without saying whether the vault was cloud-backed or pinned offline**, which alone moves a
+hook 166 ms vs 131 ms; and **measure against a vault with real note counts** — the shell link lint
+looked like a 74 ms hook in this repo, which has no L1 notes, while taking 10.9 s on a 49-note
+project.
 
 The project-key cache (`cache/project-keys.json`) is now Node's alone; shell reads it only by
 asking Node. Its stamp is `<whole seconds>:<size>:<inode>` and all three fields are load-bearing —

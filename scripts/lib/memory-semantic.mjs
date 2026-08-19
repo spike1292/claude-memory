@@ -360,7 +360,7 @@ export function stripFrontmatter(raw) {
 
 // Does this note still hash to what the index embedded? The incremental path used to key on exact
 // mtime equality alone, and the vault sits on Synology Drive, which rewrites mtime on sync without
-// touching content — prune-logs.sh says so in its own header. Every touched note was then re-embedded
+// touching content — prune-logs.mjs says so in its own header. Every touched note was then re-embedded
 // at batch size 1, which is a 20-40 min CPU storm for content nobody changed (2026-08-19).
 //
 // The RAW FILE BYTES are hashed, not the chunk text. The property that has to hold is "the hash

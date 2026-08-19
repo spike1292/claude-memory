@@ -329,7 +329,7 @@ exists because a comment once claimed a CI check that did not exist.
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **11 of 15**. 14 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Counted 2026-08-19; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **12 of 16**. 15 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Re-counted 2026-08-19 after `scripts/prune-logs.mjs` was added as a compliant 16th; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
 | No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -344,10 +344,13 @@ Everything above is the design. Below is what the code does.
 ## G1 — the entry/`lib/` rule is inverted where it matters
 
 The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for
-**11 of the 15** hook and CLI entries, and the two numbers people quote here are different claims:
-**14** entries have a `lib/` twin — `scripts/env.mjs`, at 16 lines, is the only one that does not —
-but three of those 14 keep the real behaviour in the entry anyway, so having a twin is the weaker
-property and 11 is the invariant. `memory-recall.mjs` joined the compliant side on 2026-08-19.
+**12 of the 16** hook and CLI entries, and the two numbers people quote here are different claims:
+**15** entries have a `lib/` twin — `scripts/env.mjs`, at 16 lines, is the only one that does not —
+but three of those 15 keep the real behaviour in the entry anyway, so having a twin is the weaker
+property and 12 is the invariant. `memory-recall.mjs` joined the compliant side on 2026-08-19, and
+`scripts/prune-logs.mjs` arrived compliant the same day: 42 lines of argv, `PRUNE_DAYS` and stdout
+over a 111-line twin. It is the first entry that was *born* out of a shell script rather than
+carved out of an existing `.mjs`, which is why it needed no carving.
 In the three below it is still reversed:
 
 | Entry | Entry | Lib | Entry tested? |
@@ -453,10 +456,27 @@ version-pinned plugin dir. A rename upstream is silent; `doctor.sh` checks for t
 cannot do this — pointed at a local stub npm writes a lockfile it then rejects, and Claude Code
 installs with `npm ci`. Measured 2026-08-18.
 
-**H4 — `vault-memory-sync.sh` is fenced off by policy.** 160 lines, no test, moves files and
-repoints a live symlink in a cloud-synced dir. It has cost 24 notes once. Two documents carry a
-standing prohibition on porting it. The risk is real; so is the fact that the riskiest file has the
-least coverage.
+**H4 — `vault-memory-sync.sh` is fenced off by policy.** 163 lines that move files and repoint a
+live symlink in a cloud-synced dir. It has cost 24 notes once, and two documents carry a standing
+prohibition on porting it. **The fence is unchanged. What changed on 2026-08-19 is the second
+half of this entry**: `hooks/vault-memory-sync.test.mjs` drives it as a black box from a scratch
+`HOME`, mutation-checked on a throwaway copy of the repo so it is known to *fail* when
+the script is broken — so the riskiest file is no longer the least covered one, and a port would
+now have a baseline to be diffed against. That was the stated precondition for ever touching it,
+not permission: the script is still bash and still must not be ported.
+
+Writing that test found four behaviours to characterise, recorded there as `CHARACTERISED, NOT
+ENDORSED` and deliberately left unfixed, because a fix without a test is exactly what lost the
+notes. Two are silent loss on the next SessionStart — `mv -n` skips a note whose name already
+exists in the vault and the following `rm -rf` deletes it; a subdirectory under a real memory dir
+is never migrated and is deleted with its parent. The third is silence rather than loss: refusing
+to merge a legacy-slug folder into an existing destination strands those notes under the old key
+forever, unreported and unindexed. The fourth is an ordering bug rather than a defect in the
+migration itself: the vault is resolved before the marker-file → `config.json` migration runs, so
+the session that performs the migration does not honour it. Four markers in the file, four here,
+four in the changelog — count them against each other, not from memory. Two branches remain uncharacterised — the `~/.claude/CLAUDE.md`
+migration and the `Commands/` stub `rmdir` — and mutants that turn either into an `rm -rf` still
+survive the suite.
 
 **H5 — the socket protocol is written twice.** Client sends `{q, k, slug}`; server destructures
 `{q, k = 5, slug = SLUG}` and replies with six fields. The same file also emits a *different*,
@@ -542,7 +562,7 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
 | R4 | **Recall's keyword arm dies** — **CLOSED 2026-08-19** | changing the card sentinel in `chunkNote()` used to make recall's raw SQL return 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain, and **abstention is its normal behaviour**, so nothing showed. The sentinel is `CARD` and all three readers now **bind it as a SQL parameter**, recall included since its SELECT moved behind `hooks/lib/memory-recall.mjs`. A rename can no longer miss a site. The source-scan test in `memory-semantic.test.mjs` was kept and inverted: it now fails if a bare heading literal is re-inlined into the hook | was: keyword arm dead, no signal |
-| R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** — **halved 2026-08-19 (#24)** | growth is unchanged (no `VACUUM`; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `prune-logs.sh` touches only the vault) but it is no longer unobserved: `doctor.sh` reports the size of `$STATE` and warns past 2 GB, and the hook logs — the one component that grew without bound — are capped at 1 MB in `logBanner()`/`openLog()` | bounded logs; the rest is multi-GB but now **noticed early** |
+| R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** — **halved 2026-08-19 (#24)** | growth is unchanged (no `VACUUM`; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `prune-logs.mjs` touches only the vault) but it is no longer unobserved: `doctor.sh` reports the size of `$STATE` and warns past 2 GB, and the hook logs — the one component that grew without bound — are capped at 1 MB in `logBanner()`/`openLog()` | bounded logs; the rest is multi-GB but now **noticed early** |
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |
 | R8 | **Symlink-dereference bugs** | the class, not an instance: two found so far (`du` without `-L`; the runtime probe in `semantic-index-refresh`). Both fixed, the second now pinned by a test that symlinks `node_modules` and asserts `runtimeInstalled()` sees through it. Every new check against `$CLAUDE_MEMORY_HOME` is another draw | a check that measures nothing |
@@ -557,14 +577,23 @@ system.
 
 **Data corruption proper is well defended** — the per-model write lock, `assertVectorWidth` at read,
 and `loadIndex`'s model check. The residual irreversible-loss risk is not in SQLite. It is in the
-vault, concentrated entirely in the two untested `mv`-wielding shell scripts:
-`hooks/vault-memory-sync.sh` and `scripts/prune-logs.sh`.
+vault, concentrated in the vault-mutating movers. Both were covered on 2026-08-19:
+`scripts/prune-logs.mjs` was ported out of shell and tested (backlog #9), and
+`hooks/vault-memory-sync.sh` got a characterisation test while keeping its `H4` fence (backlog
+#10). Coverage is not the same as safety here — the pruner's defects were fixed, the sync
+script's three were only pinned, so the two silent-loss paths in `H4` are still live and are now
+the largest known irreversible-loss risk in the system.
 
 ## The one-paragraph read
 
 A **procedural core with one shared kernel and four out-of-band services**, wearing the folder names
 of a layered plugin. `paths.mjs` is the kernel and, since #20, the sole resolver — everything
-depends on it, and the two remaining shell files depend on it too, by asking. `scripts/memory-semantic.mjs`
+depends on it, and the two shell programs left on the runtime path — `vault-memory-sync.sh` and
+`doctor.sh`, joined by `vault-env.sh` which is sourced rather than run — depend on it too, by
+asking. (`release.sh` is the exception that proves the rule: a dev tool, zero references to
+`node`, `env.mjs` or `vault-env.sh`, and so no dependency on the kernel at all.) `prune-logs.sh`
+was the fifth until 2026-08-19 and never asked: it resolved nothing and took its directory as an
+argument, which is why porting it cost nothing anywhere else. `scripts/memory-semantic.mjs`
 is a monolith that is simultaneously CLI, schema owner and daemon, and the rest of the system reaches
 it over a socket, over SQLite, and over `execFileSync`, never over an import. The `lib/` split is a
 **testability seam, not an architectural one**, which is exactly why it holds in the simple modules

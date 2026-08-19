@@ -125,6 +125,46 @@ jobs:
           fi
           echo "node:sqlite confined to entry points"
 
+      # `node --test` is discovery-based and CI only ever sees TRACKED files, so a commit that
+      # forgets a new file is fully green on a repo that is broken: on 2026-08-19 the prune-logs
+      # port had `git rm scripts/prune-logs.sh` staged while the .mjs entry, its lib/ twin and both
+      # test files were still untracked — `/memory:prune` step 1 would have invoked a file that did
+      # not exist, and both new test files would have vanished from the run — a lower total, and
+      # nothing red to say so.
+      #
+      # So: every path a command body or hooks.json names must be a tracked file, and so must
+      # whatever that entry statically imports — an entry that is tracked while its lib/ twin is
+      # not is the same failure one level down. git ls-files, not `test -e`: an untracked file is
+      # present in the working tree and would pass an existence check locally.
+      #
+      # Not `s|...|`: GNU sed (this runner) reads `\|` inside an ERE s-command as a LITERAL
+      # pipe, so the alternation became the string `MEM|CLAUDE_PLUGIN_ROOT`, nothing matched, no
+      # prefix was stripped and all 15 refs failed `git ls-files`. BSD sed on a dev machine reads
+      # it as alternation, so the check looked green here and would have been red on CI only
+      # (2026-08-19). The delimiter is now `#`, which is not a regex metacharacter.
+      - name: Every path a command or hook invokes is tracked
+        run: |
+          rc=0
+          refs=$(grep -ohE '\$\{?(MEM|CLAUDE_PLUGIN_ROOT)\}?/[A-Za-z0-9._/-]+' \
+            commands/*.md hooks/hooks.json \
+            | sed -E 's#^\$\{?(MEM|CLAUDE_PLUGIN_ROOT)\}?/##' \
+            | grep -v '^node_modules/' | sed 's/[.]$//' | sort -u)
+          # A pattern that stops matching would pass this step by checking nothing.
+          [ -n "$refs" ] || { echo "::error::extracted no plugin-root references — the pattern broke"; exit 1; }
+          for p in $refs; do
+            git ls-files --error-unmatch "$p" >/dev/null 2>&1 || {
+              echo "::error::a command or hook invokes \$MEM/$p, which is not a tracked file"; rc=1; continue; }
+            case "$p" in *.mjs) ;; *) continue ;; esac
+            # `import x from './y'` and the side-effect form `import './y'` both count; a bare
+            # `from '` pattern saw only the first (2026-08-19).
+            for spec in $(grep -ohE "(from|import) '\.\.?/[A-Za-z0-9._/-]+'" "$p" | sed -E "s#(from|import) '##; s#'\$##"); do
+              dep="$(dirname "$p")/$spec"
+              git ls-files --error-unmatch "$dep" >/dev/null 2>&1 || {
+                echo "::error file=$p::imports $spec, which is not a tracked file"; rc=1; }
+            done
+          done
+          [ "$rc" = 0 ] || exit 1
+          echo "every path a command or hook invokes is tracked"
       # There is no Python left. Fail if any creeps back in — the whole point of the port was
       # that a second runtime is a second thing to be the wrong version on someone's machine.
       # Matches real dependencies only (a .py file, or a shell hook shelling out to python),
@@ -132,6 +172,7 @@ jobs:
       # No \b in the pattern: git grep -E is POSIX ERE, where \b is undefined — it matched
       # NOTHING rather than erroring, so this half of the check was dead on arrival and the
       # step still passed. Verified against a planted .py and a planted .sh; both are caught.
+
       - name: No Python dependency
         run: |
           bad=$( { git ls-files '*.py'; git grep -l python -- '*.sh'; } | sort -u )

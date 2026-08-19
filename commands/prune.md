@@ -24,7 +24,7 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    Run the full `memory-audit-checks.mjs` (no flag) if you want its same-folder Jaccard pairs as a starting point for step 2 — it clusters same-folder first, which is what step 2 requires anyway.
 
 1. **Archive old logs** (mechanical, safe): run
-   `"$MEM/scripts/prune-logs.sh" "<vault>/Logs/<slug>"`
+   `node "$MEM/scripts/prune-logs.mjs" "<vault>/Logs/<slug>"`
    (override the window with `PRUNE_DAYS=N`). This moves logs >90 days into `Logs/<slug>/Archive/` — no deletion.
 
 2. **Dedup insights** (needs judgment). **Start from the semantic scan, not from titles:**

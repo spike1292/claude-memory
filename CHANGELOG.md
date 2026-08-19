@@ -11,6 +11,75 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`hooks/vault-memory-sync.test.mjs` — a characterisation test for the one script the repo has
+  always refused to touch.** 163 lines of bash that migrate `legacy_key` → `project_key`, move
+  notes and repoint `~/.claude/projects/<slug>/memory`, with no test since the day it cost 24
+  notes. It is driven as a black box — spawn bash, hook payload on stdin — from a scratch `HOME`
+  built per subtest, never the inherited environment, because isolating `CLAUDE_VAULT` alone still
+  leaves the live symlink in range; a final subtest asserts the real `~/.claude` is byte-identical
+  afterwards. It asserts that the layer migration loses no note, the destination-exists guard blocks
+  a merge, repointing a symlink COPIES (the 24-note guarantee), a second run is byte-identical to
+  the first, a repo with no `origin` keys on the lowercased directory name with `.git` intact
+  (#21), and the **payload `cwd` beats `$PWD`** — the line that decides *which* project's symlink
+  gets repointed, and the one the other eleven cases cannot see, because they pass the same
+  directory as both. Four cases record behaviour marked in-file as *characterised, not endorsed*
+  rather than fixed, since a fix without this test is precisely what lost the notes: a subdirectory
+  under a real memory dir is deleted rather than migrated, a note whose name already exists in the
+  vault is deleted rather than kept, a legacy-slug folder that cannot be merged is stranded under
+  the old key without a word, and the marker-file → `config.json` migration does not affect the
+  run that performs it. Those four are the enumeration; `docs/architecture.md` H4 uses the same
+  one. Verified by mutation on a throwaway copy of the repo, not by being
+  green: reverting `cp -n` to a move, dropping the no-merge guard, deleting the `cat | jq` line so
+  `$PWD` always wins, and reading `.cwdX` instead of `.cwd` each fail exactly one case and leave
+  the other eleven passing. The real-`$HOME` guard records types and symlink targets only, never
+  mtimes — `~/.claude-memory` is written by this plugin's own hooks every session (its mtime had
+  moved 11 minutes before it was looked at on 2026-08-19), so an mtime in the oracle turns any
+  concurrent session into a false accusation of a `HOME` leak, and an oracle that cries wolf gets
+  muted.
+
+- **`scripts/prune-logs.mjs` + `scripts/lib/prune-logs.mjs` — the log pruner, ported from bash and
+  tested.** It moves vault files on a 90-day horizon and had no test; worse, its date arm was
+  `date -j -f` on macOS falling back to `date -d` on Linux, so the branch CI could exercise was
+  never the branch that ran. The port removes the fork and the split: dates still come from the
+  filename (`YYYY-MM-DD-*.md`) and never from mtime, which Synology sync rewrites, and it is still
+  move-only — nothing in it unlinks anything. Three deliberate differences from the shell version:
+  a name that matches the date pattern but is not a calendar date is skipped rather than normalised
+  (BSD `date` turned `2026-02-31` into 2026-03-03 and would have moved it), and a file whose
+  destination already exists in `Archive/` is left in place and reported rather than overwritten,
+  because overwriting a note is exactly the data loss this script is not allowed to cause, and
+  `Archive/` is created only when something actually moves rather than unconditionally, so a prune
+  that archives nothing leaves no trace.
+  Five defects found reviewing the port are fixed in it rather than listed here, each with a
+  regression test: `PRUNE_DAYS` is parsed as digits only and the cutoff is range-checked, because
+  `PRUNE_DAYS=1000000000` made an invalid date whose `NaN-NaN-NaN` string lost the keep-comparison
+  for every real date — *asking to keep more logs archived the whole directory*, today's and
+  future-dated files included, where the shell it replaces archived none — and `PRUNE_DAYS=" "`
+  cast to a 0-day window with the same effect; a symlinked log is archived instead of being
+  dropped by an lstat-based `isFile()` that left it neither moved nor reported; the never-overwrite
+  guard uses `lstat`, since `existsSync` follows a link and a dangling one at the destination read
+  as free space; and a failure part-way through now reports what already moved, without which
+  "move only, reversible" is not true in practice — reversing a move means knowing which files
+  moved. And the cutoff year is zero-padded, because a `PRUNE_DAYS` large enough to reach a
+  three-digit year (375000) lost the same lexical keep-comparison and archived everything while
+  printing a success line — the `NaN-NaN-NaN` defect in another disguise, past both of its guards.
+  Measured against a synthetic logs directory under a scratch `$HOME`, never the vault.
+
+- **CI fails when a command or hook names a path that is not a tracked file.** `node --test` is
+  discovery-based and CI only ever sees committed content, so a commit that forgets a new file is
+  fully green on a repo that is broken. This branch nearly shipped it: `git rm scripts/prune-logs.sh`
+  was staged while the `.mjs` entry, its `lib/` twin and both test files were still untracked —
+  `/memory:prune` step 1 would have invoked a file that did not exist, and both of this branch's
+  new test files would simply have vanished from the run, lowering the total and failing nothing.
+  The step resolves every `$MEM`/`${CLAUDE_PLUGIN_ROOT}` path in `commands/*.md` and
+  `hooks/hooks.json`, plus whatever each `.mjs` entry statically imports — `./` and `../` alike,
+  since three of those entries reach the kernel through `../hooks/lib/paths.mjs` and a scan
+  limited to `./` would have looked at none of them. A tracked entry with an untracked `lib/` twin
+  is the same failure one level down. It uses `git ls-files`, not `test -e`: an untracked file is
+  present in the working tree and would pass an existence check locally, which is exactly how this
+  was missed.
+  It also fails if the extraction matches nothing, so a renamed variable cannot turn the guard into
+  a no-op that checks zero paths.
+
 - **`scripts/lib/lexical.mjs` — the card sentinel, stopwords, tokeniser and BM25, in a module
   that imports nothing.** The recall hook's new `lib/` twin needs those four, and a hook entry
   imports its twin *statically*: above the fail-open try and above the `recallEnabled()` gate, so
@@ -171,6 +240,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Removed
 
+- `scripts/prune-logs.sh` — replaced by `scripts/prune-logs.mjs`, which is invoked through `node`
+  rather than executed as a shell script. `/memory:prune` is unchanged for anyone who runs the
+  command; a script or alias that called `"$MEM/scripts/prune-logs.sh" <logs-dir>` directly must
+  become `node "$MEM/scripts/prune-logs.mjs" <logs-dir>`. `PRUNE_DAYS` still overrides the 90-day
+  window, but it must now be a whole number of days — a value that is not one exits 1 and moves
+  nothing, where the shell's `$((...))` treated it as 0 and archived almost everything.
+
 - **The redundant semantic-index lock.** `$CLAUDE_MEMORY_HOME/.semantic-index.lock` guarded the same
   file as the indexer's own per-model `db/.index-<model>.lock`, at a coarser scope, and its only
   observable effect was a **silent** skip: on contention it exited 0 with no output, so a session
@@ -180,7 +256,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **The index no longer re-embeds a note whose content did not change.** `--index` keyed its whole
   incremental decision on exact mtime equality, and the vault sits on Synology Drive, which rewrites
-  mtime on sync without touching a byte — `scripts/prune-logs.sh` says so in its own header. One
+  mtime on sync without touching a byte — `scripts/prune-logs.mjs` says so in its own header. One
   sync could therefore cost a full 20-40 min re-embed at batch size 1 for content nobody edited
   (`R1` in `docs/architecture.md`, the highest-probability silent failure on that list). `chunks`
   gains a `hash` column — sha256 over the note's bytes as read — and the decision becomes two
