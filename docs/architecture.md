@@ -365,7 +365,9 @@ test.
 The split was drawn along *"is it testable?"*, not *"is it a boundary?"*. `searchIn()` — the
 function that decides what you actually see — stayed on the untested side until 2026-08-19, when it
 moved to `lib/` unchanged and got its first test. It was always pure (a bundle in, ranked rows out),
-so nothing but the argv-derived `--layer` binding held it there; that is now its last parameter.
+so nothing but the argv-derived `--layer` binding held it there. That binding is now a last
+parameter, `preFiltered` — a boolean saying the corpus was already narrowed, not a layer to filter
+by; it only switches off the reserve that would otherwise guarantee Memory rows a share of results.
 `loadIndex()` stays, and stays untested: it opens the database, and `lib/` may not import
 `node:sqlite`. That is the shape of the remaining gap — what is left in the entry is left there
 *because* of a CI rule, not by accident.

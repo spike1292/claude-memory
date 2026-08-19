@@ -69,7 +69,8 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 
 > **Item 8 (move `searchIn()` into the lib) landed on 2026-08-19**, with item 6, and is deleted from
 > this list, per the rule at the top. It narrows `G1`: the body moved unchanged into
-> `scripts/lib/memory-semantic.mjs` and the argv-derived `--layer` became its last parameter.
+> `scripts/lib/memory-semantic.mjs`, and the argv-derived `--layer` became a last parameter,
+> `preFiltered` — a boolean flag, not a layer to filter by.
 > `loadIndex()` stays in the entry and stays untested — it opens the database, and `lib/` may not
 > import `node:sqlite`, which is `G1`'s own point.
 
