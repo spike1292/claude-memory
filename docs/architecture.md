@@ -500,7 +500,7 @@ These are the paths where a fault produces no error — ranked by expected cost.
 
 | # | Failure | Mechanism | Blast radius |
 | --- | --- | --- | --- |
-| R1 | **Full re-embed storm** | the incremental path keys on exact mtime equality — and `prune-logs.sh` states in a comment that Synology sync churns mtime | 20–40 min CPU at batch size 1 |
+| ~~R1~~ | ~~**Full re-embed storm**~~ — **CLOSED 2026-08-19 (#27)** | mtime is now a fast-path hint, not the decision: a note whose mtime moved is read and hashed (`contentHash()`), and re-embedded only if the bytes actually changed. Synology churn costs one read per touched note and the new mtime is written back, so the next run takes the fast path again | — |
 | ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
 | R4 | **Recall's keyword arm dies** | change the `'(card)'` sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** | keyword arm dead, no signal |

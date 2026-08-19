@@ -9,6 +9,33 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The index no longer re-embeds a note whose content did not change.** `--index` keyed its whole
+  incremental decision on exact mtime equality, and the vault sits on Synology Drive, which rewrites
+  mtime on sync without touching a byte — `scripts/prune-logs.sh` says so in its own header. One
+  sync could therefore cost a full 20-40 min re-embed at batch size 1 for content nobody edited
+  (`R1` in `docs/architecture.md`, the highest-probability silent failure on that list). `chunks`
+  gains a `hash` column — sha256 over the note's bytes as read — and the decision becomes two
+  levels: mtime matches, skip without reading (the steady-state fast path is unchanged); mtime
+  moved, read and hash, and skip the embedding when the bytes are identical, writing the new mtime
+  back so the fast path applies again next time. Both write-backs are one transaction rather than
+  one per note (667 ms → 31 ms over 1000 files, measured 2026-08-19).
+
+  **No re-index is required and none is triggered.** An index built before the column holds this
+  model's vectors and answers exactly as well as it did before, so `--index` backfills the hashes in
+  place from the notes whose mtime it already trusts — one read per note, once. The alternative,
+  forcing a rebuild, would have fired unattended on every existing install: `semantic-index-refresh`
+  launches `--index` detached into a log, rows are written outside a transaction, and a rebuild
+  interrupted half way leaves an index that is partial yet indistinguishable from a current one, so
+  recall would have answered from a fraction of the vault with no signal.
+
+- **An interrupted `--index` no longer leaves a note permanently half-indexed.** Chunks are inserted
+  with a sentinel mtime and a NULL hash, and a file's real identity is committed only once all of
+  its chunks have landed. Previously a run killed mid-file left that file carrying its current
+  mtime, so every later run skipped it and the chunks that never landed were never searchable again
+  — with `--coverage` reporting the note as present, since one surviving chunk satisfies it.
+
 ### Added
 
 - **`/memory:doctor` reports the size of machine-local state.** Nothing had ever printed how big

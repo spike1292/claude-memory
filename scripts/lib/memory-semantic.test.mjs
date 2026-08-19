@@ -21,6 +21,7 @@ import {
   centroid,
   chunkNote,
   clusterNotes,
+  contentHash,
   cosine,
   fuseRRF,
   buildBundle,
@@ -310,6 +311,30 @@ test('real notes chunk cleanly — and the check names the project it got', (t) 
 //
 // Costs nothing to test and everything to get wrong in the safe direction: a false "dead" makes a
 // duplicate steal the socket and orphan a live server holding ~800MB.
+test('contentHash: stable, byte-sensitive, and blind to everything else', () => {
+  const note =
+    '---\ndescription: D\n---\n## H\nalpha text long enough to be worth embedding here\n';
+  // Deterministic across calls and across processes — the whole incremental path rests on it.
+  assert.equal(contentHash(note), contentHash(note));
+  assert.match(contentHash(note), /^[0-9a-f]{64}$/);
+  // One byte moves it. The pair below is what mtime cannot tell apart and what this replaces.
+  assert.notEqual(contentHash(note), contentHash(note.replace('alpha', 'alpho')));
+  // A Buffer and its decoded string agree — the indexer hands it the Buffer it just read.
+  assert.equal(contentHash(Buffer.from(note, 'utf8')), contentHash(note));
+  // Whitespace is content: it reaches the chunk text, so it must reach the hash.
+  assert.notEqual(contentHash(note), contentHash(note + '\n'));
+  // Reading the same bytes twice hashes the same regardless of when — a synced file whose mtime
+  // was rewritten hashes to what the index already holds, which is the entire point.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contenthash-'));
+  const f = path.join(dir, 'n.md');
+  fs.writeFileSync(f, note);
+  const before = contentHash(fs.readFileSync(f, 'utf8'));
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(f, future, future);
+  assert.equal(contentHash(fs.readFileSync(f, 'utf8')), before, 'mtime must not reach the hash');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('socketIsLive: live socket, stale file, and absent path', async () => {
   const net = await import('node:net');
   // Short base dir on purpose — macOS sun_path caps a unix socket path at 104 bytes, and the

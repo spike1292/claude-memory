@@ -29,23 +29,14 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 
 ## Wave 2 — index correctness
 
-### 5. Stop keying staleness on mtime alone
+> **Item 5 (stop keying staleness on mtime alone) landed in #27** and is deleted from this list,
+> per the rule at the top. It closed `R1`. The one deviation from the plan written here: the `hash`
+> column does **not** force a one-time `--rebuild`. An index built before it holds this model's
+> vectors and answers as well as it ever did, so `--index` backfills the hashes in place from the
+> notes whose mtime it already trusts — seconds of I/O instead of an unattended 20-40 min re-embed
+> on every existing install. Not breaking; no minor bump on that account.
 
-- **Goal:** kill `R1`, the highest-probability failure on the list.
-  [`scripts/prune-logs.sh`](../scripts/prune-logs.sh) states in its own header that Synology sync
-  churns mtime; the indexer keys its entire incremental decision on exact mtime equality.
-- **Files:** [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) (`--index` block),
-  [`scripts/lib/memory-semantic.mjs`](../scripts/lib/memory-semantic.mjs) (a `contentHash` helper
-  and its test).
-- **Diff plan:** add a `hash` column to `chunks`. Two-level check — mtime matches, skip without
-  reading (the fast path is unchanged); mtime differs, read + hash, and skip re-embedding when the
-  hash matches. Notes are already read for chunking, so the extra cost falls only on files that
-  *look* stale. The schema change forces a one-time `--rebuild`, which the CHANGELOG defines as
-  breaking: needs an `## [Unreleased]` entry and a minor bump.
-- **Risk: medium.** Touches the write path and the schema. Mitigations: the per-model write lock
-  already exists, `--rebuild` is the escape hatch, and `memory-synth-vault.mjs` gives a
-  deterministic corpus to verify incremental behaviour against.
-- **~90 min.** Highest single-item payoff in this backlog.
+---
 
 ### 6. `'(card)'` becomes a constant, with a test behind it
 
@@ -198,15 +189,15 @@ a relocation would have been cheapest, and it still did not pay for itself.
 | PR | Items | Effort | Buys |
 | --- | --- | ---: | --- |
 | ~~1~~ | ~~1–4~~ | — | all landed: item 1 in #20, items 2–4 in #24 |
-| 2 | 5 | ~1.5 h | kills the highest-probability failure (needs a minor bump) |
+| ~~2~~ | ~~5~~ | — | landed in #27: killed the highest-probability failure; no bump needed, it forces no re-index |
 | 3 | 6, 8 | ~1.25 h | two pure extractions, both with tests |
 | 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12 |
 | 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
 | 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |
 
-Item 15 is non-work. **Only items 5, 7 and 9 change behaviour** — everything else is observation,
-extraction, or tests.
+Item 15 is non-work. **Of what is left, only items 7 and 9 change behaviour** — everything else
+is observation, extraction, or tests.
 
 Item **11** (CI enforcing the entry/`lib` rule) got cheaper: #20 added three compliant entries, so
 the rule now holds in 8 of 12 rather than 5 of 9, and the allowlist it would need is down to four
