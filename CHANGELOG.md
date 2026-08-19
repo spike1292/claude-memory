@@ -11,6 +11,28 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`scripts/lib/lexical.mjs` — the card sentinel, stopwords, tokeniser and BM25, in a module
+  that imports nothing.** The recall hook's new `lib/` twin needs those four, and a hook entry
+  imports its twin *statically*: above the fail-open try and above the `recallEnabled()` gate, so
+  the whole import graph runs on every prompt of every session, armed or not, with nothing able to
+  catch it. Taking them from `memory-semantic.mjs` put that module's scope there, and its scope
+  resolves the active model and does `console.log(...)` + `process.exit(1)` on an unknown one. With
+  `{"model": "bge-m4"}` in `config.json` the hook went from exit 0 and zero bytes to exit 1 with
+  `unknown MEMORY_SEMANTIC_MODEL — known: …` on **stdout**, which `hooks.json`'s trailing
+  `|| exit 0` turns back into exit 0 *keeping the line* — so Claude Code injected it as context on
+  every prompt until the typo was found, on installs that had never armed recall. It also promoted
+  `model-default.mjs` from a caught dynamic import to an uncatchable static one, and made a broken
+  or missing `memory-semantic.mjs` — a partial install, an interrupted `npm ci` — take recall down
+  with it, where before the hook only ever spawned that file as a detached child. `lexical.mjs`
+  imports nothing at all, so it adds no failure mode the entry's existing `paths.mjs` import did
+  not already have, and it is 0.26-0.42 ms of module init rather than 3.8-4.4 ms (8 runs each,
+  local APFS; module init reads no vault, so cloud-vs-offline does not move these,
+  warm, measured 2026-08-19). `memory-semantic.mjs` re-exports all four, so there is still exactly
+  one implementation of each. A CI step now imports every `hooks/lib/*.mjs` **with a deliberately
+  unknown model configured** and fails on any output or non-zero exit — the existing side-effect
+  check runs with a valid model, which is precisely why it went green on the version that had this
+  bug.
+
 - **`scripts/review-prompt.mjs` prints the CI reviewer's own prompt.** The prompt that gates every
   PR lived only inside a YAML block scalar, so applying it locally meant retyping it. Now it is one
   command, and running it before pushing turns its findings into an edit rather than a comment to
@@ -48,6 +70,37 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **`hooks/memory-recall.mjs` has a `lib/` twin, and the recall path has its first tests.** The
+  UserPromptSubmit hook was 253 lines with no lib and no test — the last entry exempt from all four
+  CI invariants, which key off the `lib/` boundary. It is now 153 lines owning stdin, the unix
+  socket, `node:sqlite` and stdout, over a 148-line `hooks/lib/memory-recall.mjs` holding the gates, the
+  ranking, the hit formatting and the log-record shapes, all taking rows and strings as values.
+  `node:sqlite` and `net` stay in the entry on purpose: that is what lets the twin be imported by a
+  test with neither a database nor a server. Three consequences worth naming. **Recall's private
+  copies of the stopword list, the tokeniser and BM25 are gone** — it now uses
+  `scripts/lib/lexical.mjs`'s, so the keyword fallback and the path it falls back from
+  finally score by one implementation. The two were equivalent, which is why no ranking moved: the
+  stopword lists were the same 71 words (recall's spelled `with` twice, which a `Set` collapses) and
+  the inline BM25 was `bm25()` with `k1 = 1.2` and `b = 0.75` pre-substituted into the arithmetic —
+  which the twin now passes **explicitly**, because `MIN_SCORE` and its `MIN_SCORE / 2` floor are
+  absolute BM25 values and a tune made for the CLI's fusion arm would otherwise rescale both gates
+  with nothing asserting an absolute score. **The SELECT binds `CARD`**, closing R4 in
+  `docs/architecture.md` — the sentinel now has no unbound consumer left. **The price is
+  +0.5 to +0.9 ms of module init on every prompt**, gate exits included, measured over 8 warm runs
+  on local APFS — the hook reads `$CLAUDE_MEMORY_HOME`, never the Synology-backed vault, so the
+  166 ms/131 ms cloud-vs-offline split that moves other hooks does not apply here —
+  as the marginal cost after `paths.mjs`, which the entry loads anyway; end to end, spawn to close,
+  that is +0.5 to +1.7 ms on the fastest of 20 gate-exit runs across three alternating passes
+  against `main`, with the medians inside the noise, on a ~37 ms Node-startup floor. The first
+  draft took the shared four from `memory-semantic.mjs` instead and cost 3.8-4.4 ms; the reason it
+  does not is a correctness one rather than that number, and is in the `lexical.mjs` entry above.
+  **Nothing a session sees changes** — the two
+  arms' stdout was replayed byte-for-byte across 24 recorded prompts and the eight stub-server
+  edge cases, and the JSONL log records match field for field, including the `via` key that is the
+  only thing telling the arms apart and the `score` key that must stay absent when the server sends
+  a hit without one. The tests are written against the hook's real hazard: abstaining is its normal
+  behaviour, so every abstention assertion is paired with a positive one on the same corpus.
+
 - **`searchIn()` — the function that decides what a session actually sees — moved into
   `scripts/lib/memory-semantic.mjs` and has tests.** It sat in the 966-line entry file, which is the
   least-checked file in the repo precisely because all four CI invariants key off the `lib/`
@@ -65,9 +118,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   arm SELECTing 0 rows, `avgdl` `NaN`, every score `NaN`, and the hook abstaining, which is exactly
   what it does when it has nothing to say. The two SQL reads in `scripts/memory-semantic.mjs` now
   **bind** `CARD` as a parameter rather than interpolating it, so the query text is fixed and there
-  is nowhere for a quote to land. `hooks/memory-recall.mjs` deliberately keeps its literal:
-  importing the lib would put its module init on the UserPromptSubmit path, which must never wait —
-  a test reads that file's source instead. The test asserts `chunkNote`'s own output reaches
+  is nowhere for a quote to land. `hooks/memory-recall.mjs` kept its literal at first, because
+  importing the lib would put its module init on the UserPromptSubmit path, which must never wait;
+  the entry below took the constant once its SQL moved behind a `lib/`, and the source-scan test
+  that watched the literal now watches for it coming back. The test asserts `chunkNote`'s own output reaches
   `buildBundle`, because asserting `CARD === '(card)'` would pass after precisely the rename that
   breaks everything. **No index is rewritten and no query changes** — the sentinel's value is what it
   always was; what changes is that a future rename now fails `node --test` instead of a session.

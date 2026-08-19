@@ -44,6 +44,11 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { activeModel } from './model-default.mjs';
+// The lexical vocabulary lives in its own import-free module because the recall hook needs it
+// ABOVE its fail-open try, and this module's scope exits the process on an unknown model. Re-
+// exported so there is still one implementation and every existing consumer imports it from here.
+import { CARD, STOP, lexTokens, bm25 } from './lexical.mjs';
+export { CARD, STOP, lexTokens, bm25 };
 import * as paths from '../../hooks/lib/paths.mjs';
 
 // Which sibling servers should this one evict?
@@ -380,14 +385,7 @@ export function contentHash(raw) {
   return crypto.hash('sha256', raw, 'hex');
 }
 
-// The card chunk's heading is a WIRE value, not a label: it is written into the index and matched
-// back out by SQL in scripts/memory-semantic.mjs and by a bare literal in hooks/memory-recall.mjs.
-// Renaming it used to be silent in the worst way (R4 in docs/architecture.md) — recall's keyword arm
-// SELECTs 0 rows, `avgdl` is NaN, every score is NaN, and the hook abstains, which is its NORMAL
-// behaviour. Made a constant 2026-08-19 so producer and consumers cannot drift. memory-recall.mjs
-// keeps the literal on purpose: importing this module would put its init on the UserPromptSubmit
-// path, which must never wait — the test scans that file's source instead.
-export const CARD = '(card)';
+// CARD, the card-chunk heading sentinel, is defined in ./lexical.mjs and re-exported above.
 
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose
 // and a whole-note question cannot reach it — the vector equivalent of the "### Untitled" chunks
@@ -559,38 +557,9 @@ export function samefolderPairs(items, minScore) {
 // silently per-model — today already produced four of those (pooling, dedup threshold, chunk size,
 // batch). RRF consumes RANKS, so it cannot be broken by a model with a compressed similarity band,
 // which is exactly how e5-multi failed. One knob: how much a vector rank outweighs a keyword rank.
-export const STOP = new Set(
-  'the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about have has had will'.split(
-    ' ',
-  ),
-);
-export const lexTokens = (s) =>
-  s
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 2 && !STOP.has(w));
+// STOP and lexTokens are defined in ./lexical.mjs and re-exported at the top of this file.
 
-// Textbook BM25 over the chunk texts already in the index — no second store, no extra dependency.
-export function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
-  const N = docs.length || 1;
-  const df = new Map();
-  for (const d of docs) for (const t of new Set(d.toks)) df.set(t, (df.get(t) || 0) + 1);
-  const avgdl = docs.reduce((a, d) => a + d.toks.length, 0) / N;
-  return docs.map((d) => {
-    const tf = new Map();
-    for (const t of d.toks) tf.set(t, (tf.get(t) || 0) + 1);
-    let s = 0;
-    for (const t of qTokens) {
-      const f = tf.get(t) || 0;
-      if (!f) continue;
-      const n = df.get(t) || 0;
-      s +=
-        (Math.log(1 + (N - n + 0.5) / (n + 0.5)) * (f * (k1 + 1))) /
-        (f + k1 * (1 - b + (b * d.toks.length) / avgdl));
-    }
-    return s;
-  });
-}
+// bm25 is defined in ./lexical.mjs and re-exported at the top of this file.
 
 // `w` weights the vector rank against the keyword rank. w=0 is keyword-only, a large w is
 // vector-only. RRF_K flattens the top of the curve so rank 1 vs 2 is not a landslide.

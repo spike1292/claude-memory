@@ -408,10 +408,13 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
 - **Run 2 — landed as [#27](https://github.com/spike1292/claude-memory/pull/27)**, merged
   2026-08-19 as `e254925`. Item 5 deleted from the backlog; `R1` closed. **It shipped
   non-breaking**, against this plan's own prediction — see the corrected Run 2 section above.
-- **Run 3 — in flight** on `refactor/card-constant-and-searchin` (items 6, 8).
-- Runs 4–6 not started.
+- **Run 3 — landed as [#28](https://github.com/spike1292/claude-memory/pull/28)**, merged
+  2026-08-19. Items 6 and 8 deleted from the backlog; `R4` narrowed and one bare `'(card)'` left in
+  `hooks/memory-recall.mjs` for Run 4 to take.
+- **Run 4 — in flight** on `refactor/recall-lib-twin` (item 7, and the site Run 3 deferred).
+- Runs 5–6 not started.
 
-### What Runs 1 and 2 taught, folded back into the plan
+### What Runs 1–3 taught, folded back into the plan
 
 - **Two of the three findings in the second review round were introduced by the first round.** A
   review pass is itself a change, and needs reviewing. The Review phase runs on the final diff, not
@@ -424,6 +427,13 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
 - **A "docs are stale" finding recurs across runs.** `docs/architecture.md`'s risk table has a row
   per failure this backlog closes, and closing one without marking the row is the single most
   repeated finding so far. Each run's land agent is told which marker its items close.
+- **After a rename or a removal, re-grep the whole repo — prose included.** On #28 each review
+  round found something the *previous* round's fix had left behind: dead imports, then prose the
+  rename had missed, then two more prose sites, then three older dead imports sitting beside the
+  ones just removed. Every one of them would have been found by
+  `grep -rn '<old name>' --include='*.mjs' --include='*.md' .` before reporting done. That grep is
+  now part of the Implement and Fix phases, not an afterthought, and it is the cheapest rule in
+  this list: it turns a review round into a search.
 - **The suggested fix is not always the right fix.** Two reviewers proposed temp-file + `rename()`
   for `trimLog`'s non-atomic rewrite; both were wrong, because `openLog()` hands detached children
   an `O_APPEND` fd that a rename would strand on an unlinked inode. Reviewer findings are input,
