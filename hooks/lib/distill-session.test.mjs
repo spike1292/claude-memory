@@ -382,8 +382,13 @@ test('Stop distils a LONG session, then debounces it', () => {
 // This asserts the post-migration case, where `slug` is `projectKey(cwd)`. The invariant is the
 // weaker "label == indexed directory": on the pre-migration fallback path `slug` is `legacyKey`
 // and both sides move together. That path is not covered here.
-test('the ctx source label carries the same key as the directory it indexes', () => {
+test('the ctx source label carries the same key as the directory it indexes', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-'));
+  // Registered the moment the scratch world exists, not after the assertions: an rmSync on the last
+  // line is skipped whenever an assertion above it throws — exactly when there is something to
+  // leak. #30 added t.after for the same reason, after leaked worlds reached 2.7 GB in $TMPDIR
+  // (2026-08-19, review of #31).
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'mem-checkout');
   const vault = path.join(root, 'vault');
   const bin = path.join(root, 'bin');
@@ -445,5 +450,4 @@ test('the ctx source label carries the same key as the directory it indexes', ()
     );
   // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
-  fs.rmSync(root, { recursive: true, force: true });
 });

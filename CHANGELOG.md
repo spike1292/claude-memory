@@ -169,7 +169,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   so the old and new rows coexist and every note returns twice, halving the effective result window.
   context-mode's only automatic eviction is a 14-day staleness sweep on `indexed_at`, and it cannot
   help while a source is being rewritten. `/memory:prune` therefore now runs its purge-then-reindex
-  even when nothing was deleted, and re-indexes all four layers rather than two — a project-scoped
+  even when nothing was deleted, and re-indexes all five sources rather than two — a project-scoped
   purge followed by two `ctx_index` calls used to leave `Logs` and `Graph` empty until the next
   SessionEnd, which was a pre-existing defect this change made visible. That prune is the migration,
   and it is a one-time cost: after it, the labels agree. Users without context-mode are unaffected — this is the optional second
