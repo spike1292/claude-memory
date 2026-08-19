@@ -380,13 +380,22 @@ export function contentHash(raw) {
   return crypto.hash('sha256', raw, 'hex');
 }
 
+// The card chunk's heading is a WIRE value, not a label: it is written into the index and matched
+// back out by SQL in scripts/memory-semantic.mjs and by a bare literal in hooks/memory-recall.mjs.
+// Renaming it used to be silent in the worst way (R4 in docs/architecture.md) — recall's keyword arm
+// SELECTs 0 rows, `avgdl` is NaN, every score is NaN, and the hook abstains, which is its NORMAL
+// behaviour. Made a constant 2026-08-19 so producer and consumers cannot drift. memory-recall.mjs
+// keeps the literal on purpose: importing this module would put its init on the UserPromptSubmit
+// path, which must never wait — the test scans that file's source instead.
+export const CARD = '(card)';
+
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose
 // and a whole-note question cannot reach it — the vector equivalent of the "### Untitled" chunks
 // FTS5 was returning for L1 notes.
 export function chunkNote(name, raw) {
   const { meta, body } = stripFrontmatter(raw);
   const head = meta ? `${name}: ${meta}` : name;
-  const out = [{ heading: '(card)', text: `${head}\n${body.slice(0, 700)}`.slice(0, MAX_CHARS) }];
+  const out = [{ heading: CARD, text: `${head}\n${body.slice(0, 700)}`.slice(0, MAX_CHARS) }];
   // `_Also asked as:` gets its OWN chunk. The convention was designed for FTS5, where a term only
   // has to be present — but it sits at the END of the note, so in vector space it lands inside the
   // last 1800-char section whose embedding is dominated by that section's actual subject. Measured
@@ -648,9 +657,60 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
     // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
     // the match often (that is their job) but their text is a list of questions — as a one-line
     // brief it reads as noise. Match on any chunk, describe with the card.
-    cardByNote: new Map(
-      rowsUsed.filter((r) => r.heading === '(card)').map((r) => [r.note, r.text]),
-    ),
+    cardByNote: new Map(rowsUsed.filter((r) => r.heading === CARD).map((r) => [r.note, r.text])),
     loadedAt: Date.now(),
   };
+}
+
+// One query, factored out so the CLI and the socket server cannot drift apart. A server that
+// re-implemented ranking would eventually answer differently from the eval harness, and the whole
+// point of the harness is that it measures what a session actually gets.
+//
+// `layer` was `val('--layer')`, a module-level binding in the entry, so it could not travel with the
+// body — it is now the last parameter and both call sites pass that same binding. Everything else is
+// byte-for-byte what ran in the entry (moved 2026-08-19); the arms and their weights are measured
+// numbers and this move is not the place to touch them.
+export function searchIn(index, q, qvec, k, layer = null) {
+  const { rowsUsed, lexDocs } = index;
+  // best chunk per note, so one long note cannot fill the whole result list
+  const best = new Map();
+  for (const r of rowsUsed) {
+    const s = cosine(qvec, new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM));
+    if (!best.has(r.note) || best.get(r.note).s < s) best.set(r.note, { r, s });
+  }
+  const sorted = [...best.values()].sort((a, b) => b.s - a.s);
+
+  // Keyword arm over the SAME units, then rank-fuse.
+  const FUSE_W = Number(process.env.MEMORY_FUSE_W ?? DEFAULT_FUSE_W);
+  let fused = null;
+  if (FUSE_W > 0 && FUSE_W < Infinity) {
+    const qt = lexTokens(q);
+    if (qt.length) {
+      const scores = bm25(lexDocs, qt);
+      const bestLex = new Map();
+      lexDocs.forEach((d, i) => {
+        if (!bestLex.has(d.note) || bestLex.get(d.note) < scores[i]) bestLex.set(d.note, scores[i]);
+      });
+      const lexRanked = [...bestLex.entries()]
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([n]) => n);
+      const order = fuseRRF(
+        sorted.map((x) => x.r.note),
+        lexRanked,
+        FUSE_W,
+        k,
+      );
+      const byNote = new Map(sorted.map((x) => [x.r.note, x]));
+      // A note the keyword arm found but the vector arm ranked below the window still needs a row
+      // to display; pull it from the chunk table rather than dropping it.
+      fused = order.map((n) => byNote.get(n) ?? { r: lexDocs.find((d) => d.note === n), s: 0 });
+    }
+  }
+  // Layer quota — OFF by default, refuted at k=5 on both case sets (see fuseReserved).
+  const reserve = layer ? 0 : Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
+  const base = fused ?? sorted.slice(0, k);
+  return reserve > 0
+    ? fuseReserved(fused ? base.map((x) => x) : sorted, k, reserve, (x) => x.r.layer === 'Memory')
+    : base;
 }

@@ -11,10 +11,12 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
+  CARD,
   MAX_CHARS,
   MODELS,
   bm25,
@@ -26,6 +28,8 @@ import {
   fuseRRF,
   buildBundle,
   buildLexDocs,
+  searchIn,
+  DIM,
   evictableSockets,
   mtimeCache,
   singleFlight,
@@ -588,6 +592,35 @@ test('mtimeCache: serves cached until the source is newer, and reloads on a fail
   assert.equal(cache.size(), 2, 'projects are cached independently');
 });
 
+// R4 in docs/architecture.md: the card heading is a wire value with one producer here and three
+// consumers — buildBundle below, two SQL reads in scripts/memory-semantic.mjs, and a bare literal in
+// hooks/memory-recall.mjs. A rename that misses one is silent: the keyword arm SELECTs 0 rows and
+// the hook abstains, which is what it does whenever it has nothing to say. Asserting
+// `CARD === '(card)'` would be worthless — it passes after exactly that rename. So assert the
+// producer's OWN output reaches the consumer, and read the one file that cannot import CARD.
+test('CARD: chunkNote emits it and every consumer still agrees', () => {
+  const chunks = chunkNote('n', '---\ndescription: D\n---\nintro body\n');
+  const card = chunks.find((c) => c.heading === CARD);
+  assert.ok(card, 'chunkNote must emit a chunk headed CARD');
+
+  // Fed the producer's own headings, never hand-written ones — that is what makes this a divergence
+  // test rather than a restatement of the literal.
+  const rows = chunks.map((c) => ({ note: 'n', layer: 'Memory', ...c }));
+  const bundle = buildBundle('s', '/tmp/x.db', rows);
+  assert.equal(bundle.cardByNote.get('n'), card.text, 'buildBundle must find the card by CARD');
+
+  // The two SQL consumers BIND CARD as a parameter, so they cannot drift and nothing here can check
+  // them more cheaply than the binding already does. hooks/memory-recall.mjs is the exception, held
+  // back on 2026-08-19 because importing this module would put its init on the UserPromptSubmit
+  // path. This assertion is the only thing watching it.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const recall = fs.readFileSync(path.join(here, '../../hooks/memory-recall.mjs'), 'utf8');
+  assert.ok(
+    recall.includes(`WHERE heading = '${CARD}'`),
+    'hooks/memory-recall.mjs still spells the card heading out — change it in step with CARD',
+  );
+});
+
 // buildBundle — everything after the SQL. Both of its decisions fail silently: dropping alias
 // chunks changes retrieval without erroring, and a missing card map degrades every brief to raw
 // chunk text that still looks like a result.
@@ -619,4 +652,131 @@ test('buildBundle: card map, alias ablation, and the lex mode it is given', () =
   // lexMode is threaded through rather than read from the environment here — the entry owns env.
   assert.equal(buildBundle('p', '/d', rows, { lexMode: 'note' }).lexDocs.length, 2);
   assert.equal(buildBundle('p', '/d', rows, { lexMode: 'chunk' }).lexDocs.length, 4);
+});
+
+// searchIn — the whole query path after the SQL, and the one function that decides what a session
+// actually sees. It lived untested in the 966-line entry until 2026-08-19.
+//
+// The trap this test is built to avoid: a fixture where the fused order happens to equal one arm's
+// order passes while the other arm is dead. bge-m3 scoring @5 25.0% mean-pooled vs 67.9% cls-pooled
+// is what a silently broken arm looks like — confident, plausible, wrong. So the corpus is rigged so
+// the three orders are all DIFFERENT, and the default weight produces the one that neither arm can
+// produce alone:
+//   vector alone   a b c   (cosine 1.0 / 0.9 / 0.8)
+//   keyword alone  c b     (c has both query terms, b one, a none)
+//   fused, w=2     b c a   <- b's second place on BOTH arms beats a first place on either
+test('searchIn: RRF fuses both arms, and neither arm alone gives the answer', () => {
+  // vec is read as `new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM)`, so these must be real
+  // DIM-wide buffers; cosine() is a bare dot product, so component 0 IS the score.
+  const vec = (x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  // Deliberately NOT in cosine order: a fixture whose row order already is the expected order lets a
+  // vector arm that ignores its scores entirely pass.
+  const rows = [
+    {
+      note: 'c',
+      layer: 'Memory',
+      heading: '(body)',
+      text: 'elephant palindrome puzzle notes',
+      vec: vec(0.8),
+    },
+    {
+      note: 'a',
+      layer: 'Memory',
+      heading: '(body)',
+      text: 'quarterly figures for the northern depot',
+      vec: vec(1.0),
+    },
+    {
+      note: 'b',
+      layer: 'Memory',
+      heading: '(body)',
+      text: 'elephant seals near the northern depot',
+      vec: vec(0.9),
+    },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const q = 'elephant palindrome';
+  const order = () => searchIn(index, q, qvec, 3).map((x) => x.r.note);
+
+  const w = process.env.MEMORY_FUSE_W;
+  const reserve = process.env.MEMORY_FUSE_RESERVE;
+  delete process.env.MEMORY_FUSE_W; // exercise DEFAULT_FUSE_W, the weight that actually ships
+  delete process.env.MEMORY_FUSE_RESERVE; // the layer quota is off by default and stays off here
+  try {
+    // w=0 turns fusion off entirely: this is the vector arm's own ranking, nothing else.
+    process.env.MEMORY_FUSE_W = '0';
+    assert.deepEqual(order(), ['a', 'b', 'c'], 'vector arm alone ranks by cosine');
+    // A weight that small makes the keyword rank dominate every fused score, so this is the keyword
+    // arm's own ranking — including that `a`, which matches no query term, is last.
+    process.env.MEMORY_FUSE_W = '0.0001';
+    assert.deepEqual(order(), ['c', 'b', 'a'], 'keyword arm alone ranks by BM25');
+
+    delete process.env.MEMORY_FUSE_W;
+    assert.deepEqual(
+      order(),
+      ['b', 'c', 'a'],
+      'fused order is neither arm alone — a dead arm would return one of the two above',
+    );
+    // Scores ride along from the vector arm even when the keyword arm decided the position; the
+    // callers print them and the eval harness scores them.
+    assert.deepEqual(
+      searchIn(index, q, qvec, 3).map((x) => +x.s.toFixed(2)),
+      [0.9, 0.8, 1.0],
+    );
+    // k truncates the fused list, not each arm's list — the window is applied after fusion.
+    assert.deepEqual(
+      searchIn(index, q, qvec, 2).map((x) => x.r.note),
+      ['b', 'c'],
+    );
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+    if (reserve === undefined) delete process.env.MEMORY_FUSE_RESERVE;
+    else process.env.MEMORY_FUSE_RESERVE = reserve;
+  }
+});
+
+// The `layer` argument only gates the layer quota: `--layer` already filtered the corpus, so
+// reserving slots for Memory inside an all-Memory window would be a no-op that still reorders.
+test('searchIn: a layer-filtered query disables the reserve, an unfiltered one applies it', () => {
+  const vec = (x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const rows = [
+    { note: 'm1', layer: 'Memory', heading: '(body)', text: 'three', vec: vec(0.1) },
+    { note: 'i2', layer: 'Insights', heading: '(body)', text: 'two', vec: vec(0.8) },
+    { note: 'i1', layer: 'Insights', heading: '(body)', text: 'one', vec: vec(0.9) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const w = process.env.MEMORY_FUSE_W;
+  const reserve = process.env.MEMORY_FUSE_RESERVE;
+  process.env.MEMORY_FUSE_W = '0'; // isolate the quota from fusion; the query below matches nothing
+  process.env.MEMORY_FUSE_RESERVE = '1';
+  try {
+    assert.deepEqual(
+      searchIn(index, 'zzz', qvec, 2, null).map((x) => x.r.note),
+      ['i1', 'm1'],
+      'unfiltered: the weakest Insights note gives up its slot to L1',
+    );
+    assert.deepEqual(
+      searchIn(index, 'zzz', qvec, 2, 'Memory').map((x) => x.r.note),
+      ['i1', 'i2'],
+      'layer-filtered: reserve is off, so the window is pure cosine order',
+    );
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+    if (reserve === undefined) delete process.env.MEMORY_FUSE_RESERVE;
+    else process.env.MEMORY_FUSE_RESERVE = reserve;
+  }
 });

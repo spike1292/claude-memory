@@ -115,10 +115,11 @@ because Claude Code names `~/.claude/projects/<slug>/` after it. Both live in
                     │ hooks/lib/hook-io.mjs│  ┌────────────────────┐ ┌────────────────────────┐
                     │ stdin · debounce ·   │  │ scripts/lib/       │ │ scripts/               │
                     │ detach() ·findClaude()│ │ memory-audit-checks│ │ memory-semantic.mjs    │
-                    └──────────────────────┘  └────────────────────┘ │ 843 lines — see G1     │
+                    └──────────────────────┘  └────────────────────┘ │ 920 lines — see G1     │
                                                                      │ CLI · model lifecycle ·│
                                                                      │ SCHEMA OWNER · indexer·│
-                                                                     │ 4 reports·search·DAEMON│
+                                                                     │ 4 reports·loadIndex·   │
+                                                                     │ DAEMON                 │
                                                                      └────────────────────────┘
 ```
 
@@ -344,25 +345,30 @@ four that carry the real behaviour it is still reversed:
 
 | Entry | Entry | Lib | Entry tested? |
 | --- | ---: | ---: | --- |
-| [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **843** | 628 | no |
+| [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **920** | 716 | no |
 | [`scripts/memory-audit-checks.mjs`](../scripts/memory-audit-checks.mjs) | **321** | 241 | no |
 | [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **257** | 84 | no |
 | [`hooks/memory-recall.mjs`](../hooks/memory-recall.mjs) | **253** | *none* | no |
 
 **This is not cosmetic.** All four CI invariants key off the `lib/` boundary, so code left in an
 entry is **exempt by construction** — and the `node:sqlite`-only-in-entries rule actively pushes
-database code there. The 843-line file is the least-checked file in the repo.
+database code there. The 920-line file is the least-checked file in the repo.
 
 `scripts/memory-semantic.mjs` is a god object with seven responsibilities in one module scope: CLI
 parsing, ONNX model lifecycle (`loadEmbedder`/`unloadEmbedder`/`embed`), **sole owner of the SQLite
 schema** (`CREATE TABLE chunks`), the indexer, four analysis reports, the search engine
-(`loadIndex`/`searchIn`), and a network daemon. Dispatch is straight-line
-`if (flag('--x')) { ... process.exit() }` — block order *is* precedence, and `flag('--serve')` is
+(`loadIndex`; `searchIn` moved to the lib on 2026-08-19), and a network daemon. Dispatch is
+straight-line `if (flag('--x')) { ... process.exit() }` — block order *is* precedence, and `flag('--serve')` is
 tested in five separate places. The file cannot be imported, only executed, which is why it has no
 test.
 
 The split was drawn along *"is it testable?"*, not *"is it a boundary?"*. `searchIn()` — the
-function that decides what you actually see — stayed on the untested side.
+function that decides what you actually see — stayed on the untested side until 2026-08-19, when it
+moved to `lib/` unchanged and got its first test. It was always pure (a bundle in, ranked rows out),
+so nothing but the argv-derived `--layer` binding held it there; that is now its last parameter.
+`loadIndex()` stays, and stays untested: it opens the database, and `lib/` may not import
+`node:sqlite`. That is the shape of the remaining gap — what is left in the entry is left there
+*because* of a CI rule, not by accident.
 
 ## B1 — `hooks/` and `scripts/` are not layers
 
@@ -395,7 +401,7 @@ imported-not-spawned, to avoid a fork), but it puts the audit module's import co
 | Service | Invoked from | Contract lives where |
 | --- | --- | --- |
 | the search daemon | `memory-recall.mjs` over a unix socket | **hand-written on both sides**; only `QUIT` is shared |
-| the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and five bare `'(card)'` literals |
+| the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and the card heading — `CARD` since 2026-08-19, except the one bare literal in `memory-recall.mjs` |
 | headless `claude` | `lib/distill-session.mjs` → `claude -p --model haiku` | argv, hardcoded model |
 | `context-mode` CLI | `lib/distill-session.mjs` → `cm index` ×5 | argv, and a **different** identity scheme (H7) |
 
@@ -503,7 +509,7 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | ~~R1~~ | ~~**Full re-embed storm**~~ — **CLOSED 2026-08-19 (#27)** | mtime is now a fast-path hint, not the decision: a note whose mtime moved is read and hashed (`contentHash()`), and re-embedded only if the bytes actually changed. Synology churn costs one read per touched note and the new mtime is written back, so the next run takes the fast path again | — |
 | ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
-| R4 | **Recall's keyword arm dies** | change the `'(card)'` sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** | keyword arm dead, no signal |
+| R4 | **Recall's keyword arm dies** — **narrowed, NOT closed, 2026-08-19** | change the card sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** The sentinel is now `CARD`, bound as a SQL parameter by both `memory-semantic.mjs` reads; `memory-recall.mjs` keeps its literal (importing the lib would put module init on the prompt path) and a test in `memory-semantic.test.mjs` reads that file's source to catch the drift. That test is a source-text scan, so it catches a `CARD` rename and **not** an edit to recall's own SQL — the row stays open until backlog item 7 puts recall's SELECT behind a `lib/` and it can take `CARD` like every other consumer | keyword arm dead, no signal |
 | R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** — **halved 2026-08-19 (#24)** | growth is unchanged (no `VACUUM`; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `prune-logs.sh` touches only the vault) but it is no longer unobserved: `doctor.sh` reports the size of `$STATE` and warns past 2 GB, and the hook logs — the one component that grew without bound — are capped at 1 MB in `logBanner()`/`openLog()` | bounded logs; the rest is multi-GB but now **noticed early** |
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |
