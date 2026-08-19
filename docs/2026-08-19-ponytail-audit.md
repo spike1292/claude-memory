@@ -14,8 +14,8 @@ audit gets a new dated file.
 
 | # | Tag | Cut | Replacement | Lines |
 | --- | --- | --- | --- | --- |
-| 1 | `delete` | [`docs/refactor-backlog.md`](refactor-backlog.md) — all fourteen items landed, and the file says so in its own header | The CHANGELOG and PRs #20, #24, #27–#31 are the record. Keep declined item 15 as one paragraph in `architecture.md` Part 2 | −195 |
-| 2 | `delete` | [The original plugin-design spec](superpowers/specs/2026-08-15-claude-memory-plugin-design.md) — superseded by `architecture.md`; its only inbound link is the index row in this directory's README | Nothing | −349 |
+| 1 | `delete` | `docs/refactor-backlog.md` (deleted here) — all fourteen items landed, and the file said so in its own header | The CHANGELOG and PRs #20, #24, #27–#31 are the record. Keep declined item 15 as one paragraph in `architecture.md` Part 2 | −195 |
+| 2 | `delete` | `docs/superpowers/specs/2026-08-15-claude-memory-plugin-design.md` (deleted here) — superseded by `architecture.md`; its only inbound link was the index row in this directory's README | Nothing | −349 |
 | 3 | `delete` | `--layer`, measured refuted (EN @5 67.9% → 53.6%) with two docs and a test now existing to tell people not to pass it | Delete the flag, the `preFiltered` plumbing and the eval passthrough; keep the warning as history in `commands/eval.md` | −40 |
 | 4 | `yagni` | ~~The `bge-small-en` and `e5-multi` profiles in `MODELS`~~ **DECLINED** — see below | — | 0 |
 | 5 | `shrink` | The env-then-config parse, written out four times | One `num(envName, configKey, default)` in `paths.mjs` | −12 |
