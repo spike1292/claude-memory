@@ -593,11 +593,15 @@ test('mtimeCache: serves cached until the source is newer, and reloads on a fail
 });
 
 // R4 in docs/architecture.md: the card heading is a wire value with one producer here and four
-// consumers — buildBundle below, two SQL reads in scripts/memory-semantic.mjs, and a bare literal in
-// hooks/memory-recall.mjs. A rename that misses one is silent: the keyword arm SELECTs 0 rows and
-// the hook abstains, which is what it does whenever it has nothing to say. Asserting
-// `CARD === '(card)'` would be worthless — it passes after exactly that rename. So assert the
-// producer's OWN output reaches the consumer, and read the one file that cannot import CARD.
+// consumers — buildBundle below, two SQL reads in scripts/memory-semantic.mjs, and the recall hook.
+// A rename that misses one is silent: the keyword arm SELECTs 0 rows and the hook abstains, which
+// is what it does whenever it has nothing to say. Asserting `CARD === '(card)'` would be worthless
+// — it passes after exactly that rename. So assert the producer's OWN output reaches the consumer.
+//
+// All four consumers now BIND CARD, so drift is impossible rather than merely watched: recall's
+// SELECT moved behind hooks/lib/memory-recall.mjs on 2026-08-19 and the hook imports the constant.
+// What remains below is the guard against that being undone — a re-inlined literal would restore
+// exactly the silent failure R4 described.
 test('CARD: chunkNote emits it and every consumer still agrees', () => {
   const chunks = chunkNote('n', '---\ndescription: D\n---\nintro body\n');
   const card = chunks.find((c) => c.heading === CARD);
@@ -609,19 +613,21 @@ test('CARD: chunkNote emits it and every consumer still agrees', () => {
   const bundle = buildBundle('s', '/tmp/x.db', rows);
   assert.equal(bundle.cardByNote.get('n'), card.text, 'buildBundle must find the card by CARD');
 
-  // The two SQL consumers BIND CARD as a parameter, so they cannot drift and nothing here can check
-  // them more cheaply than the binding already does. hooks/memory-recall.mjs is the exception, held
-  // back on 2026-08-19 because importing this module would put its init on the UserPromptSubmit
-  // path. This assertion is the only thing watching it.
+  // Every SQL consumer binds CARD as a parameter, so none of them can drift. The one that used to
+  // spell the heading out is hooks/memory-recall.mjs; this reads its source to confirm it still
+  // does not. Matched loosely on purpose: prettier owns .mjs formatting, so an exact-text
+  // assertion would fail on a re-wrap with a message about a rename that never happened.
   const here = path.dirname(fileURLToPath(import.meta.url));
   const recall = fs.readFileSync(path.join(here, '../../hooks/memory-recall.mjs'), 'utf8');
-  // Matched loosely on purpose: prettier owns .mjs formatting, so re-wrapping that SELECT string —
-  // or any whitespace edit inside it — would fail an exact-text assertion with a message about a
-  // rename that never happened. This fails only on the drift it exists to catch (2026-08-19).
-  const cardSelect = new RegExp(`WHERE\\s+heading\\s*=\\s*'${CARD.replace(/[()]/g, '\\$&')}'`);
-  assert.ok(
-    cardSelect.test(recall),
-    'hooks/memory-recall.mjs still spells the card heading out — change it in step with CARD',
+  assert.match(recall, /\bCARD\b/, 'hooks/memory-recall.mjs must import the constant');
+  // All three quote forms, because prettier normalises .mjs to single quotes only for strings it
+  // rewrites — a hand-added double-quoted or templated SQL string would satisfy a single-quote-only
+  // negative match and pass this test while restoring exactly the R4 failure.
+  assert.doesNotMatch(
+    recall,
+    /heading\s*=\s*['"`]/,
+    'hooks/memory-recall.mjs must BIND the card heading, never spell it out — an inlined literal is\n' +
+      'the silent-abstention failure R4 was about',
   );
 });
 

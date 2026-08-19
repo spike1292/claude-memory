@@ -37,35 +37,33 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 > on every existing install. Not breaking; no minor bump on that account.
 
 > **Item 6 (`'(card)'` becomes a constant) landed on 2026-08-19**, with item 8, and is deleted from
-> this list, per the rule at the top. It **narrows** `R4` rather than closing it: the sentinel is
-> `CARD` in `scripts/lib/memory-semantic.mjs`, bound as a SQL parameter at both reads in
-> `scripts/memory-semantic.mjs`, but `hooks/memory-recall.mjs:176` still spells it out — importing
-> the lib there would put its module init on the `UserPromptSubmit` path. A test reads that file's
-> source so the drift is loud, and **item 7 closes `R4` properly** by giving recall a `lib/` twin.
-> Wave 2 is finished; numbering below is unchanged.
+> this list, per the rule at the top. It narrowed `R4` and left one bare literal in
+> `hooks/memory-recall.mjs`; **item 7 took that site and closed `R4`** the same day. Wave 2 is
+> finished; numbering below is unchanged.
 
 ---
 
 ## Wave 3 — the missing seam
 
-### 7. Give `memory-recall.mjs` a `lib/` twin
-
-- **Goal:** the structural fix with the widest reach. Closes the last entry/`lib` gap (`G1`),
-  removes the duplicate BM25 and the copy-pasted `STOP` list (`H6`, including its duplicated
-  `with`), and makes the prompt path testable for the first time. **It also inherits item 6's
-  deferred site** — once recall's SQL lives behind a `lib/`, that last bare `'(card)'` can take
-  `CARD` and `R4` closes for real.
-- **Also closes:** `R4` (item 6, 2026-08-19, narrowed it and left this site).
-- **Files:** new `hooks/lib/memory-recall.mjs` + `hooks/lib/memory-recall.test.mjs`; slim
-  [`hooks/memory-recall.mjs`](../hooks/memory-recall.mjs).
-- **Diff plan:** move the pure parts — gates, tokenisation, BM25 scoring, hit formatting, the log
-  record shape. **Leave `node:sqlite` and `net` in the entry**: CI requires it, and it keeps the
-  socket out of the test. The lib takes rows as values. Then delete recall's inline
-  `STOP`/`toks`/BM25 in favour of the lib's, resolving three of `H6`'s four forks.
-- **Risk: medium.** This is the `UserPromptSubmit` path; a regression degrades every prompt. It does
-  fail safe by construction (`process.exit(0)` throughout, "fail-open, always"), and the change is
-  extraction rather than redesign. Verify against a real prompt before merging.
-- **~2 h.**
+> **Item 7 (give `memory-recall.mjs` a `lib/` twin) landed on 2026-08-19** and is deleted from this
+> list, per the rule at the top. It closes `G1`'s last hole — `hooks/memory-recall.mjs` is 153 lines
+> of stdin, socket, `node:sqlite` and stdout over a 148-line `hooks/lib/memory-recall.mjs`, which has
+> the repo's first test of the prompt path. It closes `R4` for real: the SELECT binds `CARD`. It
+> resolves three of `H6`'s four forks — `STOP`, the tokeniser and BM25 now come from
+> `scripts/lib/lexical.mjs`, and the two implementations were equivalent, so no ranking moved.
+> **The measured price is +0.5 to +0.9 ms of module init on every prompt**, gate exits included
+> (8 runs, warm, marginal after `paths.mjs`, which the entry loads anyway) — and end to end,
+> spawn to close, +0.5 to +1.7 ms on the fastest of 20 gate-exit runs across three alternating
+> passes against `main`, with the medians inside the noise, on a ~37 ms Node-startup floor. Item 6
+> deferred this site on the assumption the cost would be material and it is not — but the reason
+> the four live in their own import-free module rather than in `scripts/lib/memory-semantic.mjs`
+> is not the 3.8-4.4 ms that one costs to import. It is that a hook entry imports its `lib/` twin
+> statically,
+> above the fail-open try and above the arming gate, and `memory-semantic.mjs`'s module scope does
+> `console.log` + `process.exit(1)` on an unknown model — a line on the hook's **stdout**, which
+> Claude Code injects as context, on every prompt of a disarmed install. Anything reachable from a
+> hook's `lib/` twin is uncatchable by construction; that is the rule, not the milliseconds.
+> The `MIN_SCORE` gate still has no case set behind it — that is item 12, unchanged.
 
 > **Item 8 (move `searchIn()` into the lib) landed on 2026-08-19**, with item 6, and is deleted from
 > this list, per the rule at the top. It narrows `G1`: the body moved unchanged into
@@ -130,12 +128,12 @@ the shell version keeps the trap and buys less.
 ### 12. Give `MIN_SCORE = 6.0` a case set
 
 - **Goal:** the one number in the repo that breaks the "no retrieval number without a case set"
-  convention — and after item 7 it is finally testable.
+  convention. Item 7 landed on 2026-08-19, so it is now testable and now shares the lib's BM25.
 - **Files:** [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) /
-  [`scripts/lib/memory-eval.mjs`](../scripts/lib/memory-eval.mjs), then the constant in the new
-  recall lib.
-- **Diff plan:** `--mode lexical` currently measures the *lib's* BM25, not recall's. After item 7
-  they are one implementation, so it becomes the right instrument — run it against the versioned
+  [`scripts/lib/memory-eval.mjs`](../scripts/lib/memory-eval.mjs), then `MIN_SCORE` in
+  [`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs).
+- **Diff plan:** `--mode lexical` used to measure the *lib's* BM25 and not recall's. Since item 7
+  they are one implementation, so it is now the right instrument — run it against the versioned
   authored case set and record the sweep in a comment beside the constant, the way `MIN_COS` already
   does.
 - **Risk: low** technically; the cost is the eval run, not the diff.
@@ -179,15 +177,19 @@ a relocation would have been cheapest, and it still did not pay for itself.
 | --- | --- | ---: | --- |
 | ~~1~~ | ~~1–4~~ | — | all landed: item 1 in #20, items 2–4 in #24 |
 | ~~2~~ | ~~5~~ | — | landed in #27: killed the highest-probability failure; no bump needed, it forces no re-index |
-| ~~3~~ | ~~6, 8~~ | — | landed 2026-08-19: two extractions with tests; `R4` narrowed, not closed — item 7 closes it |
-| 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12, and closes the `R4` site item 6 deferred |
+| ~~3~~ | ~~6, 8~~ | — | landed 2026-08-19 as #28: two extractions with tests; `R4` narrowed, not closed — item 7 closed it |
+| ~~4~~ | ~~7~~ | — | landed 2026-08-19: the structural fix; `G1`'s last hole and `R4` both closed, three of `H6`'s four forks gone. Items 11 and 12 are now unblocked |
 | 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
 | 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |
 
-Item 15 is non-work. **Of what is left, only items 7 and 9 change behaviour** — everything else
-is observation, extraction, or tests.
+Item 15 is non-work. **Of what is left, only item 9 changes behaviour** — everything else is
+observation, extraction, or tests. (Item 7 was the other one, and it landed.)
 
-Item **11** (CI enforcing the entry/`lib` rule) got cheaper: #20 added three compliant entries, so
-the rule now holds in 8 of 12 rather than 5 of 9, and the allowlist it would need is down to four
-names.
+Item **11** (CI enforcing the entry/`lib` rule) got cheaper twice: #20 added three compliant
+entries, and item 7 took the last hook entry that had no twin at all. The mechanical form of the
+check — does `<dir>/lib/<name>.mjs` exist for every non-test `hooks/*.mjs` and `scripts/*.mjs` —
+now fails on exactly **one** file, `scripts/env.mjs`, whose twin is `hooks/lib/env-shell.mjs`:
+neither same-named nor in the sibling directory (see `B1`). So the allowlist is one name with one
+stated reason, not the four it would have needed before. Re-counted 2026-08-19 by running that
+loop; the older "four names" figure predates items 7 and 8.

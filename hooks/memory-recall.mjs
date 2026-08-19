@@ -6,7 +6,11 @@
 //            than no note, and it teaches the reader to ignore the brief.
 // OBSERVABLE every decision — inject or abstain, with the reason — appends one JSONL line, so the
 //            abstention rate is measurable later instead of assumed.
-// FAIL-OPEN  any error exits 0 silently. Recall must never break a prompt.
+// FAIL-OPEN  any error inside the try exits 0 silently. Recall must never break a prompt. The
+//            static imports below are the exception and cannot be made to fail open: a missing
+//            `node:sqlite` (Node < 22.5, or Bun) or a typo'd module path exits 1 with a stack
+//            trace, which hooks.json's trailing `|| exit 0` masks into transcript noise rather
+//            than a blocked prompt. Adding an import here adds one more of those.
 //
 // Why this exists: MEMORY.md is auto-loaded in full every session and grows without limit — the
 // system's oldest open gap. Per-prompt retrieval is the alternative to loading everything always.
@@ -16,6 +20,17 @@
 // loading model and index per prompt costs ~1540ms warm and ~3100ms cold; that is what the server
 // exists to amortise. If the socket is missing or slow the hook spawns it for next time and answers
 // this prompt from keyword search, so a prompt never waits on infrastructure.
+//
+// This file owns argv/stdin/stdout, the socket and `node:sqlite`, and nothing else. The gates, the
+// ranking, the formatting and the log-record shapes live in hooks/lib/memory-recall.mjs with their
+// tests — `node:sqlite` stays HERE precisely so that module can be imported by a test without one.
+//
+// That twin is imported STATICALLY, so its whole graph runs above the try AND above the arming gate
+// on every prompt of every session. It may therefore only reach modules that cannot throw and
+// cannot print: today `scripts/lib/lexical.mjs`, which imports nothing at all. It must NOT reach
+// `scripts/lib/memory-semantic.mjs` — that module's scope `console.log`s and `process.exit(1)`s on
+// an unknown model, and process.exit is not catchable by the try below even if it were inside it.
+// Anything that can fail belongs in an `await import()` in the try, like model-default.mjs below.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,17 +38,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
-
-const MAX_NOTES = 4;
-const MAX_CHARS = 900; // ~250 tokens
-const MIN_SCORE = 6.0; // below this the top hit is not worth the reader's attention
-const MIN_PROMPT = 25; // one-word prompts have no retrievable intent
-
-const STOP = new Set(
-  'the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about with have has had will'.split(
-    ' ',
-  ),
-);
+import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memory-recall.mjs';
 
 // Ships INERT. Injecting into every prompt changes how every session reads, so arming it is the
 // user's call:  {"recall": true} in $CLAUDE_MEMORY_HOME/config.json, or MEMORY_RECALL_ENABLED=1.
@@ -129,125 +134,20 @@ try {
     }
   }
 
-  if (semantic?.results?.length) {
-    // Cosine needs its own gate — MIN_SCORE below is BM25-scaled and means nothing here. Calibrated
-    // 2026-08-15 on 5 on-topic and 5 deliberately off-topic prompts: on-topic 0.495-0.736, off-topic
-    // 0.351-0.506. The bands OVERLAP, so no threshold is clean; 0.55 rejects all 5 off-topic and
-    // admits 4 of 5 on-topic. Erring toward silence is the design rule. Sample is 10 prompts — treat
-    // it as a starting point, and read the abstain rate in the log rather than trusting this number.
-    const MIN_COS = 0.55;
-    const hits = semantic.results.filter((r) => r.score >= MIN_COS).slice(0, MAX_NOTES);
-    if (!hits.length) {
-      log({
-        abstained: true,
-        reason: 'low confidence (semantic)',
-        top: semantic.results[0]?.note,
-        score: semantic.results[0]?.score,
-        via: 'server',
-      });
-      process.exit(0);
-    }
-    const lines = [];
-    let used = 0;
-    for (const r of hits) {
-      const first = (r.text ?? '').split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
-      const line = `- [[${r.note}]] (${r.layer}): ${first.slice(0, 150)}`;
-      if (used + line.length > MAX_CHARS) break;
-      lines.push(line);
-      used += line.length;
-    }
-    if (lines.length) {
-      log({
-        abstained: false,
-        injected: lines.length,
-        chars: used,
-        top: hits[0].note,
-        score: hits[0].score,
-        via: 'server',
-      });
-      console.log(
-        `Possibly relevant vault notes (retrieved, not verified — open one before relying on it):\n${lines.join('\n')}`,
-      );
-      process.exit(0);
-    }
+  const fromServer = semanticArm(semantic?.results);
+  if (fromServer) {
+    log(fromServer.entry);
+    if (fromServer.output) console.log(fromServer.output);
+    process.exit(0);
   }
 
+  // Opened only once the server has failed to answer, and never closed — process exit collects it.
   const db = new DatabaseSync(dbPath);
-  const cards = db.prepare("SELECT note, layer, text FROM chunks WHERE heading = '(card)'").all();
-  if (!cards.length) {
-    log({ abstained: true, reason: 'empty index' });
-    process.exit(0);
-  }
+  const cards = db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD);
 
-  const toks = (s) =>
-    s
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2 && !STOP.has(w));
-  const qt = [...new Set(toks(prompt))];
-  if (!qt.length) {
-    log({ abstained: true, reason: 'no content words' });
-    process.exit(0);
-  }
-
-  const docs = cards.map((c) => ({ ...c, toks: toks(c.text) }));
-  const df = new Map();
-  for (const d of docs) for (const t of new Set(d.toks)) df.set(t, (df.get(t) || 0) + 1);
-  const avgdl = docs.reduce((a, d) => a + d.toks.length, 0) / docs.length;
-  const N = docs.length;
-
-  const scored = docs
-    .map((d) => {
-      const tf = new Map();
-      for (const t of d.toks) tf.set(t, (tf.get(t) || 0) + 1);
-      let s = 0;
-      for (const t of qt) {
-        const f = tf.get(t) || 0;
-        if (!f) continue;
-        const n = df.get(t) || 0;
-        s +=
-          (Math.log(1 + (N - n + 0.5) / (n + 0.5)) * (f * 2.2)) /
-          (f + 1.2 * (0.25 + (0.75 * d.toks.length) / avgdl));
-      }
-      return { note: d.note, layer: d.layer, text: d.text, s };
-    })
-    .sort((a, b) => b.s - a.s);
-
-  if (!scored.length || scored[0].s < MIN_SCORE) {
-    log({
-      abstained: true,
-      reason: 'low confidence',
-      top: scored[0]?.note ?? null,
-      score: +(scored[0]?.s ?? 0).toFixed(2),
-    });
-    process.exit(0);
-  }
-
-  const lines = [];
-  let used = 0;
-  for (const r of scored.slice(0, MAX_NOTES)) {
-    if (r.s < MIN_SCORE / 2) break; // trailing weak hits add noise, not context
-    const first = r.text.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
-    const line = `- [[${r.note}]] (${r.layer}): ${first.slice(0, 150)}`;
-    if (used + line.length > MAX_CHARS) break;
-    lines.push(line);
-    used += line.length;
-  }
-  if (!lines.length) {
-    log({ abstained: true, reason: 'budget' });
-    process.exit(0);
-  }
-
-  log({
-    abstained: false,
-    injected: lines.length,
-    chars: used,
-    top: scored[0].note,
-    score: +scored[0].s.toFixed(2),
-  });
-  console.log(
-    `Possibly relevant vault notes (retrieved, not verified — open one before relying on it):\n${lines.join('\n')}`,
-  );
+  const fromKeyword = keywordArm(cards, prompt);
+  log(fromKeyword.entry);
+  if (fromKeyword.output) console.log(fromKeyword.output);
 } catch {
   process.exit(0); // fail-open, always
 }

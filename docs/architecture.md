@@ -185,11 +185,14 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
                           │                          emit "- [[note]] (layer): ..."
                           │
                           └─ no  ──▶ spawn --serve DETACHED for next time
-                                     └▶ FALLBACK: own BM25 over
-                                        SELECT ... WHERE heading = '(card)'
-                                        gate MIN_SCORE 6.0        (second impl — H6)
+                                     └▶ FALLBACK: BM25 over
+                                        SELECT ... WHERE heading = ?   (binds CARD)
+                                        gate MIN_SCORE 6.0   (the lib's bm25() since
+                                                              2026-08-19 — H6)
 
   Every decision is logged, abstentions included. A prompt must NEVER wait on this.
+  The entry owns stdin, the socket, node:sqlite and stdout; every gate, score and log
+  record above is hooks/lib/memory-recall.mjs, which takes rows as values.
 ```
 
 ### Flow 3 — the search daemon
@@ -310,6 +313,7 @@ exists because a comment once claimed a CI check that did not exist.
 | Invariant | Enforced by | Notes |
 | --- | --- | --- |
 | `lib/` modules import without side effects | **CI** — `ci.yml` "lib/ modules import without side effects" | imports each and fails on *any* output |
+| `hooks/lib/` modules import cleanly under a **bad config** too | **CI** step | added 2026-08-19; the side-effect check above runs with a valid model, so it passed a `lib/` whose import graph `console.log`+`exit(1)`s on an unknown one — onto hook stdout, above the fail-open try |
 | `node:test` imported only by `*.test.mjs` | **CI** step | a top-level import prints the whole report to stdout, which Claude Code reads |
 | `node:sqlite` imported only by entry points | **CI** step | added 2026-08-18; the side-effect check cannot catch it (it suppresses `ExperimentalWarning`) |
 | No Python anywhere | **CI** step | `git ls-files '*.py'` + `git grep -l python -- '*.sh'` |
@@ -325,7 +329,7 @@ exists because a comment once claimed a CI check that did not exist.
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in 8 of 12 (was 5 of 9 before #20); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in 9 of 12 (was 5 of 9 before #20, 8 of 12 before the recall twin); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
 | No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -339,16 +343,21 @@ Everything above is the design. Below is what the code does.
 
 ## G1 — the entry/`lib/` rule is inverted where it matters
 
-The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for eight
-of the twelve hook and CLI entries — it was 5 of 9, and the three added by #20 all comply. In the
-four that carry the real behaviour it is still reversed:
+The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for nine
+of the twelve hook and CLI entries — it was 5 of 9, the three added by #20 all comply, and
+`memory-recall.mjs` got its twin on 2026-08-19. In the three that carry the real behaviour it is
+still reversed:
 
 | Entry | Entry | Lib | Entry tested? |
 | --- | ---: | ---: | --- |
 | [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **920** | 716 | no |
 | [`scripts/memory-audit-checks.mjs`](../scripts/memory-audit-checks.mjs) | **321** | 241 | no |
 | [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **257** | 84 | no |
-| [`hooks/memory-recall.mjs`](../hooks/memory-recall.mjs) | **253** | *none* | no |
+
+`hooks/memory-recall.mjs` was the fourth row — 253 lines over no lib at all. It is now 153 lines of
+stdin, socket, `node:sqlite` and stdout over a 148-line
+[`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs) with the gates, the ranking, the
+formatting and the log-record shapes, and a test file where the prompt path had none.
 
 **This is not cosmetic.** All four CI invariants key off the `lib/` boundary, so code left in an
 entry is **exempt by construction** — and the `node:sqlite`-only-in-entries rule actively pushes
@@ -376,6 +385,7 @@ by; it only switches off the reserve that would otherwise guarantee Memory rows 
 
 ```
   hooks/lib/validate-note.mjs ──────────▶ scripts/lib/memory-audit-checks.mjs
+  hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
   scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │
   scripts/lib/memory-semantic.mjs ──┐                    │
@@ -386,7 +396,13 @@ by; it only switches off the reserve that would otherwise guarantee Memory rows 
 ```
 
 The arrows point both ways, and #20 added one: `scripts/env.mjs` is the only entry whose `lib/` twin
-is neither same-named nor in the sibling directory. That is defensible — it renders what `paths.mjs`
+is neither same-named nor in the sibling directory. 2026-08-19 added the `hooks/` → `scripts/` arrow
+at the top: the recall hook's twin takes `CARD`, `STOP`, `lexTokens` and `bm25` from
+`scripts/lib/lexical.mjs` rather than keeping a fourth copy. It points at that file and **not** at
+`memory-semantic.mjs`, where the four grew up, because a hook entry imports its `lib/` twin
+statically — above the fail-open try and above the arming gate — and `memory-semantic.mjs`'s module
+scope does `console.log` + `process.exit(1)` on an unknown model. `lexical.mjs` imports nothing at
+all and costs 0.26-0.42 ms of module init instead of 3.8-4.4 ms (8 runs each, 2026-08-19). That is defensible — it renders what `paths.mjs`
 resolves, so it belongs beside it — but it is the pattern breaking again rather than an exception to
 it.
 
@@ -403,7 +419,7 @@ imported-not-spawned, to avoid a fork), but it puts the audit module's import co
 | Service | Invoked from | Contract lives where |
 | --- | --- | --- |
 | the search daemon | `memory-recall.mjs` over a unix socket | **hand-written on both sides**; only `QUIT` is shared |
-| the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and the card heading — `CARD` since 2026-08-19, except the one bare literal in `memory-recall.mjs` |
+| the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and the card heading — `CARD` in `scripts/lib/lexical.mjs` since 2026-08-19, bound as a parameter by every reader |
 | headless `claude` | `lib/distill-session.mjs` → `claude -p --model haiku` | argv, hardcoded model |
 | `context-mode` CLI | `lib/distill-session.mjs` → `cm index` ×5 | argv, and a **different** identity scheme (H7) |
 
@@ -443,20 +459,29 @@ three-field response for `--json` query mode — so the eval harness and the rec
 against structurally different views of the same search. No version field. The client's
 `r.text ?? ''` is the tell that this has already been noticed.
 
-**H6 — text processing is forked four ways.**
+**H6 — text processing is forked three ways** (four until 2026-08-19).
 
 | Where | Stopwords | Filter | Splitter |
 | --- | ---: | --- | --- |
-| `scripts/lib/memory-semantic.mjs` (`STOP`/`lexTokens`) | 71 | `len > 2` | `/[^a-z0-9]+/` |
-| `hooks/memory-recall.mjs` | 71 (`with` listed twice) | `len > 2` | `/[^a-z0-9]+/` |
+| `scripts/lib/lexical.mjs` (`STOP`/`lexTokens`), re-exported by `memory-semantic.mjs` | 71 | `len > 2` | `/[^a-z0-9]+/` |
 | `scripts/memory-audit-checks.mjs` | 62 | `len > 3` | keeps hyphens |
 | `hooks/lib/distill-session.mjs` (`tokens`) | own array | `len > 2` + singularise | `\p{L}\p{N}` |
 
-BM25 is implemented twice: `bm25()` in the lib, and inline in `memory-recall.mjs`. **The recall
-fallback therefore scores by a different implementation than the primary path it falls back from**,
-which is why its gate had to be tuned separately — and why that gate has no case set behind it.
-Root cause: `memory-recall.mjs` has no `lib/` twin, and importing the lib would drag `node:sqlite`,
-`net` and the model registry onto the prompt path.
+The recall hook was the fourth row — 71 stopwords with `with` listed twice, its own tokeniser, and
+its own inline BM25, so **the fallback scored by a different implementation than the primary path it
+falls back from**. `hooks/lib/memory-recall.mjs` imports `STOP`/`lexTokens`/`bm25` from the lib as
+of 2026-08-19; the two were equivalent (the duplicate `with` collapses in a `Set`, and the inline
+BM25 was `bm25()` with `k1 = 1.2`, `b = 0.75` pre-substituted), so nothing about ranking moved — but
+the twin passes both **explicitly**, because `MIN_SCORE` is an absolute BM25 value and a tune made
+for the CLI's arm would otherwise rescale it silently.
+
+What had deferred the merge was module-init cost on the prompt path, and that measurement is also
+why the shared four live in `scripts/lib/lexical.mjs` rather than in `memory-semantic.mjs` where
+they grew up: importing that module costs 3.8-4.4 ms, `lexical.mjs` 0.26-0.42 ms (8 runs each,
+warm, marginal after `paths.mjs`, 2026-08-19). The correctness reason in `B1` is the stronger one —
+a hook's `lib/` twin is imported above the fail-open try, so it may only reach modules that cannot
+print and cannot exit — but the number alone would have decided it too. Recall's gate still has no
+case set behind it (item 12).
 
 **H7 — two identity schemes, adjacent.** In `reindex()`, the directory indexed is
 `VAULT/<layer>/<project_key>` while the source label is `vault-<layer>-${basename(cwd)}`. Two
@@ -511,7 +536,7 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | ~~R1~~ | ~~**Full re-embed storm**~~ — **CLOSED 2026-08-19 (#27)** | mtime is now a fast-path hint, not the decision: a note whose mtime moved is read and hashed (`contentHash()`), and re-embedded only if the bytes actually changed. Synology churn costs one read per touched note and the new mtime is written back, so the next run takes the fast path again | — |
 | ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
-| R4 | **Recall's keyword arm dies** — **narrowed, NOT closed, 2026-08-19** | change the card sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** The sentinel is now `CARD`, bound as a SQL parameter by both `memory-semantic.mjs` reads; `memory-recall.mjs` keeps its literal (importing the lib would put module init on the prompt path) and a test in `memory-semantic.test.mjs` reads that file's source to catch the drift. That test is a source-text scan, so it catches a `CARD` rename and **not** an edit to recall's own SQL — the row stays open until backlog item 7 puts recall's SELECT behind a `lib/` and it can take `CARD` like every other consumer | keyword arm dead, no signal |
+| R4 | **Recall's keyword arm dies** — **CLOSED 2026-08-19** | changing the card sentinel in `chunkNote()` used to make recall's raw SQL return 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain, and **abstention is its normal behaviour**, so nothing showed. The sentinel is `CARD` and all three readers now **bind it as a SQL parameter**, recall included since its SELECT moved behind `hooks/lib/memory-recall.mjs`. A rename can no longer miss a site. The source-scan test in `memory-semantic.test.mjs` was kept and inverted: it now fails if a bare heading literal is re-inlined into the hook | was: keyword arm dead, no signal |
 | R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** — **halved 2026-08-19 (#24)** | growth is unchanged (no `VACUUM`; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `prune-logs.sh` touches only the vault) but it is no longer unobserved: `doctor.sh` reports the size of `$STATE` and warns past 2 GB, and the hook logs — the one component that grew without bound — are capped at 1 MB in `logBanner()`/`openLog()` | bounded logs; the rest is multi-GB but now **noticed early** |
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |

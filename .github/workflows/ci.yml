@@ -62,6 +62,36 @@ jobs:
           done
           echo "all lib/ modules import cleanly"
 
+      # The gate above runs with a VALID model, and that is exactly how a regression got through on
+      # 2026-08-19: hooks/lib/memory-recall.mjs had imported scripts/lib/memory-semantic.mjs, whose
+      # module scope does `console.log` + `process.exit(1)` on an unknown MEMORY_SEMANTIC_MODEL. The
+      # hook entry imports its lib STATICALLY, above the fail-open try and above the arming gate, so
+      # a typo'd model in config.json wrote that line to the hook's STDOUT on every prompt — and
+      # hooks.json's trailing `|| exit 0` keeps the line while hiding the exit code. Claude Code
+      # injects hook stdout as context, so this is a content bug, not just noise.
+      #
+      # hooks/lib ONLY. scripts/lib/memory-semantic.mjs exiting on an unknown model is correct CLI
+      # behaviour and must keep working; what must never happen is that behaviour being reachable
+      # from a hook's import graph.
+      - name: hooks/lib modules import cleanly under a bad config too
+        env:
+          CLAUDE_VAULT: ${{ runner.temp }}/vault
+          CLAUDE_MEMORY_HOME: ${{ runner.temp }}/memory-home
+          MEMORY_SEMANTIC_MODEL: not-a-real-model
+        run: |
+          for f in hooks/lib/*.mjs; do
+            case "$f" in *.test.mjs) continue ;; esac
+            out=$(node --disable-warning=ExperimentalWarning --input-type=module -e "await import('./$f')" 2>&1)
+            rc=$?
+            if [ -n "$out" ] || [ "$rc" -ne 0 ]; then
+              echo "::error file=$f::importing this module under an unknown model exited $rc or produced output —"
+              echo "::error file=$f::a hook imports its lib ABOVE the fail-open try, so this reaches the prompt path:"
+              echo "$out"
+              exit 1
+            fi
+          done
+          echo "all hooks/lib modules import cleanly under a bad model"
+
       # A top-level `node:test` import prints the whole test report to STDOUT even outside the
       # runner, and Claude Code reads hook stdout. It belongs only in *.test.mjs.
       - name: node:test is imported only by test files
