@@ -15,6 +15,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Shell vs Node in hooks](decisions/2026-08-17-shell-vs-node-hooks.md) | Fork count decides, not language. What is ported, what must not be, and the measurement traps. |
 | [The last three gate hooks move to Node](decisions/2026-08-18-node-hooks.md) | Supersedes the "do not port" list above. The floors were right; they were quoted about hooks that never ran at them. |
 | [One resolver: Node resolves, shell asks](decisions/2026-08-18-single-resolver.md) | Retires the "two mirrors" rule. What it cost the shell side, and what it bought. |
+| [Orchestrating a change](decisions/2026-08-19-orchestrated-change.md) | `Implement → Verify → Document → Review → Land`, why `Document` precedes `Review`, and the nine lessons the six backlog runs paid for. |
 
 ## Guides
 
@@ -35,7 +36,10 @@ step has shipped — the changelog is the record from then on.
 
 None open. The refactor-backlog plan lived here from 2026-08-18 until 2026-08-19, when its sixth
 and last run merged and it was deleted under the rule above — #24, #27, #28, #29, #30 and #31 are
-what it produced, and [the backlog](refactor-backlog.md) records what each item actually cost.
+what it produced, [the backlog](refactor-backlog.md) records what each item actually cost, and the
+part of it that was not specific to that backlog was rewritten as
+[a decision record](decisions/2026-08-19-orchestrated-change.md), which is what the rule means by a
+plan becoming one.
 
 ## Specs
 

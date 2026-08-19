@@ -310,7 +310,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`docs/plans/2026-08-18-refactor-backlog.md`.** Its sixth and last run merged, so it went, under
   the rule it was added with: a plan whose steps have all shipped is deleted and the changelog
-  becomes the record. It batched the backlog's thirteen open items into six PRs — #24, #27, #28,
+  becomes the record. The half of it that was not specific to that backlog — the
+  `Implement → Verify → Document → Review → Land` shape, and the nine lessons the runs paid for —
+  was rewritten as [a decision record](docs/decisions/2026-08-19-orchestrated-change.md) first,
+  which is what CLAUDE.md means when it says a plan outliving its execution becomes one. It batched the backlog's thirteen open items into six PRs — #24, #27, #28,
   #29, #30, #31 — and `docs/refactor-backlog.md` keeps the more useful half, which is what each item
   actually cost versus what it predicted. `docs/plans/` and its convention in CLAUDE.md stay; there
   is simply no plan open.
