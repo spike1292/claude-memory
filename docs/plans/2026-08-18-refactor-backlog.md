@@ -184,8 +184,9 @@ export const meta = {
   phases: [
     { title: 'Implement', detail: 'one agent per item, disjoint files' },
     { title: 'Verify',    detail: 'adversarial review per item' },
+    { title: 'Document',  detail: 'changelog, backlog, architecture markers, PR body draft' },
     { title: 'Review',    detail: 'two-axis skill review + the CI reviewer, run locally' },
-    { title: 'Land',      detail: 'format, test, changelog, branch, PR' },
+    { title: 'Land',      detail: 'format, test, commit, push, PR' },
   ],
 }
 
@@ -197,39 +198,81 @@ const done = await pipeline(
   (rep, it) => agent(REVIEW_PROMPT(it, rep), { label: `review:${it.n}`, phase: 'Verify', schema: VERDICT }),
 )
 
-// Whole-diff review. Needs every item finished, so this is a genuine barrier.
+// Barrier: the prose is written against the whole batch, and must exist before review.
+phase('Document')
+const doc = await agent(DOCUMENT_PROMPT(done.filter(Boolean)), { schema: DOC_RESULT })
+// writes CHANGELOG.md + docs/refactor-backlog.md + docs/architecture.md markers,
+// and DRAFTS the PR body to .git/PR_BODY.md — drafted, not posted.
+
+// Whole-diff review, over code AND prose. Nothing is committed or pushed yet.
 phase('Review')
 const [skillReview, ciReview] = await parallel([
-  () => agent(CODE_REVIEW_SKILL_PROMPT(ITEMS), { label: 'review:two-axis', schema: TWO_AXIS }),
-  () => agent(CI_REVIEWER_PROMPT, { label: 'review:as-ci', schema: FINDINGS }),
+  () => agent(CODE_REVIEW_SKILL_PROMPT(ITEMS, doc), { label: 'review:two-axis', schema: TWO_AXIS }),
+  () => agent(CI_REVIEWER_PROMPT(doc),              { label: 'review:as-ci',   schema: FINDINGS }),
 ])
 
 const blockers = [...skillReview.hard, ...ciReview.findings.filter(f => f.severity === 'blocker')]
-if (blockers.length) await agent(FIX_PROMPT(blockers), { label: 'fix:blockers', phase: 'Land' })
+if (blockers.length) await agent(FIX_PROMPT(blockers), { label: 'fix:blockers', phase: 'Review' })
 
 phase('Land')
 const gate = await agent(GATE_PROMPT, { schema: GATE_RESULT })   // npm run format && node --test --test-concurrency=1
 if (!gate.pass) return { blocked: gate.failures }
+// Commits, pushes, and opens the PR with the REVIEWED body from .git/PR_BODY.md. Writes no
+// new prose — anything it had to invent here would be prose nobody reviewed.
 return await agent(LAND_PROMPT(done.filter(Boolean), skillReview, ciReview), { schema: PR_RESULT })
 ```
 
 **Shape notes.** Implement→Verify is a `pipeline`, so item 2's review starts while item 4 is still
-being written. `Review` and `Land` are the genuine barriers: whole-diff review, `node --test`, and a
-single commit are all batch-wide by definition. Runs 3 and 4 replace the fan-out with a serial chain
-(item 6 → item 8) or a single implementer plus a 3-agent refutation panel. Nothing needs
-`isolation: 'worktree'` — within a run the file sets are disjoint, and across runs the execution is
-sequential.
+being written. `Document`, `Review` and `Land` are the genuine barriers: the prose, the whole-diff
+review, `node --test` and a single commit are all batch-wide by definition. Runs 3 and 4 replace the
+fan-out with a serial chain (item 6 → item 8) or a single implementer plus a 3-agent refutation
+panel. Nothing needs `isolation: 'worktree'` — within a run the file sets are disjoint, and across
+runs the execution is sequential.
 
-### The Review phase — two reviewers, after building, before pushing
+### Why `Document` comes before `Review`
+
+**The changelog and the PR body are reviewable artefacts, and they are where this repo's mistakes
+actually landed.** Both of PR #24's escapes were prose, not code:
+
+- The CHANGELOG claimed doctor prints `db/ models/ logs/ eval/ run/` when the shipped loop printed
+  `db/ logs/ eval/ run/ cache/`. Three reviews ran before that sentence existed.
+- The PR body claimed "110 pass (99 on `main`; the 11 new ones…)" against a real 107 and 3. The CI
+  reviewer caught it *after* push, by reading the description against the diff — the one reviewer
+  that saw it, because it was the only one that ran after the body was written.
+
+Writing the prose first costs nothing: `Document` touches only `CHANGELOG.md`,
+`docs/refactor-backlog.md`, `docs/architecture.md` and a PR-body draft, none of which the code
+agents are still holding. Reviewing after it means a reviewer can check the claims against the diff
+while both are still editable, instead of after a PR exists.
+
+Two consequences worth stating, because they are what make the ordering real:
+
+- **The PR body is drafted to a file, not posted.** `Document` writes `.git/PR_BODY.md`; `Land` runs
+  `gh pr create --body-file` on the reviewed draft. A body composed at push time is prose nobody
+  reviewed, which is exactly how #24's numbers shipped.
+- **`Land` writes no new prose.** It formats, tests, commits, pushes, and opens the PR. If it finds
+  itself needing to invent a sentence, that is a sign `Document` was incomplete — and the sentence
+  would be unreviewed.
+
+`Document` is also where the recurring "stale marker" finding is closed: it is told which
+`docs/architecture.md` risk row each item in the batch closes, and marking that row is part of its
+output rather than something a reviewer has to catch. Run 1 shipped a stale `R5` row and had it
+flagged twice.
+
+### The two reviewers — after building and documenting, before pushing
 
 The per-item `Verify` agents see one item each. Neither of these does: both read the whole diff,
 which is the only way to catch a finding that lives *between* items.
+
+Both run over the diff **and** the prose `Document` just wrote — the changelog entry, the backlog
+deletion, the architecture markers, and the drafted PR body.
 
 **Reviewer 1 — the `/code-review` skill's two axes.** Standards (does the diff obey the repo's
 documented rules, plus the Fowler smell baseline?) and Spec (does it implement what the backlog item
 asked, nothing more, nothing less?), run as separate sub-agents so neither pollutes the other's
 context. The axes are deliberately not merged or reranked. The Spec axis reads the item text **from
-`main`**, because a landing run deletes the item it implements — `git show main:docs/refactor-backlog.md`.
+`main`**, because `Document` has by then deleted the item it implements —
+`git show main:docs/refactor-backlog.md`.
 
 **Reviewer 2 — the CI reviewer's own prompt, run locally.** Copy the `prompt:` block from
 [.github/workflows/claude-review.yml](../../.github/workflows/claude-review.yml) verbatim, with the
@@ -240,7 +283,8 @@ rather than duplicating reviewer 1:
 - **It is the reviewer that actually gates the PR.** Running it before pushing turns a
   comment-then-fix-then-repush round trip into an edit. Measured on PR #24: three of its findings
   would have been caught pre-push, and two of those were introduced by the *previous* round of
-  review fixes.
+  review fixes. It is also the reviewer that reads the PR description against the diff, which is
+  why the description has to exist before it runs.
 - **Its weighting is different and repo-specific.** Privacy first (public repo, private vault),
   then state-inside-the-plugin-dir, absolute paths, blocking hooks, config-resolution drift,
   retrieval numbers without a case set. A generic standards review does not rank these.
@@ -318,19 +362,19 @@ Per-item end-to-end checks that the generic gate does not cover:
 
 ## Cost and shape
 
-Every run carries the same two whole-diff reviewers (`+2 review` below) on top of its per-item
-verification.
+Every run carries the same tail: one `document` agent (changelog, backlog, architecture markers,
+PR-body draft) then the same two whole-diff `review` agents, on top of its per-item verification.
 
 | Run | PR | Items | Agents | Effort |
 | --- | --- | --- | ---: | ---: |
-| 1 | A | 2, 3, 4, 13 | 4 impl + 4 verify + 2 review + 2 land | ~50 min |
-| 2 | B | 5 | 1 impl + 1 prove + 3 refute + 2 review + 2 land | ~1.5 h |
-| 3 | C | 6, 8 | 2 impl (serial) + 2 verify + 2 review + 2 land | ~1.25 h |
-| 4 | D | 7 (+ 6's deferred site) | 1 impl + 3 refute + 1 live + 2 review + 2 land | ~2 h |
-| 5 | E | 9, 10 | 2 impl + 2 verify + 2 review + 2 land | ~2.5 h |
-| 6 | F | 11, 12, 14 | 3 impl + 3 verify + 2 review + 2 land | ~2.5 h |
+| 1 | A | 2, 3, 4, 13 | 4 impl + 4 verify + 1 doc + 2 review + 2 land | ~50 min |
+| 2 | B | 5 | 1 impl + 1 prove + 3 refute + 1 doc + 2 review + 2 land | ~1.5 h |
+| 3 | C | 6, 8 | 2 impl (serial) + 2 verify + 1 doc + 2 review + 2 land | ~1.25 h |
+| 4 | D | 7 (+ 6's deferred site) | 1 impl + 3 refute + 1 live + 1 doc + 2 review + 2 land | ~2 h |
+| 5 | E | 9, 10 | 2 impl + 2 verify + 1 doc + 2 review + 2 land | ~2.5 h |
+| 6 | F | 11, 12, 14 | 3 impl + 3 verify + 1 doc + 2 review + 2 land | ~2.5 h |
 
-~52 agents total across six runs, none exceeding the medium size guideline of 15 in a single run.
+~58 agents total across six runs, none exceeding the medium size guideline of 15 in a single run.
 Six PRs against a protected `main`, merged in order.
 
 **Only items 5, 7, 9 and 14 change behaviour.** The other nine are observation, extraction, tests,
@@ -354,10 +398,11 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
 - **Two of the three findings in the second review round were introduced by the first round.** A
   review pass is itself a change, and needs reviewing. The Review phase runs on the final diff, not
   on the implementers' output.
-- **Nobody reviewed the PR body.** Three reviews passed over a description claiming "110 pass (99
-  on main; the 11 new ones…)" when `main` had 107 and the diff added 3. The CI reviewer caught it
-  by reading the description against the diff. The land agent's prompt now says every number in the
-  PR body must be one an agent actually measured.
+- **The mistakes were in the prose, not the code.** Both escapes were sentences: a CHANGELOG entry
+  naming directories the code does not print, and a PR body claiming "110 pass (99 on main; the 11
+  new ones…)" when `main` had 107 and the diff added 3. Neither existed when the reviewers ran.
+  Hence the `Document` phase, and hence reviewing after it rather than before: the changelog and the
+  PR body are now artefacts a reviewer checks against the diff while both are still editable.
 - **A "docs are stale" finding recurs across runs.** `docs/architecture.md`'s risk table has a row
   per failure this backlog closes, and closing one without marking the row is the single most
   repeated finding so far. Each run's land agent is told which marker its items close.
