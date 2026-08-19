@@ -281,3 +281,23 @@ Three of those matter while you are still editing:
 - **Merging the release PR publishes.** There is no manual tagging step.
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
   release notes verbatim.
+
+## Agent skills
+
+Per-repo configuration the engineering skills read. Written by `/setup-matt-pocock-skills`; edit the
+files directly rather than re-running it.
+
+### Issue tracker
+
+GitHub Issues on `spike1292/claude-memory`, via the `gh` CLI. PRs are not a request surface.
+See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, unchanged — `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context. **Decision records live in `docs/decisions/`, not `docs/adr/`**, and are named by
+date rather than number. See [docs/agents/domain.md](docs/agents/domain.md).

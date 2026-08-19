@@ -9,6 +9,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **Per-repo config for the engineering skills, under `docs/agents/`.** `issue-tracker.md` (GitHub
+  Issues via `gh`, PRs not a request surface), `triage-labels.md` (the five canonical roles,
+  unchanged) and `domain.md`, plus an `## Agent skills` section in `CLAUDE.md` pointing at them.
+  The one deviation from the skills' default layout is recorded in all three places: decision
+  records live in `docs/decisions/`, named by date, not in a numbered `docs/adr/`. Documentation
+  only — no hook, script or command reads these files.
+
 ### Fixed
 
 - **A repo with no `origin` remote could change project key.** When the remote-URL normaliser moved
