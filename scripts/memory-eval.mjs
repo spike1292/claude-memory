@@ -121,7 +121,8 @@ if (flag('--generate')) {
     '  so BM25 finds them trivially (2026-08-15 real-vault set: lexical recall@1 97.5% vs semantic 62.5%;',
   );
   console.log(
-    '  the lexical arm has since moved to the shared tokeniser, worth ~5 points on the bench set).',
+    '  the lexical arm has since moved to the shared tokeniser: -5 points recall@1 on',
+    '  cases-paraphrase, 55.0% -> 50.0%, seed-7 bench vault; cases-keyword unchanged).',
   );
   console.log(
     '  Useful as a lexical-recall floor and an index-coverage check; NOT a paraphrase test.',

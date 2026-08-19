@@ -362,18 +362,18 @@ In the three below it is still reversed:
 | [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **230** | 111 | no |
 
 `hooks/memory-recall.mjs` was the fourth row — 253 lines over no lib at all. It is now 153 lines of
-stdin, socket, `node:sqlite` and stdout over a 183-line
+stdin, socket, `node:sqlite` and stdout over a 189-line
 [`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs) with the gates, the ranking, the
 formatting and the log-record shapes, and a test file where the prompt path had none.
 
-**This is not cosmetic.** Every CI invariant keys off the `lib/` boundary, so code left in an
+**This is not cosmetic.** The four *structural* CI invariants key off the `lib/` boundary, so code left in an
 entry is **exempt by construction** — and the `node:sqlite`-only-in-entries rule actively pushes
 database code there. The 911-line file is the least-checked file in the repo.
 
 The *Every entry has a lib/ twin* step added on 2026-08-19 (item 11) does not change that, and the
 gap between what it checks and what this section measures is the reason it is labelled
 **CI (partial)** in the invariants table. It asks whether `<dir>/lib/<name>.mjs` exists; all three
-entries below have one. It catches the shape `hooks/memory-recall.mjs` was in until 2026-08-19 —
+entries in the table above have one. It catches the shape `hooks/memory-recall.mjs` was in until 2026-08-19 —
 an entry with no twin at all, and therefore exempt from every other check — and nothing beyond it.
 An empty twin satisfies it. Read a green run as "the boundary exists", never as "the entry is
 thin".

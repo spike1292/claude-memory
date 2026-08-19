@@ -47,7 +47,7 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.
 
-   ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, worth ~5 points on the bench set). Useful as an index-coverage check; useless as a paraphrase test.
+   ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
 
 1. **Build a question set.** From notes under `Memory/<slug>/` and `Insights/<slug>/`, derive ~15–20 natural-language questions a future session would realistically ask — phrased in the user's words, deliberately **paraphrased**, NOT copied from note titles (paraphrase is what stresses retrieval). For each, record the note(s) that are the correct answer = the gold set.
 

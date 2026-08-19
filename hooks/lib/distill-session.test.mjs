@@ -21,6 +21,15 @@ import {
   reconcile,
   transcriptToText,
 } from './distill-session.mjs';
+// Git with user and system config neutralised. Both helpers below resolve a remote URL that the
+// assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
+// different remote than the test expects and fail on a machine setting rather than on the code.
+// It is also spread into the child env of the hook itself: the hook resolves the key by shelling
+// out to git, and GIT_CONFIG_GLOBAL overrides the HOME-based lookup, so scratch-HOME alone does not
+// cover it. Proved by running the suite under a planted insteadOf — 1 failure before, 0 after, and
+// the failure named `vault-insights-evil.example-...`, i.e. the rewrite reaching the assertion
+// (2026-08-19, review of #31).
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-'));
 
@@ -50,8 +59,11 @@ test('distill-session', async (t) => {
       ],
     ]) {
       fs.rmSync(r, { recursive: true, force: true });
-      execFileSync('git', ['init', '-q', r], { stdio: 'pipe' });
-      execFileSync('git', ['-C', r, 'remote', 'add', 'origin', url], { stdio: 'pipe' });
+      execFileSync('git', ['init', '-q', r], { stdio: 'pipe', env: GIT_ENV });
+      execFileSync('git', ['-C', r, 'remote', 'add', 'origin', url], {
+        stdio: 'pipe',
+        env: GIT_ENV,
+      });
       const got = projectKey(r);
       assert.strictEqual(got, want, `${url} -> ${got}, want ${want}`);
     }
@@ -378,7 +390,11 @@ test('the ctx source label carries the same key as the directory it indexes', ()
   const log = path.join(root, 'ctx.log');
   fs.mkdirSync(repo, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  // Git runs with its user and system config neutralised, not the inherited env. The hook under
+  // test resolves project_key from `git remote get-url origin`, so a developer with a global
+  // `[url] insteadOf` rewrite would see a different remote here than the assertion expects and the
+  // test would fail on a machine setting rather than on the code (2026-08-19, review of #31).
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
   const slug = 'github.com-spike1292-claude-memory';
@@ -403,7 +419,7 @@ test('the ctx source label carries the same key as the directory it indexes', ()
   execFileSync(process.execPath, [entry, transcript, repo], {
     stdio: 'pipe',
     env: {
-      ...process.env,
+      ...GIT_ENV,
       PATH: `${bin}${path.delimiter}${process.env.PATH}`,
       HOME: root,
       CLAUDE_MEMORY_HOME: path.join(root, 'state'),
