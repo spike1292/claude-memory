@@ -11,9 +11,10 @@ the changelog is the record of what shipped. If an item is declined, keep it wit
 so it is not rediscovered as a good idea later (see item 15).
 
 > **This backlog is complete as of 2026-08-19.** All fourteen numbered items of work have landed —
-> item 1 in #20 before the plan was written, items 2-14 across the six runs of
-> [the plan](plans/2026-08-18-refactor-backlog.md) (#24, #27, #28, #29, #30, and this PR for 11, 12
-> and 14). Item 15 is declined and is kept on purpose.
+> item 1 in #20 before the work was planned, items 2-14 across six batched PRs — #24, #27, #28,
+> #29, #30 and #31. Item 15 is declined and is kept on purpose. (The plan that batched them lived
+> at `docs/plans/2026-08-18-refactor-backlog.md` and was deleted on 2026-08-19 once every step had
+> shipped, per the rule in CLAUDE.md; those six PRs are the record.)
 > **Nothing below is open.** The file is now a record of what was decided and what each closure
 > actually cost — several of those costs were not what the item predicted, and those corrections
 > are the part worth reading. Do not add new items here: `docs/architecture.md`'s Part 2 is where
