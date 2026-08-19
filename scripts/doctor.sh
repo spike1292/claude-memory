@@ -116,7 +116,10 @@ else
 fi
 
 if [ -d "$STATE/models" ] && [ -n "$(ls -A "$STATE/models" 2>/dev/null)" ]; then
-  ok "model weights cached in state ($(du -sh "$STATE/models" 2>/dev/null | cut -f1))"
+  # -L: models/ is the largest thing in $STATE and the one directory the size breakdown below
+  # deliberately does not re-walk, so this line is its only measurement. Without -L a symlinked
+  # models/ reports 0 here and nothing else would catch it (2026-08-19, review of #24).
+  ok "model weights cached in state ($(du -shL "$STATE/models" 2>/dev/null | cut -f1))"
 else
   warn "no model weights in $STATE/models" "first query downloads ~700 MB. Run /memory:install to warm them."
 fi
@@ -127,6 +130,36 @@ if [ -d "$ROOT/node_modules/@huggingface/transformers/.cache" ]; then
        "a /plugin update will discard them. The HF cache redirect in hooks/lib/paths.mjs is not taking effect."
 fi
 
+echo
+echo "state size"
+# Unbounded growth stays invisible until someone trips over it: the 2.2 GB of duplicated
+# node_modules above was found by accident, and everything else under $STATE has exactly the
+# same shape with nothing watching it. -L for the same reason as the node_modules check —
+# once a subdirectory is a symlink into a shared install, du without it measures the link (0)
+# and this section would report a healthy state by measuring nothing (2026-08-18).
+#
+# The total measures $STATE itself, not the sum of the directories below it. Summing a fixed list
+# omits whatever is not on the list — and the first review of this section caught it omitting
+# node_modules/, the one directory the 2.2 GB incident above was actually about. One walk of the
+# real thing cannot drift from what is in there; a hand-maintained list can, and did.
+state_mb=$(du -smL "$STATE" 2>/dev/null | cut -f1)
+# Breakdown of what the total is made of. models/ and node_modules/ are reported above with their
+# own thresholds, so they are not repeated here — du walks them once for the total and that is
+# already the slowest part of this report.
+for d in db logs eval run cache; do
+  [ -d "$STATE/$d" ] || continue
+  ok "$d/ $(du -shL "$STATE/$d" 2>/dev/null | cut -f1 | tr -d ' ')"
+done
+# ~722 MB of the expected total is the ONNX weights in models/, so the threshold has to sit well
+# above that. Past 2 GB something else grew: logs/ and eval/ only append, and db/ keeps one index
+# per model PER PROJECT, so a machine with many repos accumulates indexes nothing ever deletes.
+if [ "${state_mb:-0}" -gt 2048 ]; then
+  warn "state is ${state_mb} MB" "nothing prunes it automatically. Run /memory:prune, then delete db/semantic-*.db for projects you no longer index and old eval/ runs."
+else
+  ok "state total ${state_mb:-?} MB"
+fi
+
+echo
 echo "vault"
 echo "  resolved from: $(vault_source)"
 if [ -d "$VAULT" ]; then

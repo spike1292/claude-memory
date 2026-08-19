@@ -122,10 +122,15 @@ export function findClaude() {
  *
  * Detached children write straight to the fd. Piping instead would keep this process alive to
  * shuttle bytes, which is the one thing a gate must not do.
+ *
+ * This is where distill.log and graphgen.log are opened, and each carries a headless `claude`
+ * child's whole stdout+stderr, so the cap has to be applied HERE and not only in `logBanner()` —
+ * those two logs never go through the banner helper.
  */
 function openLog(file) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    trimLog(file);
     return fs.openSync(file, 'a');
   } catch {
     return null;
@@ -163,10 +168,68 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
   }
 }
 
+// The only unbounded appends in the system: semantic-index.log, distill.log and graphgen.log grew
+// forever, and nothing anywhere truncated them (2026-08-18). There are two doors into those files —
+// `logBanner()` writes the banner for semantic-index.log, `openLog()` hands the other two straight
+// to a detached child — so both call trimLog and neither alone is enough. 1 MB is roughly a year of
+// banners plus child output at this repo's rates; keeping 256 KB leaves the last few dozen runs,
+// which is all anyone reads a hook log for.
+const LOG_MAX_BYTES = 1024 * 1024;
+const LOG_KEEP_BYTES = 256 * 1024;
+
+/**
+ * Keep only the tail of an oversized log.
+ *
+ * The read is POSITIONED — one fs.readSync at `size - LOG_KEEP_BYTES` — so a log that has run away
+ * to hundreds of MB never enters memory; readFileSync + slice would be the bug, not the fix.
+ *
+ * The retained tail starts mid-line, so everything up to the first newline is dropped: a truncated
+ * first line reads as corrupt output rather than as a partial one, and the cost is at most one lost
+ * line. (A tail with no newline at all keeps its partial line — a single runaway line is the one
+ * case where dropping it would discard the whole tail.) The banner about to be appended follows
+ * immediately, so the caller's own record of this run survives the trim.
+ *
+ * NOT ATOMIC, and deliberately not made so (2026-08-19, raised twice in review of #24).
+ * `openLog()` hands detached children an `O_APPEND` fd that they hold for the whole run — minutes,
+ * for a headless `claude`. Two hooks can therefore be writing while a third trims, and anything
+ * appended between the `readSync` and the `writeFileSync` below is overwritten. That window is
+ * microseconds, fires only past 1 MB, and costs debug-log lines.
+ *
+ * The obvious fix — write a temp file and `rename()` — is strictly worse HERE. Truncating in place
+ * keeps the inode, so every held `O_APPEND` fd goes on landing in the file a reader opens; the loss
+ * is bounded by that one window. A rename leaves those fds pointing at an unlinked inode, so every
+ * child holding one writes the rest of its output into a file nothing can open — seconds of racy
+ * overlap traded for minutes of silently discarded output. Atomicity is the wrong property to buy
+ * when the writers outlive the swap.
+ *
+ * Best effort throughout, like everything else here: a log we cannot trim is a log that keeps
+ * growing, never a hook that fails.
+ */
+function trimLog(file) {
+  try {
+    const size = fs.statSync(file).size;
+    if (size <= LOG_MAX_BYTES) return;
+    const fd = fs.openSync(file, 'r');
+    let tail;
+    try {
+      const buf = Buffer.allocUnsafe(LOG_KEEP_BYTES);
+      const read = fs.readSync(fd, buf, 0, LOG_KEEP_BYTES, size - LOG_KEEP_BYTES);
+      tail = buf.subarray(0, read);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const nl = tail.indexOf(0x0a);
+    fs.writeFileSync(file, nl === -1 ? tail : tail.subarray(nl + 1));
+  } catch {
+    /* best effort */
+  }
+}
+
 /** Timestamped log banner, so one log file can be read as a sequence of runs. */
 export function logBanner(file, label, iso) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    trimLog(file);
     fs.appendFileSync(file, `\n=== ${iso} ${label} ===\n`);
   } catch {
     /* best effort */

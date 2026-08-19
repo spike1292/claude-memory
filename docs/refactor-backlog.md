@@ -20,41 +20,10 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 > at the top. It closed `H12` and `R2`. Numbering below is unchanged so that references to items by
 > number in commits and PRs keep resolving.
 
-### 2. `doctor.sh` reports `$CLAUDE_MEMORY_HOME` subdirectory sizes
-
-- **Goal:** turn `R5` from unbounded into observed. The 2.2 GB `node_modules` was found by
-  accident — same shape, different directory.
-- **Files:** [`scripts/doctor.sh`](../scripts/doctor.sh)
-- **Diff plan:** one section printing `du -sh` (**with `-L`** — see the 2026-08-18 symlink fix) for
-  `db/ models/ logs/ eval/ run/` plus a total; `warn` above a threshold. Reuse the existing
-  `ok`/`warn` helpers, keep the always-`exit 0` rule.
-- **Risk: low.** Read-only, and the script cannot fail its caller.
-- **~20 min.**
-
-### 3. Cap `semantic-index.log`
-
-- **Goal:** the one unbounded append in the system. **Still open after #20** — `logBanner()` appends
-  and nothing truncates.
-- **Files:** [`hooks/lib/hook-io.mjs`](../hooks/lib/hook-io.mjs) — `logBanner()`, now that the hook
-  is Node. Fixing it there covers `distill.log` and `graphgen.log` at the same time, which the
-  original shell-only fix would not have.
-- **Diff plan:** in `logBanner()`, before appending, truncate to the last 256 KB when the file
-  exceeds 1 MB. Node has no `tail -c`, so read the last 256 KB with a positioned `fs.readSync` and
-  rewrite — no dependency, and the whole file never enters memory.
-- **Risk: low.**
-- **~20 min.**
-
-### 4. `chmod 0600` the daemon socket
-
-- **Goal:** close the auth analogue. Since 0.3.0 the slug is a *request field*, so one connection
-  can read any indexed project's notes.
-- **Files:** [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs), inside the
-  `server.listen` callback.
-- **Diff plan:** `fs.chmodSync(sockPath, 0o600)` in the listen callback, in a `try/catch`, with one
-  comment noting that macOS does not enforce unix-socket permissions uniformly — this is defence in
-  depth, not a guarantee.
-- **Risk: low.** Same-user client; it cannot lock you out.
-- **~10 min.**
+> **Items 2, 3 and 4 (state sizes in `doctor.sh`, the log cap, `chmod 0600` on the socket) landed
+> in #24** and are deleted from this list, per the rule at the top. Between them they turn `R5`
+> from unbounded into observed and close the auth analogue. Wave 1 is finished; numbering below is
+> unchanged.
 
 ---
 
@@ -196,13 +165,9 @@ the shell version keeps the trap and buys less.
 
 ## Wave 6 — housekeeping
 
-### 13. Fix the stale numbers in `commands/synthesize.md`
-
-- **Goal:** [`commands/synthesize.md`](../commands/synthesize.md) hardcodes "965 Insights against 5
-  `permanent/` notes" — a 2026-08-15 measurement that nothing updates.
-- **Diff plan:** either re-measure and date the claim, or replace the figure with the command that
-  produces it. Prefer the latter: a number with no refresh path is guaranteed to rot.
-- **Risk: none.** **~10 min.**
+> **Item 13 (the stale numbers in `commands/synthesize.md`) landed in #24** and is deleted from
+> this list, per the rule at the top. The frozen figures were replaced by the command that
+> measures them.
 
 ### 14. Decide `H7`, then act once
 
@@ -232,16 +197,16 @@ a relocation would have been cheapest, and it still did not pay for itself.
 
 | PR | Items | Effort | Buys |
 | --- | --- | ---: | --- |
-| ~~1~~ | ~~1–4~~ → **2, 3, 4** | ~50 min | item 1 landed in #20; the rest still make silent failures visible |
+| ~~1~~ | ~~1–4~~ | — | all landed: item 1 in #20, items 2–4 in #24 |
 | 2 | 5 | ~1.5 h | kills the highest-probability failure (needs a minor bump) |
 | 3 | 6, 8 | ~1.25 h | two pure extractions, both with tests |
 | 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12 |
 | 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
-| 7 | 13, 14 | ~30 min | rot removal |
+| 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |
 
-Items 3 and 15 are net deletions or non-work. **Only items 5, 7 and 9 change behaviour** —
-everything else is observation, extraction, or tests.
+Item 15 is non-work. **Only items 5, 7 and 9 change behaviour** — everything else is observation,
+extraction, or tests.
 
 Item **11** (CI enforcing the entry/`lib` rule) got cheaper: #20 added three compliant entries, so
 the rule now holds in 8 of 12 rather than 5 of 9, and the allowlist it would need is down to four

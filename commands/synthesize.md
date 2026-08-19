@@ -13,8 +13,17 @@ Turn a topic that many notes circle into one note that states it. `<slug>` = the
 `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `resolve_vault`.
 
 This is the **promotion** step of the knowledge lifecycle (staging → promotion → skill/pointer). It
-has essentially never run by hand: 965 Insights against 5 `permanent/` notes. `--clusters` finds
-where a consolidated note is missing; this writes one.
+has essentially never run by hand — count the two layers before you start, because the ratio is the
+argument for running it at all:
+
+```bash
+. "$MEM/hooks/lib/vault-env.sh"; V="$(resolve_vault)"; S="$(project_key "$PWD")"
+find "$V/Insights/$S" -name '*.md' | wc -l   # staged
+find "$V/permanent"   -name '*.md' | wc -l   # promoted
+```
+
+Whatever the two numbers are, the gap between them is the argument for running this at all.
+`--clusters` finds where a consolidated note is missing; this writes one.
 
 **The risk this command is shaped around.** A synthesis note asserts a claim that *no single note
 makes* — strictly more room to invent than distillation, and the distiller has already confabulated
@@ -29,8 +38,8 @@ softened.**
    ```
 
    Prefer a cluster that has *cost something* — one whose members include Mistakes, or that a prune
-   or audit has already tripped over. Size alone is not value; 32 uncovered clusters exist and most
-   do not need a note.
+   or audit has already tripped over. Size alone is not value; most uncovered clusters do not need a
+   note.
 
 2. **Read every member note in full.** Not the card, not the search snippet — the note. A synthesis
    built from snippets is how contradictions get smoothed into a false consensus. If the cluster is

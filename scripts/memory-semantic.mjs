@@ -772,6 +772,12 @@ if (flag('--serve')) {
     console.log(
       `serving ${MODEL_KEY} on ${sockPath} (all projects, model idle ${MODEL_IDLE_MS / 60000}m, exit ${IDLE_MS / 60000}m)`,
     );
+    // The slug is a request field since 0.3.0, so one connection can read every indexed project.
+    // macOS does not enforce unix-socket permissions uniformly, so this is defence in depth rather
+    // than a guarantee — and never fatal: a server that cannot chmod must still serve (2026-08-18).
+    try {
+      fs.chmodSync(sockPath, 0o600);
+    } catch {}
     armModelIdle(); // nothing has been served yet, so the model must already be on the clock
     // Take over from any leftover server. AFTER listen, so a failed bind never evicts the server
     // that beat us to it. Best-effort throughout: one that ignores us dies on its own idle timer,

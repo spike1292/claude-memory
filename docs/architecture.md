@@ -504,16 +504,18 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | ~~R2~~ | ~~**Silently skipped indexing**~~ — **CLOSED 2026-08-18 (#20)** | the shell lock that produced it is deleted; the per-model `--index` lock reports contention to its log instead of `exit 0` | — |
 | R3 | **False merge deletes a lesson** | `findNearDuplicate` at 0.40 token overlap, unattended, on `haiku`-generated titles; a merge writes an "Also seen" addendum and **looks like success** | one note, unrecoverable |
 | R4 | **Recall's keyword arm dies** | change the `'(card)'` sentinel in `chunkNote()` → recall's raw SQL returns 0 rows → `avgdl` is `NaN` → all scores `NaN` → abstain. **Abstention is its normal behaviour.** | keyword arm dead, no signal |
-| R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** | no `VACUUM` anywhere; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `semantic-index.log` appends with no rotation; `prune-logs.sh` touches only the vault | multi-GB, noticed late — precedent: the 2.2 GB `node_modules` found by accident |
+| R5 | **Unbounded `$CLAUDE_MEMORY_HOME`** — **halved 2026-08-19 (#24)** | growth is unchanged (no `VACUUM`; per-project × per-model `.db` files accumulate; `models/` accumulates per model; `prune-logs.sh` touches only the vault) but it is no longer unobserved: `doctor.sh` reports the size of `$STATE` and warns past 2 GB, and the hook logs — the one component that grew without bound — are capped at 1 MB in `logBanner()`/`openLog()` | bounded logs; the rest is multi-GB but now **noticed early** |
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |
 | R8 | **Symlink-dereference bugs** | the class, not an instance: two found so far (`du` without `-L`; the runtime probe in `semantic-index-refresh`). Both fixed, the second now pinned by a test that symlinks `node_modules` and asserts `runtimeInstalled()` sees through it. Every new check against `$CLAUDE_MEMORY_HOME` is another draw | a check that measures nothing |
 | — | **Runaway `claude` recursion** | `CLAUDE_DISTILL_CHILD` is the only guard, on a hook registered for both `SessionEnd` **and** `Stop` | low probability, **unbounded** cost |
 
 There is **no auth and no billing surface** — single user, one unix socket. The nearest analogues:
-the socket is created with no `chmod`/`umask` and the slug is a request field, so any local process
-can query any project's index (harmless on a single-user machine, not on a shared host); and the
-`haiku` call above is the only metered thing in the system.
+the slug is a request field, so one connection to the socket can query *every* indexed project, not
+only the current one — the socket is `chmod 0600` at `listen()` (unreleased), which restricts that
+to the owning user but is defence in depth rather than a guarantee, since macOS does not enforce
+unix-socket permissions uniformly; and the `haiku` call above is the only metered thing in the
+system.
 
 **Data corruption proper is well defended** — the per-model write lock, `assertVectorWidth` at read,
 and `loadIndex`'s model check. The residual irreversible-loss risk is not in SQLite. It is in the
