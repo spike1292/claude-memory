@@ -274,11 +274,11 @@ context. The axes are deliberately not merged or reranked. The Spec axis reads t
 `main`**, because `Document` has by then deleted the item it implements —
 `git show main:docs/refactor-backlog.md`.
 
-**Reviewer 2 — the CI reviewer's own prompt, run locally.** Copy the `prompt:` block from
-[.github/workflows/claude-review.yml](../../.github/workflows/claude-review.yml) verbatim, with the
-`REPO`/`PR NUMBER` header replaced by "review the working tree against `main`" and the trailing
-"post GitHub comments" instruction replaced by "return findings". Three reasons this earns a slot
-rather than duplicating reviewer 1:
+**Reviewer 2 — the CI reviewer's own prompt, run locally.** `node scripts/review-prompt.mjs`
+prints it, straight out of [.github/workflows/claude-review.yml](../../.github/workflows/claude-review.yml).
+Substitute the `REPO`/`PR NUMBER` header for "review the working tree against `main`" and the
+trailing "post GitHub comments" instruction for "return findings"; change nothing else. Three
+reasons this earns a slot rather than duplicating reviewer 1:
 
 - **It is the reviewer that actually gates the PR.** Running it before pushing turns a
   comment-then-fix-then-repush round trip into an edit. Measured on PR #24: three of its findings
@@ -293,10 +293,18 @@ rather than duplicating reviewer 1:
   warning and exits SUCCESS, so the check goes green having reviewed nothing. For those PRs the
   local copy is not redundancy, it is the whole review.
 
-**Keeping the copy honest.** Reviewer 2's value depends on the prompt matching the workflow. Have
-the agent read the `prompt:` block out of `claude-review.yml` at run time rather than pasting it
-into the workflow script — a pasted copy is a third place the invariants live, and CLAUDE.md already
-carries a rule about the second one drifting.
+**Keeping the copy honest.** Reviewer 2's value depends on the prompt matching the workflow, so it
+reads it at run time — a pasted copy would be a third place the invariants live, and CLAUDE.md
+already carries a rule about the second one drifting. `scripts/lib/review-prompt.test.mjs` asserts
+the real workflow still yields a prompt with both ends intact, so restructuring the YAML fails
+`node --test` instead of silently leaving the local reviewer reading nothing.
+
+**The prompt stays inline in the workflow, and that is a security property, not inertia.**
+`claude-code-action` validates that *the workflow file invoking it* is byte-identical to the copy on
+the default branch — server-side, scoped to that one file. A prompt in its own file could be
+rewritten by a PR while the `.yml` stayed identical, and the PR would then be reviewed under rules
+it had just written. Checked on 2026-08-19: there is no `prompt_file` input either, so externalising
+it would have meant an env var, buying the regression for nothing.
 
 **What each reviewer's findings do.** `blocker` from either stops the run before `Land`, and a fix
 agent addresses them. `should-fix` and `nit` are passed to the land agent and stated in the PR body

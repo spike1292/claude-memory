@@ -77,6 +77,24 @@ broader way. Evidence: #2 and #4 both touched `claude-review.yml` and were skipp
 `ci.yml` and `release.yml`, did not touch the reviewer's own file, and got a full 3-minute review
 that found two real defects. So only changes to `claude-review.yml` itself go unreviewed.
 
+### The review prompt stays inline in that file
+
+Being per-file cuts the other way too: **do not move the `prompt:` block into a file of its own.**
+The instructions would then be editable without touching the `.yml`, so validation would pass and
+the PR would be reviewed under rules it had just rewritten — the exact substitution the check
+exists to prevent. Asked and answered 2026-08-19; `claude-code-action@v1` has no `prompt_file`
+input either, so the alternative was piping a file through an env var, which buys the regression
+for nothing.
+
+The mitigating fact is narrow, so do not lean on it: the job skips fork PRs
+(`head.repo.full_name == github.repository`), so the substitution needs push access to this repo.
+
+Read the prompt out with **`node scripts/review-prompt.mjs`**. Run it against your own working tree
+before pushing — it is the reviewer that gates the PR, so its findings are cheaper as an edit than
+as a comment you repush over, and for a PR editing `claude-review.yml` it is the only review
+available at all. `scripts/lib/review-prompt.test.mjs` fails if the workflow is restructured such
+that the prompt no longer extracts.
+
 ## Releasing
 
 Changelog entries land with the change, under `## [Unreleased]` in `CHANGELOG.md` — Keep a

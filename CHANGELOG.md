@@ -11,6 +11,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`scripts/review-prompt.mjs` prints the CI reviewer's own prompt.** The prompt that gates every
+  PR lived only inside a YAML block scalar, so applying it locally meant retyping it. Now it is one
+  command, and running it before pushing turns its findings into an edit rather than a comment to
+  repush over — on a PR that edits `claude-review.yml` it is the only review available, since
+  `claude-code-action` skips those and exits green. The prompt deliberately stays inline in the
+  workflow: validation covers only the file invoking the action, so a prompt in its own file could
+  be rewritten by the PR it reviews. A test asserts the real workflow still yields it, so
+  restructuring the YAML fails `node --test` instead of silently leaving the reader empty.
+
 - **Implementation plans are committed, under `docs/plans/`.** Plan mode writes to
   `~/.claude/plans/`, which on this machine is a symlink into a private Obsidian vault — so the
   plan for work that lands in a public repo was itself invisible to anyone reading that repo. Dated
