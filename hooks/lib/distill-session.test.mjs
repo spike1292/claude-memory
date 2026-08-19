@@ -21,6 +21,15 @@ import {
   reconcile,
   transcriptToText,
 } from './distill-session.mjs';
+// Git with user and system config neutralised. Both helpers below resolve a remote URL that the
+// assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
+// different remote than the test expects and fail on a machine setting rather than on the code.
+// It is also spread into the child env of the hook itself: the hook resolves the key by shelling
+// out to git, and GIT_CONFIG_GLOBAL overrides the HOME-based lookup, so scratch-HOME alone does not
+// cover it. Proved by running the suite under a planted insteadOf — 1 failure before, 0 after, and
+// the failure named `vault-insights-evil.example-...`, i.e. the rewrite reaching the assertion
+// (2026-08-19, review of #31).
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-'));
 
@@ -50,8 +59,11 @@ test('distill-session', async (t) => {
       ],
     ]) {
       fs.rmSync(r, { recursive: true, force: true });
-      execFileSync('git', ['init', '-q', r], { stdio: 'pipe' });
-      execFileSync('git', ['-C', r, 'remote', 'add', 'origin', url], { stdio: 'pipe' });
+      execFileSync('git', ['init', '-q', r], { stdio: 'pipe', env: GIT_ENV });
+      execFileSync('git', ['-C', r, 'remote', 'add', 'origin', url], {
+        stdio: 'pipe',
+        env: GIT_ENV,
+      });
       const got = projectKey(r);
       assert.strictEqual(got, want, `${url} -> ${got}, want ${want}`);
     }
@@ -355,4 +367,87 @@ test('Stop distils a LONG session, then debounces it', () => {
   } finally {
     fs.rmSync(first.marker, { force: true });
   }
+});
+
+// The ctx source label and the indexed directory must carry the SAME identity (item 14, unified
+// 2026-08-19). Before that the label was `vault-<layer>-${basename(cwd)}` while the directory was
+// `VAULT/<layer>/<project_key>` — so this repo, checked out as `mem-checkout`, indexed
+// `Memory/github.com-spike1292-claude-memory` under the source `vault-memory-mem-checkout`: a name
+// that named the checkout rather than the notes, and that no other part of the system could
+// reconstruct. (It did NOT put two labels in one index — context-mode partitions its content DB by
+// checkout path — see the comment on `reindex()`.) Driven end to end through the entry with a fake
+// `context-mode` on PATH, because that is the only place the two halves are visible together;
+// `reindex()` is deliberately not exported.
+//
+// This asserts the post-migration case, where `slug` is `projectKey(cwd)`. The invariant is the
+// weaker "label == indexed directory": on the pre-migration fallback path `slug` is `legacyKey`
+// and both sides move together. That path is not covered here.
+test('the ctx source label carries the same key as the directory it indexes', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-'));
+  // Registered the moment the scratch world exists, not after the assertions: an rmSync on the last
+  // line is skipped whenever an assertion above it throws — exactly when there is something to
+  // leak. #30 added t.after for the same reason, after leaked worlds reached 2.7 GB in $TMPDIR
+  // (2026-08-19, review of #31).
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'mem-checkout');
+  const vault = path.join(root, 'vault');
+  const bin = path.join(root, 'bin');
+  const log = path.join(root, 'ctx.log');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  // Git runs with its user and system config neutralised, not the inherited env. The hook under
+  // test resolves project_key from `git remote get-url origin`, so a developer with a global
+  // `[url] insteadOf` rewrite would see a different remote here than the assertion expects and the
+  // test would fail on a machine setting rather than on the code (2026-08-19, review of #31).
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph'])
+    fs.mkdirSync(path.join(vault, layer, slug), { recursive: true });
+  fs.mkdirSync(path.join(vault, 'permanent'), { recursive: true });
+
+  // Records argv instead of indexing. `context-mode` is optional and never installed by CI.
+  fs.writeFileSync(
+    path.join(bin, 'context-mode'),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\n`,
+  );
+  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  execFileSync(process.execPath, [entry, transcript, repo], {
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+  const sources = calls.map((l) => l.split(' --source ')[1]);
+  assert.deepStrictEqual(sources.slice(0, 4), [
+    `vault-insights-${slug}`,
+    `vault-memory-${slug}`,
+    `vault-logs-${slug}`,
+    `vault-graph-${slug}`,
+  ]);
+  assert.strictEqual(sources[4], 'vault-permanent', 'permanent/ keeps its cross-project label');
+  // The directory on the same command line carries the same identity — that is the whole point.
+  for (const [i, layer] of ['Insights', 'Memory', 'Logs', 'Graph'].entries())
+    assert.ok(
+      calls[i].includes(path.join(vault, layer, slug)),
+      `${layer}: label and directory must agree`,
+    );
+  // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
+  assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
 });

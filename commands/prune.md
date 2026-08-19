@@ -9,7 +9,7 @@ description: Prune memory — archive old logs, dedup Insight notes (asks before
 > ```
 > `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
 
-Keep the vault signal-dense. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), NOT the checkout path — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. `<repo>` = last path segment of `pwd`, lowercased. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. Best run at **end of session**, after the Stop-hook distiller's final pass.
+Keep the vault signal-dense. `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), NOT the checkout path — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. Best run at **end of session**, after the Stop-hook distiller's final pass.
 
 0. **Take the carry-forward list first — before looking for anything new:**
 
@@ -60,11 +60,14 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    them, so the sweep bounds the scan's reach, it does not eliminate reading.
 
 3. **Refresh BOTH indexes** so retrieval reflects the pruned state — the FTS5 one below, and the semantic one: `node "$MEM/scripts/memory-semantic.mjs" --index` (incremental: re-embeds only notes whose CONTENT changed — a moved mtime costs one read and a hash — and drops rows for deleted notes, so it is seconds after a prune). **Run it here even though a SessionStart hook also refreshes it** — that hook fires at the *start* of the next session, and until then the vector side would keep answering with notes this prune just deleted. (Routine freshness after *new* notes is automatic — the distiller re-indexes at SessionEnd; this step matters mainly for **deletions**, which must drop stale chunks.)
-   - **Source label MUST be lowercase** `<repo>` — the SessionEnd distiller indexes as `vault-insights-frontend` / `vault-memory-frontend` (lowercase). If you index with a different case (e.g. `vault-insights-Frontend`), FTS5 stores a *second* copy under the case-variant label and every note returns twice, halving the effective result window and pushing real matches below the top-5. Lowercase the repo segment before substituting.
-   - Because deletes happened, don't just re-index (append-only FTS5 keeps stale chunks): **`ctx purge` (scope: project) THEN re-index** both dirs:
-     - `ctx_index(path: "<vault>/Insights/<slug>", source: "vault-insights-<repo-lowercase>")`
-     - `ctx_index(path: "<vault>/Memory/<slug>", source: "vault-memory-<repo-lowercase>")`
-   - Verify: search a deleted note's title — it should no longer surface, and no note should appear twice under two case-variant sources.
+   - **Source label is `vault-<layer>-<slug>` — the same `<slug>` as the directory** (unified 2026-08-19; it used to be `<repo>`, the lowercased checkout dir name, while the directory was already `<slug>`). Substitute `<slug>` verbatim — do not re-case it, do not re-derive it from the directory name. Any label that differs from the distiller's by so much as case makes FTS5 store a *second* copy, every note returns twice, and the effective result window halves.
+   - **One-time migration (only until you have purged once):** every vault source indexed before 2026-08-19 sits under the old `vault-<layer>-<repo>` label, and the distiller now writes `vault-<layer>-<slug>` beside it. Both rows survive — context-mode's only automatic eviction is a 14-day staleness sweep on `indexed_at`, and re-indexing keeps the old rows fresh nowhere, so they age out only if nothing re-writes them. That is the duplicate-results hazard above, at the scale of the whole vault. The purge-then-reindex in the next bullet fixes it, which is why this prune runs it even when nothing was deleted. Confirm afterwards with `ctx_stats` (or a search) that no `vault-*-<repo>` source remains — `<repo>` being the old form, the lowercased last path segment of the checkout directory, which is what you are looking for the absence of.
+   - **Run this every prune, deletions or not** — appended-to FTS5 keeps stale chunks after a delete, and until the label migration above has been purged once it is what removes the duplicate rows. Don't just re-index (append-only FTS5 keeps stale chunks): **`ctx purge` (scope: project) THEN re-index** all five sources — the four slug layers plus `permanent/`:
+     - `ctx_index(path: "<vault>/Insights/<slug>", source: "vault-insights-<slug>")`
+     - `ctx_index(path: "<vault>/Memory/<slug>", source: "vault-memory-<slug>")`
+     - `ctx_index(path: "<vault>/Logs/<slug>", source: "vault-logs-<slug>")` and the same for `Graph`
+     - `ctx_index(path: "<vault>/permanent", source: "vault-permanent")` — **not slug-scoped, and easy to forget.** The purge is scoped to the *project*, so it drops this cross-project layer's rows for this checkout as well, and nothing else puts them back until the next SessionEnd. `reindex()` in `hooks/lib/distill-session.mjs` issues five `cm index` calls for exactly this reason, and `hooks/lib/distill-session.test.mjs` asserts the fifth. A list that stops at the four slug layers leaves `permanent/` — the promoted, cross-project notes — missing from `ctx_search`, which is the same defect as leaving Logs and Graph out, one layer further up.
+   - Verify: search a deleted note's title — it should no longer surface, and no note should appear twice under two sources whose labels differ only in the key.
 
 3b. **Check for consolidation gaps** (occasionally — not every prune):
 

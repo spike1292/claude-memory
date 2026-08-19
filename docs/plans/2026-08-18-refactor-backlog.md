@@ -151,7 +151,7 @@ The `HOME` isolation is the fiddly part, so item 10 gets its own verify agent th
 against a scratch `HOME` and confirms the real `~/.claude` was untouched.
 
 **Corrected after the run.** The "~25 lines" for item 9 was the *shell script's* size, not the
-port's: 42 lines of entry plus a 111-line twin plus 176 lines of test, because the behaviour the
+port's: 38 lines of entry plus a 137-line twin plus 223 lines of test, because the behaviour the
 25 lines had was mostly undefined rather than absent — an impossible date, a name that already
 exists in `Archive/`, a hostile `PRUNE_DAYS`. A port estimate that counts the source lines is
 counting the wrong thing. The `HOME`-isolation verify agent was worth its cost and found nothing
@@ -422,14 +422,49 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
 - **Run 4 — landed as [#29](https://github.com/spike1292/claude-memory/pull/29)**, merged
   2026-08-19. Item 7 deleted from the backlog, along with the site Run 3 deferred; `G1`'s last hole
   and `R4` both closed, and items 11 and 12 unblocked.
-- **Run 5 — in flight** on `test/destructive-scripts` (items 9 and 10, two implementers in
-  parallel as planned). Both items are done and both are deleted from the backlog; the wave it
-  belongs to is empty, and it leaves behind one *new* piece of work — the two silent-note-loss
-  paths item 10 characterised in `vault-memory-sync.sh`, which are now the largest known
-  irreversible-loss risk in the repo and have, for the first time, a test to be fixed against.
-- Run 6 not started.
+- **Run 5 — landed as [#30](https://github.com/spike1292/claude-memory/pull/30)**, merged
+  2026-08-19 as `5cfb51c` (items 9 and 10, two implementers in parallel as planned). Both items
+  deleted from the backlog; the wave it belongs to is empty, and it leaves behind one *new* piece
+  of work — the two silent-note-loss paths item 10 characterised in `vault-memory-sync.sh`, which
+  are now the largest known irreversible-loss risk in the repo and have, for the first time, a test
+  to be fixed against.
+- **Run 6 — the last run**, on `feat/enforce-invariants-and-unify-keys` (items 11, 12, 14, three
+  implementers in parallel as planned). Item 11 flips the entry/`lib` invariant to **CI (partial)**
+  — the check sees that a twin exists, not that the entry delegates to it, and the row says so.
+  Item 12 gave `MIN_SCORE = 6.0` its case set and **left the constant alone**: it suppresses none
+  of the 80 on-topic bench prompts at any gate up to 12, and it also sits inside the off-topic
+  band, so the sweep says "too low", which is a behaviour change on every armed prompt and not a
+  measurement's to take. Item 14 closes `H7`. Two run-6 deviations from the plan are recorded
+  above and in the code: `--mode lexical` was not the instrument item 12 was planned around, and
+  item 14's stated harm was not real.
 
-### What Runs 1–5 taught, folded back into the plan
+**All six runs have landed. The plan is finished; the backlog it drove is finished with it.**
+
+### What should happen to this file
+
+Per CLAUDE.md — *"a plan whose steps have all shipped is deleted, and the changelog is the record"*
+— **this file should be deleted in a follow-up PR, not kept as a trophy.** Deliberately not deleted
+here: this PR is the last run's own diff, and a plan that deletes itself in the run it is grading
+leaves the reviewer nothing to grade the run against. The `Spec` review axis reads the backlog item
+from `main` for exactly that reason.
+
+Before it goes, two things in it are worth **keeping rather than losing**, and neither belongs in a
+changelog:
+
+- **The workflow shape** — `Implement → Verify → Document → Review → Land`, with `Document` before
+  `Review` and the PR body drafted to a file. That is a reusable method with measured evidence
+  behind it (#24's two escapes were both prose), and it is not specific to this backlog. It belongs
+  in `docs/decisions/`, rewritten as the decision record CLAUDE.md says a plan becomes when it
+  outlives its execution.
+- **"What Runs 1-6 taught"** below — six lessons, each with the run and the incident that produced
+  it. Same destination.
+
+What should *not* survive: the conflict map, the per-run diff plans, the cost table, and the item
+text. All of it is either shipped, or already recorded in `docs/architecture.md` and the changelog,
+or — in the case of the two plans that turned out to be wrong — recorded in the code comment that
+corrects it, which is where someone will actually meet it.
+
+### What Runs 1-6 taught, folded back into the plan
 
 - **Two of the three findings in the second review round were introduced by the first round.** A
   review pass is itself a change, and needs reviewing. The Review phase runs on the final diff, not
@@ -482,3 +517,22 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
   about `semantic-index-refresh` running detached with rows written outside a transaction — a fact
   three files away from the diff. A plan's breaking/non-breaking label is a hypothesis for the
   implementer to test, not an instruction to obey.
+- **Verify the instrument before you quote a number from it.** Run 6's item 12 was planned around
+  "#29 made `--mode lexical` the same BM25 recall uses, so it is now the right instrument". It was
+  not: that mode still carried its own tokeniser and its own BM25, and — the larger gap — it scores
+  whole notes where the hook scores only the `(card)` chunk. On the same bench cases the two put
+  gold at rank 1 for 50%/25% against `keywordArm`'s 100%/100%. Checking the premise was what found
+  the fork; a sweep run on the assumption would have produced a plausible, precise, wrong number
+  and a comment claiming a case set behind it.
+- **An item's stated harm can be false while the item is still right.** Item 14 was justified by
+  "two checkouts of one repo give one vault folder and two source labels", which sounded like one
+  index holding both. context-mode partitions its content DB per checkout, so that never happened.
+  The real payoff was narrower and better: the label became derivable from the note path, so
+  `/memory:prune` and the retrieval guidance can construct it instead of reconstructing a name
+  nothing else in the system uses. Verify a motivating fact against the dependency, not against the
+  backlog entry that asserts it — and when it turns out wrong, correct it where the code is.
+- **Name a new check by what it can see.** Item 11's step proves a `lib/` twin *exists*; an empty
+  one passes, and the three fat entries pass too. The invariants row therefore reads
+  `CI (partial)`, with the limit spelled out. A row that claimed `CI` would have retired the
+  question — which is precisely the failure that table was written to prevent, and it would have
+  been introduced by the PR whose purpose was to make the table more honest.

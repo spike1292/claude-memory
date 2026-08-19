@@ -9,8 +9,10 @@ does, which seams are missing, and which shortcuts are holding weight. Part 2 ex
 gap is not documented anywhere else, and every entry in it has already cost something or is
 positioned to.
 
-The fixes for what Part 2 records live in [refactor-backlog.md](refactor-backlog.md), ordered by
-impact per hour.
+The fixes for what Part 2 records lived in [refactor-backlog.md](refactor-backlog.md). **That list
+is finished as of 2026-08-19** — every numbered item landed or was declined — so it is now a record
+of what was done, not a queue. What is still open is stated here, in the `CLOSED`/open markers of
+Part 2, and nowhere else.
 
 Keeping this current: see [Maintaining this document](#maintaining-this-document).
 
@@ -329,8 +331,8 @@ exists because a comment once claimed a CI check that did not exist.
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **12 of 16**. 15 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Re-counted 2026-08-19 after `scripts/prune-logs.mjs` was added as a compliant 16th; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
-| No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
+| Entry files are thin wrappers over `lib/` | **CI (partial)** — the *Every entry has a lib/ twin* step fails an entry with no `hooks\|scripts/lib/<name>.mjs`, unless allowlisted with a reason | it checks the twin **exists**, not that the entry delegates to it: an empty twin passes. Holds in **12 of 16**. 15 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Re-counted 2026-08-19 after `scripts/prune-logs.mjs` was added as a compliant 16th; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| No retrieval number without a case set | **NOTHING** — convention | the one standing violation, `MIN_SCORE = 6.0`, got its sweep on 2026-08-19 (item 12); nothing stops the next one |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
 | Model profiles never share thresholds | **NOTHING** — comment only | copied thresholds once made both scans report a clean vault |
@@ -348,8 +350,8 @@ The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing el
 **15** entries have a `lib/` twin — `scripts/env.mjs`, at 16 lines, is the only one that does not —
 but three of those 15 keep the real behaviour in the entry anyway, so having a twin is the weaker
 property and 12 is the invariant. `memory-recall.mjs` joined the compliant side on 2026-08-19, and
-`scripts/prune-logs.mjs` arrived compliant the same day: 42 lines of argv, `PRUNE_DAYS` and stdout
-over a 111-line twin. It is the first entry that was *born* out of a shell script rather than
+`scripts/prune-logs.mjs` arrived compliant the same day: 38 lines of argv, `PRUNE_DAYS` and stdout
+over a 137-line twin. It is the first entry that was *born* out of a shell script rather than
 carved out of an existing `.mjs`, which is why it needed no carving.
 In the three below it is still reversed:
 
@@ -357,16 +359,24 @@ In the three below it is still reversed:
 | --- | ---: | ---: | --- |
 | [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **911** | 690 | no |
 | [`scripts/memory-audit-checks.mjs`](../scripts/memory-audit-checks.mjs) | **321** | 241 | no |
-| [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **257** | 84 | no |
+| [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **230** | 111 | no |
 
 `hooks/memory-recall.mjs` was the fourth row — 253 lines over no lib at all. It is now 153 lines of
-stdin, socket, `node:sqlite` and stdout over a 148-line
+stdin, socket, `node:sqlite` and stdout over a 189-line
 [`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs) with the gates, the ranking, the
 formatting and the log-record shapes, and a test file where the prompt path had none.
 
-**This is not cosmetic.** All four CI invariants key off the `lib/` boundary, so code left in an
+**This is not cosmetic.** The four *structural* CI invariants key off the `lib/` boundary, so code left in an
 entry is **exempt by construction** — and the `node:sqlite`-only-in-entries rule actively pushes
-database code there. The 920-line file is the least-checked file in the repo.
+database code there. The 911-line file is the least-checked file in the repo.
+
+The *Every entry has a lib/ twin* step added on 2026-08-19 (item 11) does not change that, and the
+gap between what it checks and what this section measures is the reason it is labelled
+**CI (partial)** in the invariants table. It asks whether `<dir>/lib/<name>.mjs` exists; all three
+entries in the table above have one. It catches the shape `hooks/memory-recall.mjs` was in until 2026-08-19 —
+an entry with no twin at all, and therefore exempt from every other check — and nothing beyond it.
+An empty twin satisfies it. Read a green run as "the boundary exists", never as "the entry is
+thin".
 
 `scripts/memory-semantic.mjs` is a god object with seven responsibilities in one module scope: CLI
 parsing, ONNX model lifecycle (`loadEmbedder`/`unloadEmbedder`/`embed`), **sole owner of the SQLite
@@ -429,7 +439,7 @@ imported-not-spawned, to avoid a fork), but it puts the audit module's import co
 | the search daemon | `memory-recall.mjs` over a unix socket | **hand-written on both sides**; only `QUIT` is shared |
 | the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and the card heading — `CARD` in `scripts/lib/lexical.mjs` since 2026-08-19, bound as a parameter by every reader |
 | headless `claude` | `lib/distill-session.mjs` → `claude -p --model haiku` | argv, hardcoded model |
-| `context-mode` CLI | `lib/distill-session.mjs` → `cm index` ×5 | argv, and a **different** identity scheme (H7) |
+| `context-mode` CLI | `lib/distill-session.mjs` → `cm index` ×5 | argv; source labels share the vault's identity since 2026-08-19 (H7) |
 
 ## Known hacks
 
@@ -484,13 +494,20 @@ three-field response for `--json` query mode — so the eval harness and the rec
 against structurally different views of the same search. No version field. The client's
 `r.text ?? ''` is the tell that this has already been noticed.
 
-**H6 — text processing is forked three ways** (four until 2026-08-19).
+**H6 — text processing is forked three ways** (five until 2026-08-19, and this table listed
+only four of them).
 
 | Where | Stopwords | Filter | Splitter |
 | --- | ---: | --- | --- |
 | `scripts/lib/lexical.mjs` (`STOP`/`lexTokens`), re-exported by `memory-semantic.mjs` | 71 | `len > 2` | `/[^a-z0-9]+/` |
 | `scripts/memory-audit-checks.mjs` | 62 | `len > 3` | keeps hyphens |
 | `hooks/lib/distill-session.mjs` (`tokens`) | own array | `len > 2` + singularise | `\p{L}\p{N}` |
+
+`scripts/memory-eval.mjs`'s `--mode lexical` was a row this table never listed — its own `len > 2`
+splitter and its own inline BM25, undercounting H6 by one the whole time. It moved to
+`lexicalRank()` in `scripts/lib/memory-eval.mjs` over the shared pair on 2026-08-19; unlike the
+recall merge, that one *did* move ranking (bench seed 7, `cases-paraphrase`: recall@1 55.0% →
+50.0%), because the fork had neither stopword removal nor query-term de-duplication.
 
 The recall hook was the fourth row — 71 stopwords with `with` listed twice, its own tokeniser, and
 its own inline BM25, so **the fallback scored by a different implementation than the primary path it
@@ -505,12 +522,26 @@ why the shared four live in `scripts/lib/lexical.mjs` rather than in `memory-sem
 they grew up: importing that module costs 3.8-4.4 ms, `lexical.mjs` 0.26-0.42 ms (8 runs each,
 warm, marginal after `paths.mjs`, 2026-08-19). The correctness reason in `B1` is the stronger one —
 a hook's `lib/` twin is imported above the fail-open try, so it may only reach modules that cannot
-print and cannot exit — but the number alone would have decided it too. Recall's gate still has no
-case set behind it (item 12).
+print and cannot exit — but the number alone would have decided it too. Recall's gate got its case
+set on 2026-08-19 (item 12) — and the sweep did **not** use `--mode lexical`, which scores whole
+notes rather than the `(card)` chunks the hook scores. See the comment on `MIN_SCORE`.
 
-**H7 — two identity schemes, adjacent.** In `reindex()`, the directory indexed is
-`VAULT/<layer>/<project_key>` while the source label is `vault-<layer>-${basename(cwd)}`. Two
-checkouts of one repo at different paths give one vault folder and two `ctx_search` source labels.
+**H7 — two identity schemes, adjacent. — CLOSED 2026-08-19 (item 14).** In `reindex()` the
+directory indexed was `VAULT/<layer>/<project_key>` while the source label was
+`vault-<layer>-${basename(cwd)}`. Both sides now derive from the same `slug`, so the label is
+`vault-<layer>-<project_key>` and `ctx_search` scopes are derivable from the note path.
+
+Two corrections to what was written here before. The recorded harm — "two checkouts of one repo
+give one vault folder and two source labels" — never produced a shared index: context-mode
+partitions its content DB by checkout path (`--project cwd` → its own `<hash>.db`), so the two
+labels lived in two databases. The real cost was that the label named the checkout rather than the
+notes, so no other part of the system could reconstruct it. And the invariant that now holds is
+**label == indexed directory**, not label == `projectKey(cwd)`: `distill()` falls back to
+`legacyKey` when the vault has not been migrated yet, and both sides move together.
+
+Closing it does orphan every source indexed under the old label. Nothing purges them automatically
+— context-mode's only eviction is a 14-day staleness sweep — so `/memory:prune` carries a one-time
+purge-then-reindex, and the CHANGELOG says so.
 
 **H8 — `config()` is memoised for process lifetime.** Correct for a 40 ms hook. For the 30-minute
 daemon it means an edit to `config.json` is invisible until the process idles out, with nothing

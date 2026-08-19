@@ -18,11 +18,10 @@
 // Cases live in ~/.claude/data/eval-cases-<slug>-<style>.jsonl and are GITIGNORED: they contain
 // vault content. Regenerate only with --force; a changed case set invalidates every past number.
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { activeModel } from './model-default.mjs';
-import * as paths from '../../hooks/lib/paths.mjs';
+// The shared lexical vocabulary is the ONLY import here. `node:fs`, `node:path`, `execFileSync`,
+// `model-default.mjs` and `paths.mjs` were all imported and none of them referenced — dead since
+// the entry/lib split moved the CLI out. Dropped 2026-08-19.
+import { bm25, lexTokens } from './lexical.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
@@ -72,6 +71,34 @@ export function pickSentence(body, stem, style) {
     return style === 'keyword' ? overlap : -overlap; // keyword wants the title words, semantic avoids them
   };
   return sents.sort((a, b) => score(b) - score(a) || b.length - a.length)[0];
+}
+
+// The keyword baseline for `--run --mode lexical`. It scores WHOLE NOTES, which is what makes it a
+// baseline for the semantic arm (that one searches every chunk) rather than a model of the recall
+// hook (that one scores only the `(card)` chunk). Read that sentence before quoting a number from
+// here at the hook: on the seed-7 300-note bench vault this scores recall@1 50.0% on
+// cases-paraphrase and 25.0% on cases-keyword, where `keywordArm()` over the same cases puts the
+// gold note at rank 1 for 40/40 of BOTH — the document unit, not the ranking function, is the gap
+// (measured 2026-08-19).
+//
+// It used to inline its own tokeniser and its own BM25 — a THIRD fork of both, after #29 retired
+// recall's. That fork silently differed twice: no stopword removal, and no de-duplication of query
+// terms, so a prompt repeating a word scored it twice. Both are gone; `lexTokens`/`bm25` from
+// lexical.mjs are the only implementation. k1/b are passed explicitly for the same reason
+// hooks/lib/memory-recall.mjs passes them — the inlined arithmetic was 1.2/0.75 and a change to
+// bm25()'s defaults must not move this silently.
+export function lexicalRank(docs, queries, k) {
+  const scored = docs.map((d) => ({ note: d.note, toks: lexTokens(d.text) }));
+  return queries.map((q) => {
+    const s = bm25(scored, [...new Set(lexTokens(q))], 1.2, 0.75);
+    return {
+      q,
+      results: scored
+        .map((d, i) => ({ note: d.note, score: s[i] }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, k),
+    };
+  });
 }
 
 export function metrics(perCase) {

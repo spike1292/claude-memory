@@ -152,7 +152,7 @@ on identifiers. Local embeddings, so private notes never leave the machine.
    deleting gold answers that live in another layer. Measured: EN recall@5 67.9% → 53.6%.
 3. **If \`ctx_search\` is available, scope it to the layer you want** — unscoped, it is
    Insights-dominated (many small dense notes outrank few large ones). Project facts →
-   \`vault-memory-<repo>\`; "have I hit this before" → \`vault-insights-<repo>\`. Answer an L1 miss
+   \`vault-memory-$key\`; "have I hit this before" → \`vault-insights-$key\`. Answer an L1 miss
    by scoping, not by piling on aliases. It is an optional second index (context-mode); when it is
    absent the tool above is the whole retrieval path and nothing else changes.
 

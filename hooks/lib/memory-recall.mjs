@@ -27,7 +27,43 @@ import { CARD, bm25, lexTokens } from '../../scripts/lib/lexical.mjs';
 
 export const MAX_NOTES = 4;
 export const MAX_CHARS = 900; // ~250 tokens
-export const MIN_SCORE = 6.0; // below this the top hit is not worth the reader's attention
+// Below this the top hit is not worth the reader's attention. Swept 2026-08-19 on the synthetic
+// bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 100/300/1000 notes), using the
+// `cases-paraphrase.jsonl` + `cases-keyword.jsonl` that script emits: 80 on-topic prompts whose
+// gold note is known by construction and which nobody wrote for this sweep. The off-topic control
+// is the 28 questions in `$CLAUDE_MEMORY_HOME/eval/eval-cases-authored.jsonl` — they ask about
+// THIS repo, so no bench note is a right answer and every fire there is pure noise.
+//
+// That control set is MACHINE-LOCAL and cannot ship: authored case sets live under
+// $CLAUDE_MEMORY_HOME and are private by policy, so the on-topic half of this table is
+// reproducible from the committed generator and the off-topic half is not. To re-run the
+// off-topic half, author your own questions about a corpus the bench vault does not contain
+// (`memory-eval.mjs --author`) — any set where every fire is by construction wrong will do.
+//
+// The instrument is keywordArm's own ranking, not a model of it: `bm25(cards, [...new
+// Set(lexTokens(q))], 1.2, 0.75)` over the `(card)` chunks, which agreed with keywordArm's own
+// decision on 120/120 cases at 6.0. `--mode lexical` in memory-eval.mjs is NOT this instrument;
+// it scores whole notes, and on these same cases puts gold at rank 1 for 50% (paraphrase) and
+// 25% (keyword) against keywordArm's 100% on both.
+//
+//   gate   on-topic answered (of 80)   off-topic false-fire (of 28)   at 100/300/1000 notes
+//    6.0   80  80  80                  17  19  28
+//   10.0   80  80  80                   9  11  13
+//   14.0   80  80  80                   8   8  10
+//   17.0   79  80  80                   4   6   8
+//
+// 6.0 is NOT too high. The weakest on-topic prompt scores 15.2/17.4/20.3 — a 2.5-3.4x margin —
+// and no gate from 0 to 12 suppresses one of the 80; gold is at rank 1 for every one of them.
+// It is too LOW in the other direction: it sits inside the off-topic band (5.5-32.1 at 300 notes)
+// and rejects between a third of it and none of it, so a long prompt that merely shares software
+// vocabulary gets an answer anyway. ~14 halves the false fires at zero on-topic cost at all three
+// corpus sizes.
+//
+// DELIBERATELY NOT CHANGED HERE: moving it is a behaviour change on every prompt, and this is a
+// direction rather than a value. Absolute BM25 is corpus-scaled (avgdl moved 82 -> 51 across the
+// three sizes), the synthetic prose is tidier than a real vault's, and the off-topic control is
+// contaminated — both corpora are software prose. Read the abstain rate in the log first.
+export const MIN_SCORE = 6.0;
 export const MIN_PROMPT = 25; // one-word prompts have no retrievable intent
 // Cosine needs its own gate — MIN_SCORE above is BM25-scaled and means nothing here. Calibrated
 // 2026-08-15 on 5 on-topic and 5 deliberately off-topic prompts: on-topic 0.495-0.736, off-topic

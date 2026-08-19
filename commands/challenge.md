@@ -21,7 +21,7 @@ not stopped them recurring; being confronted before acting might.
 
 1. **Retrieve the opposition — both channels, and widen the net beyond the obvious.**
    - `node "$MEM/scripts/memory-semantic.mjs" --query "<the decision>" -k 8`
-   - `ctx_search(queries: [...], source: "vault-insights-<repo>")` — expand the query into the
+   - `ctx_search(queries: [...], source: "vault-insights-<slug>")` — expand the query into the
      vocabulary the *answer* would use, not the user's phrasing (see CLAUDE.md).
    - Read `Insights/<slug>/REFLECTIONS.md` for the same subject, and `Mistakes/` in particular.
    Search for the decision **and for its opposite** — a note arguing the other way will not share

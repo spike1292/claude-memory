@@ -85,7 +85,14 @@ export function nowSeconds(d = Date.now()) {
   return Math.floor(d / 1000);
 }
 
-const which = (cmd) => {
+// Exported since 2026-08-19: distill-session.mjs's reindex() called a bare `which` with no import —
+// a ReferenceError that aborted every distillation run right after the notes were written, so
+// ctx_search never got refreshed and the child exited non-zero. Nothing noticed because the hook
+// detaches and its stderr goes to distill.log. It was introduced by #20 (ee6c49a, 2026-08-18),
+// which deleted distill-session.mjs's own local copy of `which` without adding an import, and it
+// never shipped: v0.3.1 still defines the local copy (`hooks/lib/distill-session.mjs:299` in that
+// tag), and no release followed it. Unreleased `main` only — not a user-facing regression.
+export const which = (cmd) => {
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
     const p = path.join(dir, cmd);
