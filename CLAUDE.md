@@ -276,11 +276,31 @@ never gets reviewed (per-file, so `ci.yml` edits *are* reviewed), and the releas
 Three of those matter while you are still editing:
 
 - **`claude-review.yml`'s prompt carries this repo's invariants. When a rule here changes, change
-  it there too.**
+  it there too.** It stays *inline* in that workflow — `claude-code-action` validates only the file
+  that invokes it, so a prompt in its own file could be rewritten by the PR it reviews. Read it with
+  `node scripts/review-prompt.mjs`, and run it locally before pushing: it is the reviewer that gates
+  the PR, and the only one a PR editing `claude-review.yml` can get.
 - **Never bump versions by hand.** `scripts/release.sh` writes all five; CI fails on drift.
 - **Merging the release PR publishes.** There is no manual tagging step.
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
   release notes verbatim.
+
+### Plans live in `docs/plans/`
+
+**An implementation plan for this repo goes in `docs/plans/<YYYY-MM-DD>-<slug>.md` and is committed**
+— dated like `docs/decisions/`, and for the same reason: it is a record of what was decided and why,
+which the diff alone does not carry.
+
+Plan mode writes to `~/.claude/plans/` by default. That directory is a symlink into a private
+Obsidian vault, so a plan left there is invisible to anyone reading this repo and to the next
+session that does not happen to look — while the work it describes lands here in public. Move it
+when the plan is approved.
+
+A plan is not a decision record. `docs/decisions/` answers "why is it this way, and what did we
+measure"; `docs/plans/` answers "what are we about to do, in what order, and what does done look
+like". A plan that outlives its execution has usually become a decision record and should be
+rewritten as one. Keep a landed plan's Status section current — a plan whose steps have all shipped
+is deleted, and the changelog is the record.
 
 ## Agent skills
 
