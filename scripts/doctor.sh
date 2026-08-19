@@ -116,7 +116,10 @@ else
 fi
 
 if [ -d "$STATE/models" ] && [ -n "$(ls -A "$STATE/models" 2>/dev/null)" ]; then
-  ok "model weights cached in state ($(du -sh "$STATE/models" 2>/dev/null | cut -f1))"
+  # -L: models/ is the largest thing in $STATE and the one directory the size breakdown below
+  # deliberately does not re-walk, so this line is its only measurement. Without -L a symlinked
+  # models/ reports 0 here and nothing else would catch it (2026-08-19, review of #24).
+  ok "model weights cached in state ($(du -shL "$STATE/models" 2>/dev/null | cut -f1))"
 else
   warn "no model weights in $STATE/models" "first query downloads ~700 MB. Run /memory:install to warm them."
 fi
@@ -130,8 +133,8 @@ fi
 echo
 echo "state size"
 # Unbounded growth stays invisible until someone trips over it: the 2.2 GB of duplicated
-# node_modules above was found by accident, and db/ models/ logs/ eval/ run/ have exactly the
-# same shape with nothing watching them. -L for the same reason as the node_modules check —
+# node_modules above was found by accident, and everything else under $STATE has exactly the
+# same shape with nothing watching it. -L for the same reason as the node_modules check —
 # once a subdirectory is a symlink into a shared install, du without it measures the link (0)
 # and this section would report a healthy state by measuring nothing (2026-08-18).
 #

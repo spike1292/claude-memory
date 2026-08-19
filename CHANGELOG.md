@@ -15,10 +15,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `$CLAUDE_MEMORY_HOME` was getting: nothing vacuums, per-project × per-model `.db` files
   accumulate, `models/` accumulates one set of weights per model, and the hook logs append. The
   2.2 GB of duplicated `node_modules` behind 0.3.1 was found by accident rather than by a check.
-  Doctor now prints `db/ models/ logs/ eval/ run/` with a combined total and `warn`s past 2 GB,
-  which sits above the ~722 MB of ONNX weights a healthy install is expected to carry. Sizes are
-  measured with `du -L`: without it a symlinked subdirectory reports 0 and the check passes by
-  measuring nothing, the same blind spot as the `node_modules` fix below.
+  Doctor now reports the total size of `$CLAUDE_MEMORY_HOME` and `warn`s past 2 GB — which sits
+  above the ~722 MB of ONNX weights a healthy install is expected to carry — plus a breakdown of
+  `db/ logs/ eval/ run/ cache/`. The total measures the directory itself rather than summing that
+  breakdown, so it cannot omit what the list forgets; `models/` and the shared `node_modules/` keep
+  their own existing checks instead of being walked twice. Sizes are measured with `du -L`: without
+  it a symlinked subdirectory reports 0 and the check passes by measuring nothing, the same blind
+  spot as the `node_modules` fix below.
 
 ### Fixed
 

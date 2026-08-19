@@ -22,11 +22,8 @@ find "$V/Insights/$S" -name '*.md' | wc -l   # staged
 find "$V/permanent"   -name '*.md' | wc -l   # promoted
 ```
 
-Staged always outnumbers promoted, usually by more than you expect — that gap, not any fixed ratio,
-is the argument. (The figure this paragraph used to hardcode was 965 against 5, measured once on
-2026-08-15; re-running the two commands above on 2026-08-18 gave a far smaller multiple. Which is
-exactly why the number was replaced by the commands.) `--clusters` finds where a consolidated note
-is missing; this writes one.
+Whatever the two numbers are, the gap between them is the argument for running this at all.
+`--clusters` finds where a consolidated note is missing; this writes one.
 
 **The risk this command is shaped around.** A synthesis note asserts a claim that *no single note
 makes* — strictly more room to invent than distillation, and the distiller has already confabulated
