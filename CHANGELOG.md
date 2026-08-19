@@ -26,6 +26,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   with it, where before the hook only ever spawned that file as a detached child. `lexical.mjs`
   imports nothing at all, so it adds no failure mode the entry's existing `paths.mjs` import did
   not already have, and it is 0.26-0.42 ms of module init rather than 3.8-4.4 ms (8 runs each,
+  local APFS; module init reads no vault, so cloud-vs-offline does not move these,
   warm, measured 2026-08-19). `memory-semantic.mjs` re-exports all four, so there is still exactly
   one implementation of each. A CI step now imports every `hooks/lib/*.mjs` **with a deliberately
   unknown model configured** and fails on any output or non-zero exit — the existing side-effect
@@ -86,6 +87,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   with nothing asserting an absolute score. **The SELECT binds `CARD`**, closing R4 in
   `docs/architecture.md` — the sentinel now has no unbound consumer left. **The price is
   +0.5 to +0.9 ms of module init on every prompt**, gate exits included, measured over 8 warm runs
+  on local APFS — the hook reads `$CLAUDE_MEMORY_HOME`, never the Synology-backed vault, so the
+  166 ms/131 ms cloud-vs-offline split that moves other hooks does not apply here —
   as the marginal cost after `paths.mjs`, which the entry loads anyway; end to end, spawn to close,
   that is +0.5 to +1.7 ms on the fastest of 20 gate-exit runs across three alternating passes
   against `main`, with the medians inside the noise, on a ~37 ms Node-startup floor. The first

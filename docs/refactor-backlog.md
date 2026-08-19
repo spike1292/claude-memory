@@ -51,7 +51,8 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 > the repo's first test of the prompt path. It closes `R4` for real: the SELECT binds `CARD`. It
 > resolves three of `H6`'s four forks — `STOP`, the tokeniser and BM25 now come from
 > `scripts/lib/lexical.mjs`, and the two implementations were equivalent, so no ranking moved.
-> **The measured price is +0.5 to +0.9 ms of module init on every prompt**, gate exits included
+> **The measured price is +0.5 to +0.9 ms of module init on every prompt** (local APFS; the hook
+> reads `$CLAUDE_MEMORY_HOME`, never the cloud-backed vault), gate exits included
 > (8 runs, warm, marginal after `paths.mjs`, which the entry loads anyway) — and end to end,
 > spawn to close, +0.5 to +1.7 ms on the fastest of 20 gate-exit runs across three alternating
 > passes against `main`, with the medians inside the noise, on a ~37 ms Node-startup floor. Item 6

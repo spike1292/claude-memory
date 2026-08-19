@@ -81,8 +81,12 @@ jobs:
         run: |
           for f in hooks/lib/*.mjs; do
             case "$f" in *.test.mjs) continue ;; esac
-            out=$(node --disable-warning=ExperimentalWarning --input-type=module -e "await import('./$f')" 2>&1)
-            rc=$?
+            # `rc=$?` on its own line is unreachable here: GitHub runs `run:` under `bash -e`, so a
+            # failing command substitution kills the step at the assignment and the ::error:: below
+            # never prints — the build fails correctly but says nothing. Capture rc on the SAME
+            # statement so the annotation survives (2026-08-19, found reviewing #29).
+            rc=0
+            out=$(node --disable-warning=ExperimentalWarning --input-type=module -e "await import('./$f')" 2>&1) || rc=$?
             if [ -n "$out" ] || [ "$rc" -ne 0 ]; then
               echo "::error file=$f::importing this module under an unknown model exited $rc or produced output —"
               echo "::error file=$f::a hook imports its lib ABOVE the fail-open try, so this reaches the prompt path:"

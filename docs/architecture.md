@@ -329,7 +329,7 @@ exists because a comment once claimed a CI check that did not exist.
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in 9 of 12 (was 5 of 9 before #20, 8 of 12 before the recall twin); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **14 of 15** after the recall twin — `scripts/env.mjs` is the only entry without one (counted 2026-08-19); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
 | No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -396,15 +396,18 @@ by; it only switches off the reserve that would otherwise guarantee Memory rows 
 ```
 
 The arrows point both ways, and #20 added one: `scripts/env.mjs` is the only entry whose `lib/` twin
-is neither same-named nor in the sibling directory. 2026-08-19 added the `hooks/` → `scripts/` arrow
-at the top: the recall hook's twin takes `CARD`, `STOP`, `lexTokens` and `bm25` from
-`scripts/lib/lexical.mjs` rather than keeping a fourth copy. It points at that file and **not** at
-`memory-semantic.mjs`, where the four grew up, because a hook entry imports its `lib/` twin
-statically — above the fail-open try and above the arming gate — and `memory-semantic.mjs`'s module
-scope does `console.log` + `process.exit(1)` on an unknown model. `lexical.mjs` imports nothing at
-all and costs 0.26-0.42 ms of module init instead of 3.8-4.4 ms (8 runs each, 2026-08-19). That is defensible — it renders what `paths.mjs`
+is neither same-named nor in the sibling directory. That is defensible — it renders what `paths.mjs`
 resolves, so it belongs beside it — but it is the pattern breaking again rather than an exception to
 it.
+
+2026-08-19 added the `hooks/` → `scripts/` arrow at the top: the recall hook's twin takes `CARD`,
+`STOP`, `lexTokens` and `bm25` from `scripts/lib/lexical.mjs` rather than keeping a fourth copy. It
+points at that file and **not** at `memory-semantic.mjs`, where the four grew up, because a hook
+entry imports its `lib/` twin statically — above the fail-open try and above the arming gate — and
+`memory-semantic.mjs`'s module scope does `console.log` + `process.exit(1)` on an unknown model.
+`lexical.mjs` imports nothing at all and costs 0.26-0.42 ms of module init instead of 3.8-4.4 ms
+(8 runs each, 2026-08-19, local APFS — module init reads no vault, so the cloud-vs-offline split
+does not apply to this figure).
 
 The directory names describe **who invokes the file**, not a dependency direction. There is exactly
 one real layer — `paths.mjs` — and it is misfiled under `hooks/`, so eight files reach up through
