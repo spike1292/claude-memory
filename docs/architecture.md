@@ -460,7 +460,7 @@ installs with `npm ci`. Measured 2026-08-18.
 live symlink in a cloud-synced dir. It has cost 24 notes once, and two documents carry a standing
 prohibition on porting it. **The fence is unchanged. What changed on 2026-08-19 is the second
 half of this entry**: `hooks/vault-memory-sync.test.mjs` drives it as a black box from a scratch
-`HOME` — 12 cases, mutation-checked on a throwaway copy of the repo so it is known to *fail* when
+`HOME`, mutation-checked on a throwaway copy of the repo so it is known to *fail* when
 the script is broken — so the riskiest file is no longer the least covered one, and a port would
 now have a baseline to be diffed against. That was the stated precondition for ever touching it,
 not permission: the script is still bash and still must not be ported.

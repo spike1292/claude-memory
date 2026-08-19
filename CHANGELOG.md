@@ -17,7 +17,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   notes. It is driven as a black box — spawn bash, hook payload on stdin — from a scratch `HOME`
   built per subtest, never the inherited environment, because isolating `CLAUDE_VAULT` alone still
   leaves the live symlink in range; a final subtest asserts the real `~/.claude` is byte-identical
-  afterwards. Twelve cases: the layer migration loses no note, the destination-exists guard blocks
+  afterwards. It asserts that the layer migration loses no note, the destination-exists guard blocks
   a merge, repointing a symlink COPIES (the 24-note guarantee), a second run is byte-identical to
   the first, a repo with no `origin` keys on the lowercased directory name with `.git` intact
   (#21), and the **payload `cwd` beats `$PWD`** — the line that decides *which* project's symlink

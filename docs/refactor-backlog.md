@@ -97,7 +97,7 @@ empty, and what is left of it is the follow-up named at the end of item 10 below
 > **Item 10 (test `vault-memory-sync.sh`) landed on 2026-08-19** and is deleted from this list, per
 > the rule at the top. `hooks/vault-memory-sync.test.mjs` drives the 163-line script as a black box
 > — spawn bash, hook payload on stdin, assert on the filesystem — from a scratch `HOME` per
-> subtest, with a built rather than inherited child env; 12 cases, and mutation-checked on a
+> subtest, with a built rather than inherited child env, and mutation-checked on a
 > throwaway copy of the repo, so it is known to fail when the script is broken rather than merely
 > known to be green. **The fence in `H4` stays**: the script is still bash and still must not be
 > ported. What the test changes is that a port is now *diffable* against a baseline, which was the
