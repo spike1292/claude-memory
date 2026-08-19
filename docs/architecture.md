@@ -329,7 +329,7 @@ exists because a comment once claimed a CI check that did not exist.
 | One `--index` writer per model | **code** — `.index-<model>.lock`, `mkdir` + stale reclaim | cross-process, and now the *only* index lock (2026-08-18) |
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
-| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **14 of 15** after the recall twin — `scripts/env.mjs` is the only entry without one (counted 2026-08-19); see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| Entry files are thin wrappers over `lib/` | **NOTHING** | holds in **11 of 15**. 14 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Counted 2026-08-19; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
 | No retrieval number without a case set | **NOTHING** — convention | already violated once, `MIN_SCORE = 6.0` |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -343,14 +343,16 @@ Everything above is the design. Below is what the code does.
 
 ## G1 — the entry/`lib/` rule is inverted where it matters
 
-The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for nine
-of the twelve hook and CLI entries — it was 5 of 9, the three added by #20 all comply, and
-`memory-recall.mjs` got its twin on 2026-08-19. In the three that carry the real behaviour it is
-still reversed:
+The stated rule: `hooks/<name>.mjs` owns argv, stdin and stdout **and nothing else**. True for
+**11 of the 15** hook and CLI entries, and the two numbers people quote here are different claims:
+**14** entries have a `lib/` twin — `scripts/env.mjs`, at 16 lines, is the only one that does not —
+but three of those 14 keep the real behaviour in the entry anyway, so having a twin is the weaker
+property and 11 is the invariant. `memory-recall.mjs` joined the compliant side on 2026-08-19.
+In the three below it is still reversed:
 
 | Entry | Entry | Lib | Entry tested? |
 | --- | ---: | ---: | --- |
-| [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **920** | 716 | no |
+| [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) | **911** | 690 | no |
 | [`scripts/memory-audit-checks.mjs`](../scripts/memory-audit-checks.mjs) | **321** | 241 | no |
 | [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **257** | 84 | no |
 

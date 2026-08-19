@@ -110,7 +110,12 @@ export function keywordArm(cards, prompt) {
   const qt = [...new Set(lexTokens(prompt))];
   if (!qt.length) return { entry: { abstained: true, reason: 'no content words' }, output: null };
 
-  const docs = cards.map((c) => ({ ...c, toks: lexTokens(c.text) }));
+  // `?? ''` is not defensive padding: chunks.text has no NOT NULL (scripts/memory-semantic.mjs's
+  // CREATE TABLE), and lexTokens does s.toLowerCase() with no guard, so one NULL row would throw out
+  // of the keyword arm. It fails open either way — the entry's outer catch exits 0 — but it would
+  // take the whole arm down and log nothing, where every other empty-content path here logs a
+  // reason. Unreachable today; the schema is what makes it reachable tomorrow (2026-08-19, #29).
+  const docs = cards.map((c) => ({ ...c, toks: lexTokens(c.text ?? '') }));
   // k1/b PINNED, not left to bm25()'s defaults. MIN_SCORE below and its MIN_SCORE/2 trailing floor
   // are absolute BM25 values calibrated at 1.2/0.75 — the arithmetic recall used to inline. Sharing
   // the function means a tune made for the CLI's fusion arm would otherwise rescale both gates

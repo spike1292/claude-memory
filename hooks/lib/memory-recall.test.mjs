@@ -258,3 +258,17 @@ test('imports nothing that can fail or print on the prompt path', async () => {
     'scripts/lib/lexical.mjs must import nothing — that is the property that makes it safe here',
   );
 });
+
+// chunks.text is nullable in the schema (scripts/memory-semantic.mjs's CREATE TABLE) and lexTokens
+// does s.toLowerCase() with no guard, so one NULL row used to throw the whole keyword arm into the
+// entry's outer catch — fail-open, but silent, where every other empty-content path logs a reason.
+// Asserted as EQUIVALENCE against the same query the positive test above uses: a NULL row must not
+// merely fail to crash, it must not change the answer at all.
+test('keywordArm: a NULL text row is inert, not fatal', () => {
+  const q = 'what did we decide about the cutover and the rollback plan';
+  const clean = keywordArm(CORPUS, q);
+  const withNull = keywordArm([{ note: 'null-row', layer: 'Memory', text: null }, ...CORPUS], q);
+
+  assert.ok(!withNull.entry.abstained, 'a NULL row must not take the arm down');
+  assert.equal(withNull.output, clean.output, 'and must not change what the arm returns');
+});
