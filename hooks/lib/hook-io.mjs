@@ -185,7 +185,22 @@ const LOG_KEEP_BYTES = 256 * 1024;
  *
  * The retained tail starts mid-line, so everything up to the first newline is dropped: a truncated
  * first line reads as corrupt output rather than as a partial one, and the cost is at most one lost
- * line. Losing a whole banner is impossible — the banner about to be appended follows immediately.
+ * line. (A tail with no newline at all keeps its partial line — a single runaway line is the one
+ * case where dropping it would discard the whole tail.) The banner about to be appended follows
+ * immediately, so the caller's own record of this run survives the trim.
+ *
+ * NOT ATOMIC, and deliberately not made so (2026-08-19, raised twice in review of #24).
+ * `openLog()` hands detached children an `O_APPEND` fd that they hold for the whole run — minutes,
+ * for a headless `claude`. Two hooks can therefore be writing while a third trims, and anything
+ * appended between the `readSync` and the `writeFileSync` below is overwritten. That window is
+ * microseconds, fires only past 1 MB, and costs debug-log lines.
+ *
+ * The obvious fix — write a temp file and `rename()` — is strictly worse HERE. Truncating in place
+ * keeps the inode, so every held `O_APPEND` fd goes on landing in the file a reader opens; the loss
+ * is bounded by that one window. A rename leaves those fds pointing at an unlinked inode, so every
+ * child holding one writes the rest of its output into a file nothing can open — seconds of racy
+ * overlap traded for minutes of silently discarded output. Atomicity is the wrong property to buy
+ * when the writers outlive the swap.
  *
  * Best effort throughout, like everything else here: a log we cannot trim is a log that keeps
  * growing, never a hook that fails.
