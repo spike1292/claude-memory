@@ -23,30 +23,23 @@ import {
   MODEL,
   DIM,
   MAX_CHARS,
-  MIN_SECTION,
   QUERY_PREFIX,
   DOC_PREFIX,
-  RRF_K,
-  DEFAULT_FUSE_W,
   DEFAULT_FUSE_LEX,
-  stripFrontmatter,
+  CARD,
   chunkNote,
   contentHash,
-  fuseReserved,
   cosine,
   assertVectorWidth,
   clusterNotes,
   centroid,
   samefolderPairs,
-  lexTokens,
-  bm25,
-  fuseRRF,
   socketIsLive,
   singleFlight,
   mtimeCache,
   evictableSockets,
-  buildLexDocs,
   buildBundle,
+  searchIn,
   QUIT,
 } from './lib/memory-semantic.mjs';
 
@@ -546,8 +539,8 @@ if (flag('--clusters')) {
   const min = Number(val('--min') || PROFILE.clusterMin);
   const minSize = Number(val('--size') || 4);
   const cards = db
-    .prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'")
-    .all()
+    .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+    .all(CARD)
     .map((r) => ({
       note: r.note,
       layer: r.layer,
@@ -624,8 +617,8 @@ if (flag('--dupes')) {
   // for a short Insight note is effectively the whole note. Comparing cards keeps this O(notes²)
   // (~165k pairs, well under a second) instead of O(chunks²).
   const rawCards = db
-    .prepare("SELECT note, layer, text, vec FROM chunks WHERE heading = '(card)'")
-    .all();
+    .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+    .all(CARD);
   assertVectorWidth(rawCards, DIM, 'dupes');
   const cards = rawCards.map((r) => ({
     note: r.note,
@@ -717,54 +710,6 @@ function loadIndex(slug) {
   }
 }
 
-// One query, factored out so the CLI and the socket server cannot drift apart. A server that
-// re-implemented ranking would eventually answer differently from the eval harness, and the whole
-// point of the harness is that it measures what a session actually gets.
-function searchIn(index, q, qvec, k) {
-  const { rowsUsed, lexDocs } = index;
-  // best chunk per note, so one long note cannot fill the whole result list
-  const best = new Map();
-  for (const r of rowsUsed) {
-    const s = cosine(qvec, new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM));
-    if (!best.has(r.note) || best.get(r.note).s < s) best.set(r.note, { r, s });
-  }
-  const sorted = [...best.values()].sort((a, b) => b.s - a.s);
-
-  // Keyword arm over the SAME units, then rank-fuse.
-  const FUSE_W = Number(process.env.MEMORY_FUSE_W ?? DEFAULT_FUSE_W);
-  let fused = null;
-  if (FUSE_W > 0 && FUSE_W < Infinity) {
-    const qt = lexTokens(q);
-    if (qt.length) {
-      const scores = bm25(lexDocs, qt);
-      const bestLex = new Map();
-      lexDocs.forEach((d, i) => {
-        if (!bestLex.has(d.note) || bestLex.get(d.note) < scores[i]) bestLex.set(d.note, scores[i]);
-      });
-      const lexRanked = [...bestLex.entries()]
-        .filter(([, v]) => v > 0)
-        .sort((a, b) => b[1] - a[1])
-        .map(([n]) => n);
-      const order = fuseRRF(
-        sorted.map((x) => x.r.note),
-        lexRanked,
-        FUSE_W,
-        k,
-      );
-      const byNote = new Map(sorted.map((x) => [x.r.note, x]));
-      // A note the keyword arm found but the vector arm ranked below the window still needs a row
-      // to display; pull it from the chunk table rather than dropping it.
-      fused = order.map((n) => byNote.get(n) ?? { r: lexDocs.find((d) => d.note === n), s: 0 });
-    }
-  }
-  // Layer quota — OFF by default, refuted at k=5 on both case sets (see fuseReserved).
-  const reserve = layer ? 0 : Number(process.env.MEMORY_FUSE_RESERVE ?? 0);
-  const base = fused ?? sorted.slice(0, k);
-  return reserve > 0
-    ? fuseReserved(fused ? base.map((x) => x) : sorted, k, reserve, (x) => x.r.layer === 'Memory')
-    : base;
-}
-
 // ---------------------------------------------------------------- serve
 //
 // The model and the index cost ~1.5s warm / ~3.1s cold to load, which is why the per-prompt recall
@@ -853,7 +798,7 @@ if (flag('--serve')) {
         const { q, k = 5, slug = SLUG } = msg;
         const index = indexFor(slug);
         const [qv] = await embed([QUERY_PREFIX + q]);
-        const top = searchIn(index, q, qv, k);
+        const top = searchIn(index, q, qv, k, Boolean(layer));
         sock.end(
           JSON.stringify({
             slug,
@@ -945,7 +890,7 @@ if (flag('--serve')) {
   }
   const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));
   queries.forEach((q, qi) => {
-    const top = searchIn(selfIndex, q, qvecs[qi], K);
+    const top = searchIn(selfIndex, q, qvecs[qi], K, Boolean(layer));
     // --json: one machine-readable line per query, so the eval harness can score a whole case set in
     // a single process (the model loads once, not once per question).
     if (flag('--json')) {

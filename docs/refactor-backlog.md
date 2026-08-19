@@ -36,21 +36,13 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 > notes whose mtime it already trusts — seconds of I/O instead of an unattended 20-40 min re-embed
 > on every existing install. Not breaking; no minor bump on that account.
 
----
-
-### 6. `'(card)'` becomes a constant, with a test behind it
-
-- **Goal:** kill `R4`. Five bare literals, one producer, four consumers — a rename silently empties
-  recall's keyword arm, and abstention is that hook's normal behaviour.
-- **Files:** [`scripts/lib/memory-semantic.mjs`](../scripts/lib/memory-semantic.mjs) (export
-  `CARD`), [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) (3 sites),
-  [`hooks/memory-recall.mjs`](../hooks/memory-recall.mjs) (1 site).
-- **Diff plan:** `export const CARD = '(card)';` beside `chunkNote`, substituted at all five sites.
-  **The test matters more than the constant:** assert `chunkNote()` emits a chunk whose heading is
-  `CARD`, so a rename fails `node --test` instead of silently emptying a `SELECT`.
-- **Risk: low.** Mechanical. Caveat: importing the lib from `memory-recall.mjs` puts its module-init
-  on the prompt path — measure it, or defer recall's site until item 7.
-- **~30 min.**
+> **Item 6 (`'(card)'` becomes a constant) landed on 2026-08-19**, with item 8, and is deleted from
+> this list, per the rule at the top. It **narrows** `R4` rather than closing it: the sentinel is
+> `CARD` in `scripts/lib/memory-semantic.mjs`, bound as a SQL parameter at both reads in
+> `scripts/memory-semantic.mjs`, but `hooks/memory-recall.mjs:176` still spells it out — importing
+> the lib there would put its module init on the `UserPromptSubmit` path. A test reads that file's
+> source so the drift is loud, and **item 7 closes `R4` properly** by giving recall a `lib/` twin.
+> Wave 2 is finished; numbering below is unchanged.
 
 ---
 
@@ -60,7 +52,10 @@ The cheapest items in the repo, all attacking one class: things that fail withou
 
 - **Goal:** the structural fix with the widest reach. Closes the last entry/`lib` gap (`G1`),
   removes the duplicate BM25 and the copy-pasted `STOP` list (`H6`, including its duplicated
-  `with`), and makes the prompt path testable for the first time.
+  `with`), and makes the prompt path testable for the first time. **It also inherits item 6's
+  deferred site** — once recall's SQL lives behind a `lib/`, that last bare `'(card)'` can take
+  `CARD` and `R4` closes for real.
+- **Also closes:** `R4` (item 6, 2026-08-19, narrowed it and left this site).
 - **Files:** new `hooks/lib/memory-recall.mjs` + `hooks/lib/memory-recall.test.mjs`; slim
   [`hooks/memory-recall.mjs`](../hooks/memory-recall.mjs).
 - **Diff plan:** move the pure parts — gates, tokenisation, BM25 scoring, hit formatting, the log
@@ -72,18 +67,12 @@ The cheapest items in the repo, all attacking one class: things that fail withou
   extraction rather than redesign. Verify against a real prompt before merging.
 - **~2 h.**
 
-### 8. Move `searchIn()` into the lib
-
-- **Goal:** the function that decides what a session actually sees lives in the untested 843-line
-  entry (`G1`).
-- **Files:** [`scripts/memory-semantic.mjs`](../scripts/memory-semantic.mjs) →
-  [`scripts/lib/memory-semantic.mjs`](../scripts/lib/memory-semantic.mjs), plus a test.
-- **Diff plan:** `searchIn(index, q, qvec, k)` already takes a bundle from `buildBundle` and returns
-  ranked rows — it is pure. Move it verbatim and import it back. `loadIndex` stays in the entry (it
-  opens a database). Test against a hand-built bundle: assert RRF ordering, and that both arms
-  contribute.
-- **Risk: low.** Pure move, and both the CLI and the daemon already call it, so the two cannot drift.
-- **~45 min.**
+> **Item 8 (move `searchIn()` into the lib) landed on 2026-08-19**, with item 6, and is deleted from
+> this list, per the rule at the top. It narrows `G1`: the body moved unchanged into
+> `scripts/lib/memory-semantic.mjs`, and the argv-derived `--layer` became a last parameter,
+> `preFiltered` — a boolean flag, not a layer to filter by.
+> `loadIndex()` stays in the entry and stays untested — it opens the database, and `lib/` may not
+> import `node:sqlite`, which is `G1`'s own point.
 
 ---
 
@@ -190,8 +179,8 @@ a relocation would have been cheapest, and it still did not pay for itself.
 | --- | --- | ---: | --- |
 | ~~1~~ | ~~1–4~~ | — | all landed: item 1 in #20, items 2–4 in #24 |
 | ~~2~~ | ~~5~~ | — | landed in #27: killed the highest-probability failure; no bump needed, it forces no re-index |
-| 3 | 6, 8 | ~1.25 h | two pure extractions, both with tests |
-| 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12 |
+| ~~3~~ | ~~6, 8~~ | — | landed 2026-08-19: two extractions with tests; `R4` narrowed, not closed — item 7 closes it |
+| 4 | 7 | ~2 h | the structural fix — must precede items 11 and 12, and closes the `R4` site item 6 deferred |
 | 5 | 9, 10 | ~2.5 h | coverage on the only two scripts that can lose data; 9 is now a port |
 | 6 | 11, 12 | ~1.5 h | two paper invariants become enforced |
 | 7 | ~~13~~, 14 | ~15 min | rot removal; 13 landed in #24 |

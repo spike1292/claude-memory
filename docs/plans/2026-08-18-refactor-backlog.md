@@ -74,7 +74,7 @@ failures loud".
 - **13** — `commands/synthesize.md:16`: replace the hardcoded "965 Insights against 5 `permanent/`
   notes" with the command that produces the figure.
 
-### Run 2 → PR B · item 5 · ~1.5 h · **behaviour change, minor bump**
+### Run 2 → PR B · item 5 · ~1.5 h · **behaviour change; planned as breaking, shipped non-breaking**
 
 The highest-probability failure on the list: `scripts/memory-semantic.mjs:387` filters on exact
 mtime equality (`known.get(f.full) !== f.mtime`) while `scripts/prune-logs.sh`'s own header records
@@ -89,8 +89,15 @@ Not parallel — one implementer, then a dedicated verification agent that build
 corpus with `scripts/memory-synth-vault.mjs --out /tmp/bench --notes 300 --seed 7`, indexes it,
 touches files without changing content, and asserts zero re-embeds.
 
-The schema change forces a one-time `--rebuild`, which CHANGELOG.md's preamble defines as breaking:
-`## [Unreleased]` entry required, minor bump at release (via `scripts/release.sh`, never by hand).
+Planned here as breaking — the schema change forces a one-time `--rebuild`, which CHANGELOG.md's
+preamble defines as breaking. **It shipped non-breaking, and the reason is worth keeping.** A
+reviewer pointed out that `semantic-index-refresh` runs `--index` *detached*, and rows are written
+outside a transaction: an interrupted forced rebuild leaves a partial index that is
+indistinguishable from a current one, and nothing would ever notice. So the forced `--rebuild` was
+cut. `--index` `ALTER`s the `hash` column in and backfills it in place from the notes whose mtime it
+already trusts — seconds of I/O instead of an unattended 20-40 min re-embed on every install, and no
+window in which a half-built index looks finished. `## [Unreleased]` entry still required; **no
+minor bump on that account**.
 
 ### Run 3 → PR C · items 6, 8 · ~1.25 h
 
@@ -398,10 +405,13 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
   2026-08-19 as `6aeff51`. Items 2, 3, 4, 13 deleted from the backlog. Took three rounds of review
   fixes; the Review phase above exists because of them, and the numbers quoted in it are from this
   PR.
-- **Run 2 — in flight** on `fix/index-content-hash` (item 5).
-- Runs 3–6 not started.
+- **Run 2 — landed as [#27](https://github.com/spike1292/claude-memory/pull/27)**, merged
+  2026-08-19 as `e254925`. Item 5 deleted from the backlog; `R1` closed. **It shipped
+  non-breaking**, against this plan's own prediction — see the corrected Run 2 section above.
+- **Run 3 — in flight** on `refactor/card-constant-and-searchin` (items 6, 8).
+- Runs 4–6 not started.
 
-### What Run 1 taught, folded back into the plan
+### What Runs 1 and 2 taught, folded back into the plan
 
 - **Two of the three findings in the second review round were introduced by the first round.** A
   review pass is itself a change, and needs reviewing. The Review phase runs on the final diff, not
@@ -418,3 +428,14 @@ Item 15 (relocate `paths.mjs`) stays declined and stays in the file as the recor
   for `trimLog`'s non-atomic rewrite; both were wrong, because `openLog()` hands detached children
   an `O_APPEND` fd that a rename would strand on an unlinked inode. Reviewer findings are input,
   not instructions — the fix agent is told to reject with reasoning where the reasoning holds.
+- **Every PR had been appending its OWN `### ` heading to `## [Unreleased]`.** By run 2 that section
+  carried seven headings, `### Fixed` three times among them — and it becomes the release notes
+  **verbatim**. Nobody was reading the section as a whole, because each agent only ever read the
+  line it was inserting after. The `Document` phase now **merges into the existing headings**: one
+  `Added`/`Changed`/`Removed`/`Fixed`/`Security` per section, Keep a Changelog order, and no agent
+  creates a `### ` of its own.
+- **"Breaking" is a claim about the failure mode, not about the schema.** Run 2 was planned as a
+  minor bump because it adds a column. The reviewer who killed the forced `--rebuild` was reasoning
+  about `semantic-index-refresh` running detached with rows written outside a transaction — a fact
+  three files away from the diff. A plan's breaking/non-breaking label is a hypothesis for the
+  implementer to test, not an instruction to obey.

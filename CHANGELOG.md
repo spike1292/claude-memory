@@ -48,6 +48,30 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **`searchIn()` — the function that decides what a session actually sees — moved into
+  `scripts/lib/memory-semantic.mjs` and has tests.** It sat in the 966-line entry file, which is the
+  least-checked file in the repo precisely because all four CI invariants key off the `lib/`
+  boundary (G1 in `docs/architecture.md`). The body moved unchanged; only the `--layer` value, which
+  was a module-level argv binding, became its last parameter. `loadIndex()` stays in the entry — it
+  opens the database, and `lib/` may not import `node:sqlite`. The test rigs a corpus where the
+  vector arm, the keyword arm and the fusion of the two produce three *different* orderings, so a
+  dead arm cannot pass: with one arm's ranking as the expected answer, the pooling-style failure
+  of the kind this repo has already paid for once would have been invisible. **Nothing a session sees changes** — this
+  buys the ranking its first regression net, not a better ranking.
+
+- **The card-chunk sentinel `'(card)'` is a constant, `CARD`, with a divergence test behind it.**
+  One producer (`chunkNote`) emitted the literal and four consumers matched on it by hand — the
+  failure mode (R4 in `docs/architecture.md`) was that renaming the producer left recall's keyword
+  arm SELECTing 0 rows, `avgdl` `NaN`, every score `NaN`, and the hook abstaining, which is exactly
+  what it does when it has nothing to say. The two SQL reads in `scripts/memory-semantic.mjs` now
+  **bind** `CARD` as a parameter rather than interpolating it, so the query text is fixed and there
+  is nowhere for a quote to land. `hooks/memory-recall.mjs` deliberately keeps its literal:
+  importing the lib would put its module init on the UserPromptSubmit path, which must never wait —
+  a test reads that file's source instead. The test asserts `chunkNote`'s own output reaches
+  `buildBundle`, because asserting `CARD === '(card)'` would pass after precisely the rename that
+  breaks everything. **No index is rewritten and no query changes** — the sentinel's value is what it
+  always was; what changes is that a future rename now fails `node --test` instead of a session.
+
 - **`/memory:synthesize` prints the command that counts staged versus promoted notes, instead of
   quoting a number.** It carried "965 Insights against 5 `permanent/` notes" — a 2026-08-15
   measurement with no refresh path, in the one file that tells Claude whether promotion is keeping
