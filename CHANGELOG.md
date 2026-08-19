@@ -11,6 +11,22 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`scripts/review-prompt.mjs` prints the CI reviewer's own prompt.** The prompt that gates every
+  PR lived only inside a YAML block scalar, so applying it locally meant retyping it. Now it is one
+  command, and running it before pushing turns its findings into an edit rather than a comment to
+  repush over — on a PR that edits `claude-review.yml` it is the only review available, since
+  `claude-code-action` skips those and exits green. The prompt deliberately stays inline in the
+  workflow: validation covers only the file invoking the action, so a prompt in its own file could
+  be rewritten by the PR it reviews. A test asserts the real workflow still yields it, so
+  restructuring the YAML fails `node --test` instead of silently leaving the reader empty.
+
+- **Implementation plans are committed, under `docs/plans/`.** Plan mode writes to
+  `~/.claude/plans/`, which on this machine is a symlink into a private Obsidian vault — so the
+  plan for work that lands in a public repo was itself invisible to anyone reading that repo. Dated
+  like `docs/decisions/` and indexed from `docs/README.md`, with the distinction between the two
+  written down: a decision record says why something is the way it is, a plan says what is about to
+  happen and what done looks like.
+
 - **`/memory:doctor` reports the size of machine-local state.** Nothing had ever printed how big
   `$CLAUDE_MEMORY_HOME` was getting: nothing vacuums, per-project × per-model `.db` files
   accumulate, `models/` accumulates one set of weights per model, and the hook logs append. The
