@@ -282,6 +282,23 @@ Three of those matter while you are still editing:
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
   release notes verbatim.
 
+### Plans live in `docs/plans/`
+
+**An implementation plan for this repo goes in `docs/plans/<YYYY-MM-DD>-<slug>.md` and is committed**
+— dated like `docs/decisions/`, and for the same reason: it is a record of what was decided and why,
+which the diff alone does not carry.
+
+Plan mode writes to `~/.claude/plans/` by default. That directory is a symlink into a private
+Obsidian vault, so a plan left there is invisible to anyone reading this repo and to the next
+session that does not happen to look — while the work it describes lands here in public. Move it
+when the plan is approved.
+
+A plan is not a decision record. `docs/decisions/` answers "why is it this way, and what did we
+measure"; `docs/plans/` answers "what are we about to do, in what order, and what does done look
+like". A plan that outlives its execution has usually become a decision record and should be
+rewritten as one. Keep a landed plan's Status section current — a plan whose steps have all shipped
+is deleted, and the changelog is the record.
+
 ## Agent skills
 
 Per-repo configuration the engineering skills read. Written by `/setup-matt-pocock-skills`; edit the

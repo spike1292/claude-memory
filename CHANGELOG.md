@@ -11,6 +11,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Implementation plans are committed, under `docs/plans/`.** Plan mode writes to
+  `~/.claude/plans/`, which on this machine is a symlink into a private Obsidian vault — so the
+  plan for work that lands in a public repo was itself invisible to anyone reading that repo. Dated
+  like `docs/decisions/` and indexed from `docs/README.md`, with the distinction between the two
+  written down: a decision record says why something is the way it is, a plan says what is about to
+  happen and what done looks like.
+
 - **`/memory:doctor` reports the size of machine-local state.** Nothing had ever printed how big
   `$CLAUDE_MEMORY_HOME` was getting: nothing vacuums, per-project × per-model `.db` files
   accumulate, `models/` accumulates one set of weights per model, and the hook logs append. The
