@@ -21,7 +21,7 @@
 // real comparison needs a rebuild per model, which per-model indexes now make affordable.
 // Sample sizes are small: one EN case is 3.6 points, one NL case 6.7. Read MRR and direction, not
 // single-point moves. The build is a ONE-OFF anyway: indexes are per-model, and the steady-state
-// refresh only re-embeds notes whose mtime moved.
+// refresh only re-embeds notes whose CONTENT moved — see contentHash().
 // See MODELS below — dims, chunk size, prefixes, POOLING and thresholds are per-model and none of
 // them transfer. Pooling in particular is silent when wrong: bge-m3 scored @5 25.0% mean-pooled and
 // 67.9% cls-pooled, and the mean-pooled index returned confident, plausible, wrong rankings.
@@ -39,6 +39,7 @@
 //
 // ponytail: linear cosine scan over a few thousand 384-d vectors is ~5ms. No ANN index, no server.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -350,6 +351,33 @@ export function stripFrontmatter(raw) {
   if (!m) return { meta: '', body: raw };
   const desc = (m[1].match(/^\s*description:\s*(.+)$/m) || [])[1] || '';
   return { meta: desc.trim().replace(/^["']|["']$/g, ''), body: raw.slice(m[0].length) };
+}
+
+// Does this note still hash to what the index embedded? The incremental path used to key on exact
+// mtime equality alone, and the vault sits on Synology Drive, which rewrites mtime on sync without
+// touching content — prune-logs.sh says so in its own header. Every touched note was then re-embedded
+// at batch size 1, which is a 20-40 min CPU storm for content nobody changed (2026-08-19).
+//
+// The RAW FILE BYTES are hashed, not the chunk text. The property that has to hold is "the hash
+// changes if the embeddings would change", and it holds in the direction that matters: chunkNote()
+// is pure and deterministic, so identical bytes give identical chunks give identical vectors. The
+// converse is deliberately loose — a frontmatter-only edit changes the hash and costs one needless
+// re-embed, which is the safe way to be wrong and is exactly what mtime does today. Hashing bytes
+// also means the caller hashes what it already read, with no chunking pass on files it will skip.
+// Callers pass the Buffer readFileSync returned and decode it only for a file they will re-embed,
+// so this really is over the file's bytes; a string argument is hashed as its UTF-8 encoding, and
+// the two agree for anything that round-trips (invalid UTF-8 does not, which is the reason to hand
+// it the Buffer).
+// (A change to chunkNote() itself is invisible to this, as it was to mtime: --rebuild is the escape
+// hatch, same as for a model change.)
+//
+// sha256 via crypto.hash(): stdlib, one-shot, no dependency. Change detection, not integrity, so
+// speed would win over strength — but there is nothing to win. Measured 2026-08-19, 8000 note-sized
+// 4 KB strings (32 MB, several times this vault): sha256 36 ms, sha1 24 ms. Twelve milliseconds
+// across a whole vault, against ~1.5 s to embed ONE chunk. sha256 is hardware-accelerated
+// everywhere this runs and is not the digest a FIPS build disables, so it is the boring choice.
+export function contentHash(raw) {
+  return crypto.hash('sha256', raw, 'hex');
 }
 
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose

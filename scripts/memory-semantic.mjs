@@ -31,6 +31,7 @@ import {
   DEFAULT_FUSE_LEX,
   stripFrontmatter,
   chunkNote,
+  contentHash,
   fuseReserved,
   cosine,
   assertVectorWidth,
@@ -100,10 +101,31 @@ if (flag('--serve')) {
 // spawn the server, which doctor.sh then reports as "index is empty" for a project that simply has
 // none. The server has no special relationship with its spawning project; that is the whole point.
 const db = flag('--serve') ? null : new DatabaseSync(DB_PATH);
+// `hash` repeats the SAME value on every row of a file. The staleness decision is per file, so a
+// files table would be the normalised home for it — and would be a second write path that can
+// disagree with the first. Here the hash is written and deleted by the statements that already
+// write and delete a file's chunks (`DELETE FROM chunks WHERE file = ?` then re-INSERT), so a hash
+// with no chunks cannot occur and, within one version, neither can chunks with no hash.
+//
+// A NULL hash is still reachable and is treated as a repairable state, not an impossible one: an
+// index built before this column existed, or one written afterwards by an OLDER installed version
+// — Claude Code keeps every version it has ever installed and they all share
+// `$CLAUDE_MEMORY_HOME/db`. `--index` fills those in without embedding anything; see the backfill.
+// Costs 64 bytes per chunk against ~4 KB of vector — 0.2 MB on a 3400-chunk index.
+let schemaStale = false;
 if (db) {
   db.exec(`CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY, note TEXT, layer TEXT, file TEXT, mtime INTEGER,
-  heading TEXT, text TEXT, vec BLOB)`);
+  heading TEXT, text TEXT, vec BLOB, hash TEXT)`);
+  // A missing `hash` column is what identifies an index built before this shipped. Detect only —
+  // the ALTER lives in --index, next to the backfill that gives the column its values. Altering
+  // here destroys the evidence: the first run of ANY mode would add the column, and the --index
+  // that followed would see a current schema, keep every NULL-hash row and report "index already
+  // current" — silently re-embedding on every mtime bump forever (2026-08-19).
+  schemaStale = !db
+    .prepare('PRAGMA table_info(chunks)')
+    .all()
+    .some((c) => c.name === 'hash');
   db.exec('CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file)');
   db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
 }
@@ -117,6 +139,21 @@ const hasChunks = db ? db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0 :
 // "probably fine" — the first version of this guard did the latter and quietly kept serving stale
 // vectors from the previous model while reporting the index as current.
 const modelChanged = hasChunks && storedModel !== MODEL;
+// An index that predates the `hash` column is NOT treated like a model change, and that asymmetry
+// is the whole migration. Its vectors were built by THIS model and answer exactly as well as they
+// did yesterday; only --index needs the column, and it can fill it by reading each note once
+// instead of re-embedding it. So there is deliberately no refusal for a missing hash and no forced
+// rebuild (2026-08-19).
+//
+// The version that did force one was wrong in a way nothing would have reported. Rows here are
+// written outside any transaction, and semantic-index-refresh launches --index detached with its
+// stdio in a log — so a 20-40 min bge-m3 rebuild interrupted by a sleep, a reboot or a quit leaves
+// an index that is PARTIAL yet indistinguishable from a current one: schema present, meta.model
+// matching, COUNT(*) > 0. Recall would rank over a fraction of the vault and return confident,
+// plausible, incomplete answers, which is precisely the failure the model-change guard exists to
+// prevent — and it would have fired unattended on 100% of existing installs. That risk still
+// belongs to an explicit --rebuild, where a user asked for it and is watching; it must not be
+// something the plugin opens by itself.
 
 // Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
 // `InferenceSession.release()` on each session, which is what actually returns the native memory —
@@ -360,9 +397,15 @@ if (flag('--index')) {
   // --rebuild forces a full re-embed. Needed when the metadata cannot be trusted: a run that
   // recorded the model without re-embedding leaves the DB claiming one model while holding another
   // model's vectors, and no automatic check can see that.
+  if (schemaStale) {
+    db.exec('ALTER TABLE chunks ADD COLUMN hash TEXT');
+    console.log('index predates the content-hash column; hashing existing notes in place');
+  }
   if (modelChanged || flag('--rebuild')) {
     console.log(
-      `model changed ${storedModel ?? '(unrecorded)'} → ${MODEL}; rebuilding the whole index (vectors are not comparable across models)`,
+      modelChanged
+        ? `model changed ${storedModel ?? '(unrecorded)'} → ${MODEL}; rebuilding the whole index (vectors are not comparable across models)`
+        : 'rebuilding the whole index',
     );
     db.exec('DELETE FROM chunks');
   }
@@ -370,12 +413,14 @@ if (flag('--index')) {
     'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run('model', MODEL);
 
-  // Incremental: re-embed only notes whose mtime moved; drop rows for deleted notes.
+  // Incremental, in two levels; drop rows for deleted notes.
+  // MAX(mtime)/MIN(hash) can in principle come from different rows — they cannot here, since every
+  // row of a file is written in one pass with the same pair.
   const known = new Map(
     db
-      .prepare('SELECT file, MAX(mtime) AS mtime FROM chunks GROUP BY file')
+      .prepare('SELECT file, MAX(mtime) AS mtime, MIN(hash) AS hash FROM chunks GROUP BY file')
       .all()
-      .map((r) => [r.file, r.mtime]),
+      .map((r) => [r.file, r]),
   );
   const live = new Set(files.map((f) => f.full));
   let dropped = 0;
@@ -384,9 +429,55 @@ if (flag('--index')) {
       db.prepare('DELETE FROM chunks WHERE file = ?').run(f);
       dropped++;
     }
-  const stale = files.filter((f) => known.get(f.full) !== f.mtime);
+  // Level 1 — mtime matches: skip WITHOUT reading the file. Unchanged, and it must stay that way;
+  // it is the only path a steady-state refresh takes for the whole vault.
+  // Level 2 — mtime moved: read, hash, and skip the embedding when the content is byte-identical.
+  // The read is not extra work for a note that really changed (the chunker needs the text anyway),
+  // so the added cost falls only on notes that merely LOOK stale — which on a synced vault is where
+  // the whole 20-40 min re-embed storm was coming from.
+  const stale = [];
+  const touched = []; // content identical, mtime moved: nothing to embed, but see the UPDATE below
+  const backfill = []; // rows written before the hash column existed: fill it, do not re-embed
+  for (const f of files) {
+    const prev = known.get(f.full);
+    if (prev && prev.mtime === f.mtime) {
+      // The one exception to "level 1 never reads", and it fires once per note in the life of an
+      // index. mtime equality is already what this code trusts to mean "the bytes the index
+      // embedded", so hashing them now only writes that same judgement down — no embedding is
+      // recomputed and no answer changes. This is the migration off a hash-less index, in place.
+      if (prev.hash == null) backfill.push({ ...f, hash: contentHash(fs.readFileSync(f.full)) });
+      continue;
+    }
+    const buf = fs.readFileSync(f.full);
+    const hash = contentHash(buf);
+    if (prev && prev.hash === hash) touched.push({ ...f, hash });
+    else stale.push({ ...f, raw: buf.toString('utf8'), hash });
+  }
 
-  console.log(`${files.length} notes · ${stale.length} to (re)embed · ${dropped} removed`);
+  // Write the new mtime for the notes sync only touched, and the hash for the ones migrating.
+  // Without the mtime write every later run re-reads and re-hashes them forever — cheap next to
+  // embedding, but it turns the fast path into the slow one for the entire vault, permanently.
+  //
+  // ONE transaction, not one per note. node:sqlite autocommits every statement, and this is the
+  // path the change exists to make fast — the storm case is "the whole vault's mtimes moved", so
+  // the loop runs once per note with nothing else in the run to hide an fsync behind. Measured
+  // 2026-08-19, 1000 files x 4 chunks: 667 ms un-transactioned against 31 ms wrapped. It is also
+  // all-or-nothing rather than a half-written mtime set.
+  if (touched.length || backfill.length) {
+    const bump = db.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
+    db.exec('BEGIN');
+    try {
+      for (const f of [...touched, ...backfill]) bump.run(f.mtime, f.hash, f.full);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  console.log(
+    `${files.length} notes · ${stale.length} to (re)embed · ${touched.length} mtime-only (content unchanged) · ${backfill.length} hashed in place · ${dropped} removed`,
+  );
   if (!stale.length) {
     console.log('index already current');
     process.exit(0);
@@ -394,13 +485,20 @@ if (flag('--index')) {
 
   const del = db.prepare('DELETE FROM chunks WHERE file = ?');
   const ins = db.prepare(
-    'INSERT INTO chunks (note, layer, file, mtime, heading, text, vec) VALUES (?,?,?,?,?,?,?)',
+    'INSERT INTO chunks (note, layer, file, mtime, heading, text, vec, hash) VALUES (?,?,?,?,?,?,?,?)',
   );
   const pending = [];
   for (const f of stale) {
     del.run(f.full);
-    for (const c of chunkNote(f.note, fs.readFileSync(f.full, 'utf8')))
-      pending.push({ ...c, note: f.note, layer: f.layer, file: f.full, mtime: f.mtime });
+    for (const c of chunkNote(f.note, f.raw))
+      pending.push({
+        ...c,
+        note: f.note,
+        layer: f.layer,
+        file: f.full,
+        mtime: f.mtime,
+        hash: f.hash,
+      });
   }
 
   const BATCH = PROFILE.batch ?? 1; // embed() slices to the same size; keep them equal
@@ -409,7 +507,14 @@ if (flag('--index')) {
     const batch = pending.slice(i, i + BATCH);
     const vecs = await embed(batch.map((b) => DOC_PREFIX + b.text));
     batch.forEach((b, j) =>
-      ins.run(b.note, b.layer, b.file, b.mtime, b.heading, b.text, new Uint8Array(vecs[j].buffer)),
+      // mtime 0 / hash NULL on the way in, and the real pair only once the file is FINISHED, a
+      // few lines down. Rows are autocommitted per batch and the SIGINT handler exits without a
+      // rollback, so a run killed part way through a file used to leave that file carrying its
+      // current mtime and hash over only the chunks that had landed — after which level 1 skipped
+      // it on every later run and the missing chunks were never searchable again, invisibly
+      // (--coverage passes on one surviving chunk). With the sentinel a half-written file fails
+      // both levels next run and is simply re-embedded (2026-08-19).
+      ins.run(b.note, b.layer, b.file, 0, b.heading, b.text, new Uint8Array(vecs[j].buffer), null),
     );
     try {
       fs.utimesSync(lockDir, new Date(), new Date());
@@ -417,6 +522,18 @@ if (flag('--index')) {
     if ((i / BATCH) % 10 === 0)
       console.log(`  ${Math.min(i + BATCH, pending.length)}/${pending.length} chunks`);
   }
+  // Commit the identity of every file whose chunks all landed. One transaction: this is what makes
+  // the run's result visible as a whole rather than as a half-finished state that looks finished.
+  const seal = db.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
+  db.exec('BEGIN');
+  try {
+    for (const f of stale) seal.run(f.mtime, f.hash, f.full);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+
   console.log(
     `indexed ${pending.length} chunks from ${stale.length} notes in ${((Date.now() - t0) / 1000).toFixed(1)}s → ${DB_PATH}`,
   );
