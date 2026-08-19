@@ -41,7 +41,6 @@ import {
   singleFlight,
   mtimeCache,
   evictableSockets,
-  buildLexDocs,
   buildBundle,
   searchIn,
   QUIT,
