@@ -44,6 +44,9 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { activeModel } from './model-default.mjs';
+// The profiles moved out on 2026-08-20 so a caller wanting only the key list is not taken down by
+// this module's exit-on-unknown-model. Their comments went with them — the batch-size-is-1 finding
+// and the per-model pooling and dupeMin warnings are in models.mjs, not lost.
 import { MODELS } from './models.mjs';
 // The lexical vocabulary lives in its own import-free module because the recall hook needs it ABOVE
 // its fail-open try, and this module's scope exits the process on an unknown model. Consumers

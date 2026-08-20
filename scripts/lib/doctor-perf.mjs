@@ -250,6 +250,9 @@ export async function report({
   // that is already holding the model — measuring the unloaded state would destroy the state being
   // measured, and hand back a first-query time that is really a model load.
   const sock = path.join(state, 'run', `search-${activeModel}.sock`);
+  // ponytail: `some`, not the server for THIS model — `ps` cannot tell them apart, since the model
+  // comes from env/config and never appears on the command line. With two servers up and only the
+  // other one warm, this declines to probe. It errs toward not measuring, which is the safe side.
   const holding = servers.some((s) => s.rss >= MODEL_RSS_THRESHOLD);
   const first = holding
     ? await probeSocket(sock, { slug: activeSlug })
