@@ -110,8 +110,8 @@ export function dirUsage(dir) {
  *
  * Both halves contain dashes (`bge-small-en`, `github.com-spike1292-claude-memory`), so the split
  * cannot be positional — it is driven by the KNOWN model keys, longest first, since `bge-m3` and
- * `bge-small-en` share a prefix. The keys come from MODELS in memory-semantic.mjs; a second list
- * here would drift and silently mislabel every row.
+ * `bge-small-en` share a prefix. The keys come from MODELS in models.mjs; a second list here would
+ * drift and silently mislabel every row.
  */
 export function parseIndexName(file, modelKeys) {
   if (!file.startsWith('semantic-')) return null;
@@ -250,16 +250,18 @@ export async function report({
   // that is already holding the model — measuring the unloaded state would destroy the state being
   // measured, and hand back a first-query time that is really a model load.
   const sock = path.join(state, 'run', `search-${activeModel}.sock`);
-  // ponytail: `some`, not the server for THIS model — `ps` cannot tell them apart, since the model
-  // comes from env/config and never appears on the command line. With two servers up and only the
-  // other one warm, this declines to probe. It errs toward not measuring, which is the safe side.
-  const holding = servers.some((s) => s.rss >= MODEL_RSS_THRESHOLD);
+  // `every`, not `some`: one server per MODEL, and `ps` cannot say which pid serves which, because
+  // the model comes from env/config and never reaches the command line. `some` would probe whenever
+  // ANY server were warm — including when the warm one is another model's and the socket below
+  // points at a cold one, which is the reload this gate exists to avoid. Unknown means do not
+  // touch. The length guard is not decoration: every([]) is true.
+  const holding = servers.length > 0 && servers.every((s) => s.rss >= MODEL_RSS_THRESHOLD);
   const first = holding
     ? await probeSocket(sock, { slug: activeSlug })
     : {
         ok: false,
         reason: servers.length
-          ? 'model is unloaded — probing would reload it'
+          ? 'a server on this machine has its model unloaded — probing could reload it'
           : 'no server running',
       };
   const second = first.ok ? await probeSocket(sock, { slug: activeSlug }) : null;

@@ -208,8 +208,19 @@ test('report does not probe a server that has unloaded its model', async () => {
   const state = tmp();
   const idle = '  501  15360  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
   const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps: idle });
-  assert.match(out, /model is unloaded — probing would reload it/);
+  assert.match(out, /has its model unloaded — probing could reload it/);
   assert.match(out, /starts a server or reloads a model/);
+});
+
+// One --serve per MODEL, and ps cannot say which is which. A warm server proves nothing about the
+// socket this report is about to talk to, so a mixed pair must not be treated as warm.
+test('report does not probe when one of two servers is cold', async () => {
+  const ps = [
+    '  501  15360  02:00:00 node /x/scripts/memory-semantic.mjs --serve', // idle: 15 MB
+    '  502 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve', // warm: 580 MB
+  ].join('\n');
+  const out = await report({ state: tmp(), activeModel: 'bge-m3', activeSlug: 'x', ps });
+  assert.match(out, /has its model unloaded — probing could reload it/);
 });
 
 test('report says so when there is no server at all', async () => {

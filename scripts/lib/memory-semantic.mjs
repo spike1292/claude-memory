@@ -22,7 +22,7 @@
 // Sample sizes are small: one EN case is 3.6 points, one NL case 6.7. Read MRR and direction, not
 // single-point moves. The build is a ONE-OFF anyway: indexes are per-model, and the steady-state
 // refresh only re-embeds notes whose CONTENT moved — see contentHash().
-// See MODELS below — dims, chunk size, prefixes, POOLING and thresholds are per-model and none of
+// See MODELS in models.mjs — dims, chunk size, prefixes, POOLING and thresholds are per-model and none of
 // them transfer. Pooling in particular is silent when wrong: bge-m3 scored @5 25.0% mean-pooled and
 // 67.9% cls-pooled, and the mean-pooled index returned confident, plausible, wrong rankings.
 //
