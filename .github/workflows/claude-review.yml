@@ -93,6 +93,9 @@ jobs:
                A `lib/` module must import without side effects, and `node:test` must never be
                imported outside a `*.test.mjs` (it prints its report to stdout, which hooks
                use). Also flag a test that can pass while verifying nothing.
+               Types are JSDoc checked by `tsc --noEmit` with `checkJs` + `strict`; flag a
+               `@ts-ignore` or `@ts-nocheck` (neither is used in the tree), a `@ts-expect-error`
+               with no reason, and an `any` that hides a shape the code actually relies on.
             8. A user-visible change with no `## [Unreleased]` entry in CHANGELOG.md, since
                that section becomes the release notes verbatim.
             9. Portability: bash + POSIX (BSD sed on macOS has no `\|`, so `sed -E`) and

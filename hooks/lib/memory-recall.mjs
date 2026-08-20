@@ -77,14 +77,37 @@ export const MIN_COS = 0.55;
 // 2026-08-19 because the SQL now sits behind this module.
 export { CARD };
 
+/**
+ * @typedef {{ note: string, layer: string, text?: string | null, score: number }} Hit
+ * @typedef {{ note: string, layer: string, text?: string | null, score?: number }} ServerHit
+ * @typedef {{ note: string, layer: string, text: string | null }} Card
+ * @typedef {{
+ *   abstained: boolean,
+ *   reason?: string,
+ *   top?: string | null,
+ *   score?: number,
+ *   injected?: number,
+ *   chars?: number,
+ *   via?: string,
+ * }} LogEntry
+ * @typedef {{ entry: LogEntry, output: string | null }} Decision
+ */
+
 export const HEADER =
   'Possibly relevant vault notes (retrieved, not verified — open one before relying on it):';
 
+/** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;
 
 // Both arms render identically; only the trailing-weak-hit floor differs, so it is the one
 // parameter. `floor` is BM25-scaled for the keyword arm and absent for the semantic one.
+/**
+ * @param {readonly Hit[]} hits
+ * @param {number} [floor]
+ * @returns {{ lines: string[], used: number }}
+ */
 export function renderLines(hits, floor = -Infinity) {
+  /** @type {string[]} */
   const lines = [];
   let used = 0;
   for (const r of hits) {
@@ -102,9 +125,15 @@ export function renderLines(hits, floor = -Infinity) {
 // server reply of `{"results":[]}`, `{"results":null}` or unparseable output all land here, and the
 // hook then answers from BM25 rather than abstaining. Anything else is a decision — `{ entry }` is
 // the JSONL record, `output` is stdout or null.
+/**
+ * @param {readonly ServerHit[] | null | undefined} results
+ * @returns {Decision | null}
+ */
 export function semanticArm(results) {
   if (!results?.length) return null;
-  const hits = results.filter((r) => r.score >= MIN_COS).slice(0, MAX_NOTES);
+  const hits = /** @type {Hit[]} */ (
+    results.filter((r) => /** @type {number} */ (r.score) >= MIN_COS).slice(0, MAX_NOTES)
+  );
   if (!hits.length) {
     return {
       // `score` is deliberately not defaulted: a hit with no score field must leave the key out of
@@ -140,6 +169,11 @@ export function semanticArm(results) {
 // The keyword arm always decides — it is the fallback, so it has nothing to fall through to.
 // Its log records carry NO `via` field, and that absence is the only thing telling the two arms
 // apart in the log. It is a contract, not an oversight.
+/**
+ * @param {readonly Card[]} cards
+ * @param {string} prompt
+ * @returns {Decision}
+ */
 export function keywordArm(cards, prompt) {
   if (!cards.length) return { entry: { abstained: true, reason: 'empty index' }, output: null };
 

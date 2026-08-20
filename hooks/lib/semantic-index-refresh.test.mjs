@@ -8,7 +8,7 @@ import path from 'node:path';
 import { resolveSlug, runtimeInstalled, plan } from './semantic-index-refresh.mjs';
 import { legacyKey } from './paths.mjs';
 
-const vaultWith = (dirs) => {
+const vaultWith = (/** @type {readonly string[]} */ dirs) => {
   const v = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-vault-'));
   for (const d of dirs) fs.mkdirSync(path.join(v, d), { recursive: true });
   return v;

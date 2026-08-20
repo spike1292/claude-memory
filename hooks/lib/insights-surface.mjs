@@ -21,6 +21,10 @@ export const LIMIT = 15;
  * The empty-value case is why this is a function with a test. `grep -m1 '^title:' | sed` yields an
  * empty string for `title:` with nothing after it, and the shell version then fell through to the
  * filename — a naive port prints a blank bullet instead.
+ *
+ * @param {string} filename
+ * @param {string} raw
+ * @returns {string}
  */
 export function noteTitle(filename, raw) {
   const m = raw.match(/^title: *(.*)$/m);
@@ -32,7 +36,12 @@ export function noteTitle(filename, raw) {
     .replace(/-/g, ' ');
 }
 
-/** Newest first. Filenames are date-prefixed, so a plain reverse sort is chronological. */
+/**
+ * Newest first. Filenames are date-prefixed, so a plain reverse sort is chronological.
+ *
+ * @param {string[]} names
+ * @returns {string[]}
+ */
 export function orderNewestFirst(names) {
   return names
     .filter((f) => f.endsWith('.md'))
@@ -40,6 +49,12 @@ export function orderNewestFirst(names) {
     .reverse();
 }
 
+/**
+ * @param {string} slug
+ * @param {string[]} files
+ * @param {(file: string) => string} read
+ * @returns {string}
+ */
 export function render(slug, files, read) {
   if (!files.length) return '';
   const out = [
@@ -50,6 +65,7 @@ export function render(slug, files, read) {
   return out.join('\n');
 }
 
+/** @param {string} p */
 function isDir(p) {
   try {
     return fs.statSync(p).isDirectory();
@@ -58,7 +74,12 @@ function isDir(p) {
   }
 }
 
-/** The text to surface for `cwd`, or '' when there is nothing to say. */
+/**
+ * The text to surface for `cwd`, or '' when there is nothing to say.
+ *
+ * @param {string} cwd
+ * @returns {string}
+ */
 export function surface(cwd) {
   let slug;
   try {
@@ -66,7 +87,7 @@ export function surface(cwd) {
   } catch {
     slug = legacyKey(cwd);
   }
-  const dirFor = (s) => path.join(vault(), 'Insights', s, 'Mistakes');
+  const dirFor = (/** @type {string} */ s) => path.join(vault(), 'Insights', s, 'Mistakes');
   let dir = dirFor(slug);
   // Tolerate a not-yet-migrated vault: vault-memory-sync.sh performs the rename, but SessionStart
   // hook order isn't guaranteed, so fall back for this one session.

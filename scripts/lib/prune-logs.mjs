@@ -12,10 +12,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
+ * @typedef {{ moved: string[], skipped: string[], collisions: string[] }} PruneResult
+ * @typedef {Error & { partial?: PruneResult }} PrunePartialError
+ */
+
+/**
  * The date encoded in a log filename, as `YYYY-MM-DD`, or null when there is none.
  * The round-trip is the validation: `2026-02-31` is a pattern match but not a date, and BSD
  * `date -j -f` silently normalised it to 2026-03-03. Guessing at a malformed name is how a
  * note gets moved for the wrong reason, so it is skipped instead.
+ *
+ * @param {string} basename
+ * @returns {string | null}
  */
 export function logDate(basename) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(basename);
@@ -37,6 +45,7 @@ export function logDate(basename) {
 // `'2026-…' >= cutoff` for every real date ('2' < '9'), so asking to keep a millennium of
 // logs archived the whole directory while printing a success line — the same shape as the
 // 'NaN-NaN-NaN' defect below, surviving both of its guards (measured 2026-08-19).
+/** @type {(dt: Date) => string} */
 const iso = (dt) =>
   `${String(dt.getFullYear()).padStart(4, '0')}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 
@@ -50,6 +59,9 @@ const iso = (dt) =>
  * 2026-08-19, `PRUNE_DAYS=" "` cast to 0 and archived everything but today, and `PRUNE_DAYS=1e9`
  * passed a `Number.isFinite && >= 0` guard and archived the directory whole. Both printed a
  * cheerful `archived N log(s)`. `cutoffDate` re-checks the range and throws before moving anything.
+ *
+ * @param {unknown} raw
+ * @returns {number}
  */
 export function parseDays(raw) {
   const s = String(raw ?? '').trim();
@@ -64,6 +76,10 @@ export function parseDays(raw) {
  * unspecified time-of-day from *now*, so both sides of its comparison carried the same clock time
  * and it compared calendar days. (The GNU arm parsed midnight and so archived one day more —
  * that divergence is exactly what the port removes.)
+ *
+ * @param {Date} now
+ * @param {number} days
+ * @returns {string}
  */
 export function cutoffDate(now, days) {
   // Validated HERE, not only in the entry, because the cutoff is what decides deletion-shaped
@@ -84,10 +100,15 @@ export function cutoffDate(now, days) {
  * Move every `YYYY-MM-DD-*.md` older than the cutoff into `<dir>/Archive/`.
  * Returns { moved, skipped, collisions }: `skipped` are names with no parseable date,
  * `collisions` are files whose archive destination already exists.
+ *
+ * @param {string} dir
+ * @param {{ days?: number, now?: Date }} [options]
+ * @returns {PruneResult}
  */
 export function pruneLogs(dir, { days = 90, now = new Date() } = {}) {
   const cutoff = cutoffDate(now, days);
   const archive = path.join(dir, 'Archive');
+  /** @type {PruneResult} */
   const result = { moved: [], skipped: [], collisions: [] };
 
   // `!isDirectory()`, not `isFile()`: a Dirent is lstat-based, so `isFile()` drops a SYMLINKED
@@ -130,7 +151,7 @@ export function pruneLogs(dir, { days = 90, now = new Date() } = {}) {
     // rename can fail part-way through: EACCES on a read-only Archive/, EEXIST when `Archive`
     // is a regular file (both measured 2026-08-19). Throwing bare would strand files 1..N-1 as
     // unreported moves, so the partial result rides on the error for the entry to print.
-    err.partial = result;
+    /** @type {PrunePartialError} */ (err).partial = result;
     throw err;
   }
   return result;

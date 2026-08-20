@@ -178,7 +178,7 @@ test('releaseLock frees it, and is safe when already gone', () => {
 
 test('detach returns the child pid — it is what the caller writes into its lock', () => {
   const pid = detach(process.execPath, ['-e', '']);
-  assert.ok(Number.isInteger(pid) && pid > 0, 'a pid, not just truthy');
+  assert.ok(Number.isInteger(pid) && /** @type {number} */ (pid) > 0, 'a pid, not just truthy');
 });
 
 // spawn() fails asynchronously for a missing binary. Before the handler, this crashed the process

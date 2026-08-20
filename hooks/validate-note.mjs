@@ -7,6 +7,7 @@ import { report } from './lib/validate-note.mjs';
 
 let file = '';
 try {
+  // @ts-expect-error Node's Response accepts a Readable; the DOM BodyInit type does not.
   const j = JSON.parse(await new Response(process.stdin).text());
   file = j?.tool_input?.file_path || j?.tool_input?.path || '';
 } catch {

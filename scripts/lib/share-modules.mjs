@@ -11,15 +11,25 @@ import path from 'node:path';
 // only thing standing between a wrong CWD and a developer's checkout.
 const CACHE_MARKER = path.join('plugins', 'cache');
 
+/**
+ * @param {string} dir
+ * @returns {boolean}
+ */
 export function isPluginInstall(dir) {
   return dir.split(path.sep).join(path.sep).includes(CACHE_MARKER);
 }
 
-/** Refuses anything that is not a node_modules directly inside a plugin cache dir. */
+/**
+ * Refuses anything that is not a node_modules directly inside a plugin cache dir.
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
 export function isRemovable(p) {
   return path.basename(p) === 'node_modules' && isPluginInstall(path.dirname(p));
 }
 
+/** @type {(p: string) => import('node:fs').Stats | null} */
 const stat = (p) => {
   try {
     return fs.lstatSync(p);
@@ -28,16 +38,22 @@ const stat = (p) => {
   }
 };
 
+/** @type {(p: string) => boolean} */
 export const isRealDir = (p) => stat(p)?.isDirectory() === true;
+/** @type {(p: string) => boolean} */
 export const isLink = (p) => stat(p)?.isSymbolicLink() === true;
 
 /**
  * Other installed versions of the same plugin that still carry their own copy.
  * versionDir is this version's directory; its siblings are the other versions.
+ *
+ * @param {string} versionDir
+ * @returns {string[]}
  */
 export function siblingCopies(versionDir) {
   const parent = path.dirname(versionDir);
   if (!isPluginInstall(parent)) return [];
+  /** @type {import('node:fs').Dirent[]} */
   let entries = [];
   try {
     entries = fs.readdirSync(parent, { withFileTypes: true });

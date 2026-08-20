@@ -13,6 +13,7 @@ const NOW = new Date(2026, 7, 19, 15, 30); // 2026-08-19 local; 90d back is 2026
 // this file leaked 166 `prune-logs-*` directories into $TMPDIR per run before the hook was
 // added (measured 2026-08-19). `after`, not `t.after`, so the chmod-0 case is undone once for
 // the whole file rather than per test.
+/** @type {string[]} */
 const worlds = [];
 after(() => {
   for (const dir of worlds) {
@@ -24,6 +25,7 @@ after(() => {
   }
 });
 
+/** @param {string[]} names */
 function vault(names) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-logs-'));
   worlds.push(dir);
@@ -34,6 +36,7 @@ function vault(names) {
 // Relative PATH plus content hash, not `e.name`: a Dirent's `name` is the bare basename, so a
 // basename-only oracle cannot tell `Archive/x.md` from `x.md`, cannot see a file moved to the
 // wrong subdirectory, and cannot see one truncated to zero bytes (checked 2026-08-19).
+/** @type {(dir: string) => string[]} */
 const walk = (dir) =>
   fs
     .readdirSync(dir, { withFileTypes: true, recursive: true })
@@ -44,7 +47,11 @@ const walk = (dir) =>
     })
     .sort();
 
-/** Just the content hashes — the oracle for "a move, never an unlink" across a path change. */
+/**
+ * Just the content hashes — the oracle for "a move, never an unlink" across a path change.
+ *
+ * @type {(ls: string[]) => string[]}
+ */
 const hashes = (ls) => ls.map((l) => l.split('\t')[1]).sort();
 
 test('the date comes from the filename, and a name that is not a real date is skipped', () => {
@@ -208,11 +215,12 @@ test('a failure part-way through still reports what already moved', () => {
   fs.writeFileSync(path.join(dir, '2026-01-02-a.md'), 'a clashing copy\n'); // collision, not fatal
   fs.chmodSync(path.join(dir, 'Archive'), 0o555);
   try {
+    /** @type {import('./prune-logs.mjs').PrunePartialError | undefined} */
     let err;
     try {
       pruneLogs(dir, { days: 90, now: NOW });
     } catch (e) {
-      err = e;
+      err = /** @type {import('./prune-logs.mjs').PrunePartialError} */ (e);
     }
     assert.ok(err, 'a read-only Archive/ must fail loudly');
     assert.ok(err.partial, 'the partial result must ride on the error');

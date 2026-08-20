@@ -54,11 +54,11 @@
 //   node memory-semantic.mjs --vault /tmp/synthvault --slug bench --index --rebuild
 //   node memory-eval.mjs --vault /tmp/synthvault --slug bench --run --cases /tmp/synthvault/cases-paraphrase.jsonl
 
-import fs from 'node:fs';
-import path from 'node:path';
-import * as paths from '../../hooks/lib/paths.mjs';
-
 // ---------------------------------------------------------------- seeded PRNG
+/**
+ * @param {number} a
+ * @returns {() => number}
+ */
 export function mulberry32(a) {
   return function () {
     a |= 0;
@@ -470,6 +470,14 @@ export const FILLER_ASPECTS = [
 
 // ---------------------------------------------------------------- generation
 
+/**
+ * @param {string} name
+ * @param {string} description
+ * @param {string} body
+ * @param {string[]} aliases
+ * @param {string[]} links
+ * @returns {string}
+ */
 export function noteText(name, description, body, aliases, links) {
   return `---
 name: ${name}

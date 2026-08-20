@@ -29,6 +29,23 @@ import {
   systemMessage,
 } from './hook-io.mjs';
 
+/**
+ * @typedef {{ vaultRoot?: string, now?: number }} PlanOptions
+ * @typedef {{ action: 'silent', reason: string }} SilentPlan
+ * @typedef {{ action: 'nudge', message: string, reason: string, slug: string }} NudgePlan
+ * @typedef {{
+ *   action: 'regen',
+ *   message: string,
+ *   slug: string,
+ *   claude: string,
+ *   marker: string,
+ *   lock: string,
+ *   now: number,
+ *   logFile: string,
+ * }} RegenPlan
+ * @typedef {SilentPlan | NudgePlan | RegenPlan} GraphPlan
+ */
+
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
 
 // The debounce is keyed by repo, so N stale repos opened together were N legal parallel runs, each
@@ -55,17 +72,31 @@ export const REGEN_PROMPT =
  *
  * Staleness is judged by RECORDED COMMIT, not mtime: the vault syncs via Synology CloudStorage,
  * where mtimes are set by the sync rather than by the write and are therefore meaningless.
+ *
+ * @param {unknown} text
+ * @returns {string | null}
  */
 export function recordedCommit(text) {
   const m = /^commit:[ \t]*(\S+)/m.exec(String(text ?? ''));
   return m ? m[1] : null;
 }
 
-/** Fresh when HEAD begins with the recorded sha — the report records a SHORT sha. */
+/**
+ * Fresh when HEAD begins with the recorded sha — the report records a SHORT sha.
+ *
+ * @param {string | null | undefined} head
+ * @param {string | null | undefined} recorded
+ * @returns {boolean}
+ */
 export function isFresh(head, recorded) {
   return Boolean(head && recorded && head.startsWith(recorded));
 }
 
+/**
+ * @param {string} cwd
+ * @param {readonly string[]} args
+ * @returns {string}
+ */
 const git = (cwd, args) => {
   try {
     return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
@@ -74,7 +105,13 @@ const git = (cwd, args) => {
   }
 };
 
-/** The GRAPH_REPORT path for this cwd, honouring the pre-migration legacy slug. */
+/**
+ * The GRAPH_REPORT path for this cwd, honouring the pre-migration legacy slug.
+ *
+ * @param {string} cwd
+ * @param {string} [vaultRoot]
+ * @returns {{ slug: string, report: string | null }}
+ */
 export function reportFor(cwd, vaultRoot = vault()) {
   let slug;
   try {
@@ -82,7 +119,7 @@ export function reportFor(cwd, vaultRoot = vault()) {
   } catch {
     slug = legacyKey(cwd);
   }
-  const at = (s) => path.join(vaultRoot, 'Graph', s, 'GRAPH_REPORT.md');
+  const at = (/** @type {string} */ s) => path.join(vaultRoot, 'Graph', s, 'GRAPH_REPORT.md');
   if (fs.existsSync(at(slug))) return { slug, report: at(slug) };
   const legacy = legacyKey(cwd);
   if (legacy !== slug && fs.existsSync(at(legacy))) return { slug: legacy, report: at(legacy) };
@@ -94,6 +131,10 @@ export function reportFor(cwd, vaultRoot = vault()) {
  *   {action:'silent'}                     nothing to say
  *   {action:'nudge',  message}            stale, but we will not regenerate it ourselves
  *   {action:'regen',  message, claude, …} stale, and a background run is warranted
+ *
+ * @param {string} cwd
+ * @param {PlanOptions} [options]
+ * @returns {GraphPlan}
  */
 export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: 'child run' };
@@ -151,6 +192,10 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * `opts` is passed straight through to plan(); the entry never sets it. It exists so a test can
  * point this at a scratch vault instead of the real one — a check() that could only read the live
  * vault could not be tested at all, and this is the half with the lock sequence in it.
+ *
+ * @param {string} cwd
+ * @param {PlanOptions} [opts]
+ * @returns {string}
  */
 export function check(cwd, opts) {
   const p = plan(cwd, opts);

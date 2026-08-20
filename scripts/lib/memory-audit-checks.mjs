@@ -10,10 +10,7 @@
 // Usage: node ~/.claude/scripts/memory-audit-checks.mjs [repo-dir]   (default: cwd)
 // ponytail: prints findings, never edits. Deleting or rewriting a note needs confirmation anyway.
 
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
-import * as paths from '../../hooks/lib/paths.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -32,6 +29,7 @@ const STANDING = new RegExp(
 const IMPERATIVE =
   /^[\s>*_#-]*(?:\*\*)?(?:never|do not|don't|avoid|always|prefer|use|treat|read|check|verify)\b/i;
 
+/** @param {string} line @returns {boolean} */
 export function isStandingNegative(line) {
   const t = line.trim();
   if (!t || t.startsWith('_Also asked as')) return false;
@@ -41,12 +39,14 @@ export function isStandingNegative(line) {
 
 // confidence: is nested under metadata:, so it is indented. A ^-anchored grep reports every note
 // as missing it — the exact false positive logged in REFLECTIONS 2026-08-10 and re-hit 2026-08-14.
+/** @param {string} frontmatter @returns {boolean} */
 export function hasConfidence(frontmatter) {
   return /^\s*confidence:\s*(high|medium|low)\s*$/m.test(frontmatter);
 }
 
 // An abbreviated path (`libs/foo/.../bar.ts`) is prose, not a claim. Reporting it "missing" is the
 // other logged false positive: 15 of 24 "absent" paths in the 2026-08-14 audit were these.
+/** @param {string} context @returns {boolean} */
 export function isAbbreviated(context) {
   return /…|\.\.\./.test(context);
 }
@@ -55,7 +55,12 @@ export function isAbbreviated(context) {
 // used to survive only if the next prune happened to rank it — two duplicate pairs deferred on
 // 2026-08-08 were still there on 2026-08-14, because the 2026-08-08 prune merged three *different*
 // pairs. The row IS the ledger: closing an item means editing its disposition, not just doing it.
+/**
+ * @param {string} text
+ * @returns {{ entry: string, finding: string, disposition: string }[]}
+ */
 export function parseDeferred(text) {
+  /** @type {{ entry: string, finding: string, disposition: string }[]} */
   const out = [];
   let entry = '?';
   for (const line of text.split('\n')) {
@@ -96,6 +101,10 @@ const SUPERSEDED_PROSE =
 // parenthetical, e.g. "(measured 2026-08-12, superseded 2026-08-14 by [[x]])". Requiring the paren
 // to be adjacent rejected exactly the markers this convention produces.
 const SUPERSEDED_MARKER = /superseded\s+\d{4}-\d{2}-\d{2}\s+by\s+\[\[[^\]]+\]\]/i;
+/**
+ * @param {string} raw
+ * @returns {{ declared: string|null, on: string|null, inProse: boolean, marked: boolean }}
+ */
 export function supersessionState(raw) {
   const fm = (raw.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
   const by = (fm.match(/^\s*superseded_by:\s*(.+)$/m) || [])[1];
@@ -131,6 +140,7 @@ const STAMPED = /\d{4}-\d{2}(-\d{2})?/;
 const POINTER =
   /\b(where truth lives|source of truth|read it from|query it|re-?run|check the MR|from the (?:API|dashboard))\b/i;
 
+/** @param {string} line @returns {boolean} */
 export function isUnstampedVolatileClaim(line) {
   const t = line.trim();
   if (!t || t.startsWith('|') || t.startsWith('>') || t.startsWith('_Also asked as')) return false;
@@ -171,6 +181,7 @@ const PROVENANCE =
 // `context` is the line plus its neighbours: a claim and its provenance routinely straddle a wrap
 // ("On a versioned 28-case set:\n semantic **recall@5 46.4%**"), and flagging the second half of a
 // properly-sourced sentence is noise.
+/** @param {string} line @param {string} [context] @returns {boolean} */
 export function isUnprovenancedMetric(line, context = line) {
   const t = line.trim();
   if (!t || t.startsWith('_Also asked as') || /^\w[\w-]*:\s/.test(t)) return false;
@@ -190,8 +201,14 @@ export function isUnprovenancedMetric(line, context = line) {
 // FRESH-4: a dated heading opens a snapshot region — everything under "## Measured 2026-08-08"
 // claims what was true then, so it cannot rot. Region ends at the next heading of equal or higher
 // level. Without this the lint flags every line of a measurement section.
+/**
+ * @param {string} body
+ * @returns {{ line: number, text: string }[]}
+ */
 export function freshnessFindings(body) {
+  /** @type {{ line: number, text: string }[]} */
   const out = [];
+  /** @type {number|null} */
   let datedLevel = null;
   body.split('\n').forEach((line, i) => {
     const h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -207,21 +224,27 @@ export function freshnessFindings(body) {
   return out;
 }
 
+/**
+ * @param {Iterable<string>} paths
+ * @returns {Map<string, string[]>}
+ */
 export function buildSuffixIndex(paths) {
   const idx = new Map();
   for (const t of paths)
     for (let i = t.indexOf('/'); i !== -1; i = t.indexOf('/', i + 1)) {
       const suf = t.slice(i + 1);
       if (!idx.has(suf)) idx.set(suf, []);
-      idx.get(suf).push(t);
+      /** @type {string[]} */ (idx.get(suf)).push(t);
     }
   return idx;
 }
 
+/** @param {string} f @returns {string[]} */
 export function checkFile(f) {
   if (!fs.existsSync(f)) return [];
   const raw = fs.readFileSync(f, 'utf8');
   const lines = raw.split('\n');
+  /** @type {string[]} */
   const out = [];
   lines.forEach((l, n) => {
     const ctx = lines.slice(Math.max(0, n - 2), n + 2).join(' ');

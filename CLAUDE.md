@@ -24,12 +24,25 @@ node --test hooks/lib/distill-session.test.mjs # one file
 scripts/release.sh --selftest                  # still bash, 13 cases; node --test cannot run it
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 npm run format                                 # prettier --write .   (CI runs format:check)
+npm run typecheck                              # tsc --noEmit, checkJs + strict; CI fails on any diagnostic
 ```
 
 **Prettier is pinned and invoked via `npx`, never a devDependency.** Claude Code auto-runs `npm ci`
 on plugin install and that installs devDependencies, so a `prettier` entry there would ship into
 every user's version-pinned plugin cache to format code they will never edit.
 Bump the version in `package.json`'s scripts and in `.github/workflows/ci.yml` together.
+
+**Types are JSDoc, checked by `tsc --noEmit`, and there is still no build step.** `tsconfig.json`
+exists only for that check: `checkJs` + `strict` + `noUnusedLocals` over `hooks/`, `scripts/` and
+`stubs/`, tests included. Source stays runnable `.mjs`, since `hooks.json` and `commands/*.md` name
+entry paths as a contract and a `dist/` would put a compiled file where both expect a source file.
+`tsc` is pinned and run via `npx` under the same devDependency rule as Prettier, and the check lives
+in CI's `install` job because that is the only one doing a real `npm ci` — `@types/node` arrives
+transitively with `@huggingface/transformers` and is what makes `node:fs` check at all.
+**There is no linter and adding one needs new numbers**: of the three rules that were candidates,
+`tsc` gives unused-imports for free and a CI check already covers `hooks/lib` side effects.
+[docs/decisions/2026-08-20-types-and-linting.md](docs/decisions/2026-08-20-types-and-linting.md) has
+the measurements, including why partial `strict` is not a thing here.
 
 **It formats code only.** `.prettierignore` excludes `*.md`, `*.yml` and `package-lock.json`:
 CLAUDE.md and `commands/*.md` are read by Claude Code as instructions, the workflow comments record

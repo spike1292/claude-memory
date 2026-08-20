@@ -11,6 +11,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Type checking, as JSDoc rather than a build step.** `npm run typecheck` runs `tsc --noEmit` with
+  `checkJs` and `strict` over every `.mjs` in the repo, tests included, and CI fails on any
+  diagnostic. Source stays plain `.mjs` and stays directly runnable: nothing resolves an absolute
+  install path and `hooks/hooks.json` names entry paths as a contract, so a `dist/` would have put a
+  compiled file where both of those expect a source file. `tsc` is pinned and invoked through `npx`,
+  never a devDependency, for the same reason Prettier is. The numbers behind the choice — including
+  why there is no cheap subset of `strict`, since turning `noImplicitAny` off collapses 499
+  diagnostics to 1 by making every value `any` — are in
+  [docs/decisions/2026-08-20-types-and-linting.md](docs/decisions/2026-08-20-types-and-linting.md),
+  which also records why no linter was added: of the three rules that were candidates, `tsc` gives
+  one for free and a CI check already covers another.
+
 - **`/memory:doctor --perf` — where the RAM, the disk and the milliseconds actually went.**
   `doctor.sh` could say whether a thing was wired up; it could not answer the question this plugin
   generates, since one `--serve` process holds a ~1.3 GB model, six of them once ran at once on a

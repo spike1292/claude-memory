@@ -18,11 +18,9 @@
 // existed three times (vault-env.sh, paths.mjs, and this file's own re-implementation); it now
 // exists twice, and this file imports paths.mjs instead of re-deriving anything. project_key in
 // particular is a non-trivial sed over git remote URLs — there is one copy of it again.
-import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
   countLines,
@@ -52,6 +50,23 @@ TRANSCRIPT:
 
 // \p{L}\p{N} with the u flag, NOT \w: JS's \w is ASCII-only where Python's is unicode-aware, so
 // a plain port would silently strip accented characters out of every non-English title.
+/**
+ * @typedef {{
+ *   title?: string,
+ *   description?: string,
+ *   error?: string,
+ *   fix?: string,
+ *   decision?: string,
+ *   why?: string,
+ *   aliases?: unknown,
+ * }} InsightItem
+ * @typedef {{ patterns?: InsightItem[], mistakes?: InsightItem[], decisions?: InsightItem[] }} Insights
+ */
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
 export function slugify(text) {
   const s = text
     .toLowerCase()
@@ -129,8 +144,14 @@ const RECONCILE_AT = 0.45;
 // after, so only do it if the miss rate ever outweighs added SessionEnd latency.
 const RECONCILE_BODY_AT = 0.4;
 
-/** Significant, lightly-singularised tokens of a slug — the reconciliation key. */
+/**
+ * Significant, lightly-singularised tokens of a slug — the reconciliation key.
+ *
+ * @param {string} slug
+ * @returns {Set<string>}
+ */
 export function tokens(slug) {
+  /** @type {Set<string>} */
   const out = new Set();
   for (const t of slug.split('-')) {
     if (t.length > 2 && !STOP.has(t)) out.add(t.length > 3 && t.endsWith('s') ? t.slice(0, -1) : t);
@@ -144,6 +165,9 @@ export function tokens(slug) {
  * Strips what is not the claim: frontmatter, the `##` heading (it restates the title, which the
  * slug arm already scores), the alias line (retrieval vocabulary, deliberately over-broad — leaving
  * it in inflates every pair), and `**Also seen` addenda a previous reconcile folded in.
+ *
+ * @param {unknown} text
+ * @returns {Set<string>}
  */
 export function bodyTokens(text) {
   const prose = String(text)
@@ -155,6 +179,11 @@ export function bodyTokens(text) {
 }
 
 /** Overlap as a fraction of the SMALLER set — see RECONCILE_BODY_AT for why not Jaccard. */
+/**
+ * @param {ReadonlySet<string>} a
+ * @param {ReadonlySet<string>} b
+ * @returns {number}
+ */
 function containment(a, b) {
   if (!a.size || !b.size) return 0;
   let inter = 0;
@@ -167,9 +196,15 @@ function containment(a, b) {
  *
  * Same-folder only, deliberately: a Pattern and a Mistake on one topic are complementary by
  * design, not duplicates.
+ *
+ * @param {string} dir
+ * @param {string} sl
+ * @param {string} [body]
+ * @returns {string | null}
  */
 export function findNearDuplicate(dir, sl, body = '') {
   const now = tokens(sl);
+  /** @type {Set<string>} */
   const nowBody = body ? bodyTokens(body) : new Set();
   if (!now.size && !nowBody.size) return null;
   let entries;
@@ -181,8 +216,9 @@ export function findNearDuplicate(dir, sl, body = '') {
   // Each arm is divided by its OWN threshold, so both are expressed as "fraction of the bar" and a
   // single >= 1 gate compares them. Without that the two scales are not comparable and whichever
   // arm happens to run second wins.
-  let best = null,
-    bestScore = 0;
+  /** @type {string | null} */
+  let best = null;
+  let bestScore = 0;
   for (const f of entries) {
     const file = path.join(dir, f);
     let score = 0;
@@ -216,6 +252,13 @@ export function findNearDuplicate(dir, sl, body = '') {
  *
  * Folds in the new phrasing's aliases (retrieval surface) and a dated one-line addendum (the new
  * detail), so nothing is lost but no new file is spawned.
+ *
+ * @param {string} file
+ * @param {string} title
+ * @param {string} body
+ * @param {string} aliasLine
+ * @param {string} today
+ * @returns {void}
  */
 export function reconcile(file, title, body, aliasLine, today) {
   let text = fs.readFileSync(file, 'utf8');
@@ -229,7 +272,8 @@ export function reconcile(file, title, body, aliasLine, today) {
         .filter((a) => a && !have.has(a.toLowerCase().replace(/\.+$/, '')));
       if (add.length) {
         const merged = `_Also asked as: ${m[1].replace(/\.+$/, '')}, ${add.join(', ')}._`;
-        text = text.slice(0, m.index) + merged + text.slice(m.index + m[0].length);
+        const at = /** @type {number} */ (m.index);
+        text = text.slice(0, at) + merged + text.slice(at + m[0].length);
       }
     } else {
       text = `${text.replace(/\s+$/, '')}\n\n_Also asked as: ${aliasLine}._\n`;
@@ -242,7 +286,12 @@ export function reconcile(file, title, body, aliasLine, today) {
   fs.writeFileSync(file, text);
 }
 
-/** Pull the first JSON object out of a model response (tolerates fences/prose). */
+/**
+ * Pull the first JSON object out of a model response (tolerates fences/prose).
+ *
+ * @param {string} raw
+ * @returns {Insights}
+ */
 export function extractJson(raw) {
   const cleaned = raw
     .trim()
@@ -258,8 +307,14 @@ export function extractJson(raw) {
   }
 }
 
-/** Flatten a JSONL transcript to role-tagged text + tool names. */
+/**
+ * Flatten a JSONL transcript to role-tagged text + tool names.
+ *
+ * @param {string} file
+ * @returns {string}
+ */
 export function transcriptToText(file) {
+  /** @type {string[]} */
   const out = [];
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     const t = line.trim();
@@ -298,9 +353,13 @@ export function transcriptToText(file) {
 }
 
 /** Local calendar date, matching Python's date.today(). toISOString() would be UTC and would
- *  file a late-evening session under tomorrow. Note filenames are dated, so this is visible. */
+ *  file a late-evening session under tomorrow. Note filenames are dated, so this is visible.
+ *
+ * @param {Date} [d]
+ * @returns {string}
+ */
 export function todayStr(d = new Date()) {
-  const p = (n) => String(n).padStart(2, '0');
+  const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
@@ -310,7 +369,11 @@ export function todayStr(d = new Date()) {
 // one list was here and the other was in bash they drifted without anything noticing.
 
 /** project_key via paths.mjs, the one resolver. Falls back to the cwd-slug when git is
- *  unavailable — a hook must get an answer, never an exception. */
+ *  unavailable — a hook must get an answer, never an exception.
+ *
+ * @param {string} cwd
+ * @returns {string}
+ */
 export function projectKey(cwd) {
   try {
     return paths.projectKey(cwd);
@@ -319,6 +382,10 @@ export function projectKey(cwd) {
   }
 }
 
+/**
+ * @param {string} convo
+ * @returns {Insights}
+ */
 function runExtractor(convo) {
   if (process.env.DISTILL_DRYRUN) {
     return {
@@ -342,19 +409,31 @@ function runExtractor(convo) {
     });
     return extractJson(stdout);
   } catch (e) {
-    console.error(`distill: extractor failed: ${e.message}`);
+    console.error(`distill: extractor failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`);
     return {};
   }
 }
 
 // ---------------------------------------------------------------- notes
 
+/**
+ * @param {Insights} insights
+ * @param {string} slug
+ * @returns {{ written: number, merged: number }}
+ */
 function writeNotes(insights, slug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let written = 0,
     merged = 0;
 
+  /**
+   * @param {string} folder
+   * @param {string} tag
+   * @param {string} title
+   * @param {string} body
+   * @param {unknown} aliases
+   */
   const emit = (folder, tag, title, body, aliases) => {
     const d = path.join(base, folder);
     fs.mkdirSync(d, { recursive: true });
@@ -429,6 +508,10 @@ function writeNotes(insights, slug) {
  * own BM25 arm in its own SQLite file, and that is the primary retrieval path — it does not read
  * anything context-mode writes. So when the CLI is absent the fallback is simply to refresh the
  * index we do own, and the only thing actually lost is ctx_search freshness.
+ *
+ * @param {string} cwd
+ * @param {string} slug
+ * @returns {void}
  */
 function reindex(cwd, slug) {
   const cm = which('context-mode');
@@ -474,7 +557,9 @@ function reindex(cwd, slug) {
         stdio: 'pipe',
       });
     } catch (e) {
-      console.error(`distill: reindex ${layer} failed: ${e.message}`);
+      console.error(
+        `distill: reindex ${layer} failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
+      );
     }
   }
   // permanent/ is cross-project (not slug-scoped): index the shared dir under this project so its
@@ -488,7 +573,9 @@ function reindex(cwd, slug) {
         stdio: 'pipe',
       });
     } catch (e) {
-      console.error(`distill: reindex permanent failed: ${e.message}`);
+      console.error(
+        `distill: reindex permanent failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
+      );
     }
   }
 }
@@ -498,6 +585,9 @@ function reindex(cwd, slug) {
  * just written are retrievable now rather than at the next SessionStart. --index is idempotent,
  * compares mtimes and exits before loading the model when nothing changed, and takes its own lock,
  * so racing the SessionStart refresh is safe.
+ *
+ * @param {string} cwd
+ * @returns {void}
  */
 function refreshOwnIndex(cwd) {
   const script = path.join(paths.scriptsDir, 'memory-semantic.mjs');
@@ -510,7 +600,9 @@ function refreshOwnIndex(cwd) {
     });
     console.error('distill: refreshed the plugin semantic index');
   } catch (e) {
-    console.error(`distill: semantic index refresh failed: ${e.message}`);
+    console.error(
+      `distill: semantic index refresh failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
+    );
   }
 }
 
@@ -520,6 +612,10 @@ function refreshOwnIndex(cwd) {
  * Distil one transcript into notes. Returns what happened; prints nothing.
  *
  * Split out of main() so the orchestration is importable: the CLI entry only parses argv.
+ *
+ * @param {string} transcript
+ * @param {string} cwd
+ * @returns {{ written: number, merged: number, slug: string } | null}
  */
 export function distill(transcript, cwd) {
   let slug = projectKey(cwd);
@@ -548,6 +644,12 @@ export function distill(transcript, cwd) {
 
 // ---------------------------------------------------------------- gate (SessionEnd + Stop)
 
+/**
+ * @typedef {{ run: false, reason: string, lines?: number }} SkipGate
+ * @typedef {{ run: true, transcript: string, marker: string, now: number, lines: number }} RunGate
+ * @typedef {SkipGate | RunGate} GatePlan
+ */
+
 /** Below this a session has no lesson in it; distilling would be noise with an LLM call attached. */
 export const MIN_MESSAGES = 15;
 /** Stop only distils a LONG session — a normal one ends via SessionEnd first. */
@@ -562,6 +664,10 @@ export const STOP_DEBOUNCE_SECONDS = 7200;
  *   - SessionEnd is authoritative and always runs on a non-trivial session. Once per session keeps
  *     Insights signal-dense; distilling per turn would bury the lessons in churn.
  *   - Stop is a CRASH FALLBACK. It fires constantly during normal work, so it is gated hard.
+ *
+ * @param {import('./hook-io.mjs').HookPayload | null | undefined} p
+ * @param {{ now?: number }} [options]
+ * @returns {GatePlan}
  */
 export function gatePlan(p, { now = nowSeconds() } = {}) {
   // The headless extractor runs as a `claude` session, whose Stop fires this hook again. Without
@@ -599,6 +705,9 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
  * The worker is this module's own entry, re-invoked with argv — one file, two modes, because the
  * gate and the work are the same hook and splitting them into two entries would put the contract
  * in two places.
+ *
+ * @param {import('./hook-io.mjs').HookPayload | null | undefined} p
+ * @returns {GatePlan}
  */
 export function gate(p) {
   const plan = gatePlan(p);

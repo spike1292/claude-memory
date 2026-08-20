@@ -17,12 +17,20 @@ import {
   FILLER_ASPECTS,
 } from './lib/memory-synth-vault.mjs';
 
+/** @typedef {{ q: string, gold: string[], style: string }} EvalCase */
+
 const argv = process.argv.slice(2);
+/**
+ * @template T
+ * @param {string} n
+ * @param {T} d
+ * @returns {string | T}
+ */
 const val = (n, d) => {
   const i = argv.indexOf(n);
   return i >= 0 ? argv[i + 1] : d;
 };
-const OUT = val('--out', null);
+const OUT = val('--out', /** @type {string | null} */ (null));
 const TOTAL = Number(val('--notes', 300));
 const SEED = Number(val('--seed', 7));
 const ECHOES_PER_GOLD = Number(val('--echoes', 2));
@@ -44,8 +52,11 @@ const dirs = {
 fs.rmSync(OUT, { recursive: true, force: true });
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 
+/** @type {(keyof typeof dirs)[]} */
 const layers = ['Memory', 'Patterns', 'Mistakes', 'Decisions', 'permanent'];
+/** @type {string[]} */
 const allNames = [];
+/** @type {{ paraphrase: EvalCase[], keyword: EvalCase[], dutch: EvalCase[] }} */
 const cases = { paraphrase: [], keyword: [], dutch: [] };
 
 // gold notes — spread across layers so layer scoping is exercised, not assumed

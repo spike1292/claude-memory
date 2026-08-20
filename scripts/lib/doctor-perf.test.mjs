@@ -116,7 +116,9 @@ test('dirUsage sums a tree, skips symlinks, and reports a missing directory', ()
 test('dirUsage counts a socket', async () => {
   const d = tmp();
   const server = net.createServer(() => {});
-  await new Promise((r) => server.listen(path.join(d, 'search.sock'), r));
+  await /** @type {Promise<void>} */ (
+    new Promise((r) => server.listen(path.join(d, 'search.sock'), r))
+  );
   try {
     assert.strictEqual(dirUsage(d).files, 1);
   } finally {
@@ -130,15 +132,20 @@ test('indexStats reports what the reader returns, and names what it cannot read'
   const d = tmp();
   fs.writeFileSync(path.join(d, 'semantic-proj-bge-m3.db'), 'x'.repeat(64));
   fs.writeFileSync(path.join(d, 'semantic-broken-bge-m3.db'), 'not a database');
+  /** @type {import('./doctor-perf.mjs').CountsReader} */
   const counts = (f) => (f.includes('broken') ? null : { chunks: 3, notes: 2 });
 
   const rows = indexStats(d, MODELS, counts);
-  const ok = rows.find((r) => r.slug === 'proj');
+  const ok = /** @type {import('./doctor-perf.mjs').IndexRow} */ (
+    rows.find((r) => r.slug === 'proj')
+  );
   assert.strictEqual(ok.chunks, 3);
   assert.strictEqual(ok.notes, 2, 'notes are distinct files, not chunks');
   assert.ok(ok.bytes > 0 && ok.mtime instanceof Date);
 
-  const broken = rows.find((r) => r.slug === 'broken');
+  const broken = /** @type {import('./doctor-perf.mjs').IndexRow} */ (
+    rows.find((r) => r.slug === 'broken')
+  );
   assert.strictEqual(broken.chunks, null, 'an unreadable index is the state that mutes recall');
 });
 
@@ -165,7 +172,7 @@ test('probeSocket never spawns: a missing socket is an answer', async () => {
 test('probeSocket reports an orphaned socket file', async () => {
   const f = path.join(tmp(), 'search.sock');
   const server = net.createServer(() => {});
-  await new Promise((r) => server.listen(f, r));
+  await /** @type {Promise<void>} */ (new Promise((r) => server.listen(f, r)));
   await new Promise((r) => server.close(r));
   fs.writeFileSync(f, ''); // the file, without the listener behind it
   const r = await probeSocket(f, { slug: 'x', timeoutMs: 200 });
@@ -177,7 +184,7 @@ test('probeSocket times a real answer and counts its results', async () => {
   const server = net.createServer((c) =>
     c.on('data', () => c.end(JSON.stringify({ slug: 'x', results: [1, 2, 3] }) + '\n')),
   );
-  await new Promise((r) => server.listen(f, r));
+  await /** @type {Promise<void>} */ (new Promise((r) => server.listen(f, r)));
   try {
     const r = await probeSocket(f, { slug: 'x' });
     assert.strictEqual(r.ok, true);
@@ -192,9 +199,10 @@ test('probeSocket gives up rather than hanging the report', async () => {
   const f = path.join(tmp(), 'search.sock');
   // The server-side socket is held so it can be destroyed here: server.close() waits for open
   // connections, and this server deliberately never reads the request that is sitting in it.
+  /** @type {net.Socket[]} */
   const open = [];
   const server = net.createServer((c) => open.push(c)); // accepts, never answers
-  await new Promise((r) => server.listen(f, r));
+  await /** @type {Promise<void>} */ (new Promise((r) => server.listen(f, r)));
   try {
     const r = await probeSocket(f, { slug: 'x', timeoutMs: 100 });
     assert.deepStrictEqual(r, { ok: false, reason: 'no answer in 100ms' });
@@ -239,7 +247,9 @@ test('report measures the round trip when every server is warm', async () => {
   const server = net.createServer((c) =>
     c.on('data', () => c.end(JSON.stringify({ slug: 'x', results: [1, 2] }) + '\n')),
   );
-  await new Promise((r) => server.listen(path.join(state, 'run', 'search-bge-m3.sock'), r));
+  await /** @type {Promise<void>} */ (
+    new Promise((r) => server.listen(path.join(state, 'run', 'search-bge-m3.sock'), r))
+  );
   try {
     const ps = '  501 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
     const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps });
@@ -262,7 +272,7 @@ test('the ps flags produce rows this platform can parse', () => {
     .split('\n')
     .map((l) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l))
     .filter(Boolean)
-    .find((m) => Number(m[1]) === process.pid);
+    .find((m) => Number(/** @type {RegExpExecArray} */ (m)[1]) === process.pid);
 
   assert.ok(mine, `no row matched pid ${process.pid} — check the ps flags for this platform`);
   assert.ok(Number(mine[2]) > 0, 'the rss column is not a size');

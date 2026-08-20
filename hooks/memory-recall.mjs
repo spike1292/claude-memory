@@ -56,6 +56,7 @@ try {
   // never the vectors, but the path must still resolve — and a missing DB exits 0 silently, so a
   // drifted default here would turn recall off with no error. Hence the shared constant.
   const { activeModel } = await import(
+    // @ts-expect-error Node accepts a URL specifier for a dynamic import; TypeScript wants a string.
     new URL('../scripts/lib/model-default.mjs', import.meta.url)
   );
   const model = activeModel();
@@ -63,7 +64,7 @@ try {
 
   const logDir = stateDir('logs');
   const runDir = stateDir('run');
-  const log = (entry) => {
+  const log = (/** @type {import('./lib/memory-recall.mjs').LogEntry} */ entry) => {
     try {
       fs.appendFileSync(
         path.join(logDir, `recall-${new Date().toISOString().slice(0, 10)}.jsonl`),
@@ -91,9 +92,14 @@ try {
   // Keyed by MODEL alone: one server holds the model and answers for every project, with the slug
   // sent per request. It used to be per slug+model, which meant one ~1.3GB model per indexed repo.
   const sockPath = path.join(runDir, `search-${model}.sock`);
+  /** @typedef {{ results?: import('./lib/memory-recall.mjs').Hit[] | null } | null} ServerReply */
+  /**
+   * @param {string} q
+   * @returns {Promise<ServerReply>}
+   */
   const askServer = (q) =>
     new Promise((resolve) => {
-      const done = (v) => {
+      const done = (/** @type {ServerReply} */ v) => {
         try {
           c.destroy();
         } catch {}
@@ -136,7 +142,11 @@ try {
 
   // Opened only once the server has failed to answer, and never closed — process exit collects it.
   const db = new DatabaseSync(dbPath);
-  const cards = db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD);
+  const cards = /** @type {import('./lib/memory-recall.mjs').Card[]} */ (
+    /** @type {unknown} */ (
+      db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD)
+    )
+  );
 
   const fromKeyword = keywordArm(cards, prompt);
   log(fromKeyword.entry);

@@ -21,6 +21,7 @@ const modules = path.join(root, 'node_modules');
 let freed = 0;
 const done = [];
 
+/** @type {(target: string, label: string) => number} */
 const drop = (target, label) => {
   const size = bytes(target);
   freed += size;
@@ -50,5 +51,5 @@ try {
   if (freed)
     console.log(`slim-install: freed ${Math.round(freed / 2 ** 20)} MB — ${done.join(', ')}`);
 } catch (err) {
-  console.warn(`slim-install skipped: ${err.message}`);
+  console.warn(`slim-install skipped: ${/** @type {Error} */ (err).message}`);
 }

@@ -18,6 +18,13 @@ import path from 'node:path';
 import { vault, projectKey, legacyKey, stateDir, scriptsDir, pluginRoot } from './paths.mjs';
 import { detach, logBanner } from './hook-io.mjs';
 
+/**
+ * @typedef {{ run: false, reason: string, warn?: string }} SkipPlan
+ * @typedef {{ run: true, slug: string, script: string, args: string[], logFile: string }} RunPlan
+ * @typedef {SkipPlan | RunPlan} RefreshPlan
+ */
+
+/** @param {string} p */
 const isDir = (p) => {
   try {
     return fs.statSync(p).isDirectory();
@@ -32,6 +39,10 @@ const isDir = (p) => {
  * Tolerates a not-yet-migrated vault the same way insights-surface does: vault-memory-sync performs
  * the legacy_key -> project_key rename, but SessionStart hook order is not guaranteed, so fall back
  * for this one session rather than indexing nothing.
+ *
+ * @param {string} cwd
+ * @param {string} [vaultRoot]
+ * @returns {string | null}
  */
 export function resolveSlug(cwd, vaultRoot = vault()) {
   let slug;
@@ -53,6 +64,9 @@ export function resolveSlug(cwd, vaultRoot = vault()) {
  * is a symlink into $CLAUDE_MEMORY_HOME (scripts/share-modules.mjs), and a check that stats the
  * link instead of the target is exactly the bug that made /memory:doctor report 0 MB on 2026-08-18.
  * Do not "optimise" this to lstat.
+ *
+ * @param {string} [root]
+ * @returns {boolean}
  */
 export function runtimeInstalled(root = pluginRoot) {
   return isDir(path.join(root, 'node_modules', '@huggingface', 'transformers'));
@@ -61,6 +75,10 @@ export function runtimeInstalled(root = pluginRoot) {
 /**
  * Decide, without doing anything. Pure enough to test against a temp vault: it reads the
  * filesystem and returns a verdict, but spawns nothing and writes nothing.
+ *
+ * @param {string} cwd
+ * @param {{ vaultRoot?: string }} [options]
+ * @returns {RefreshPlan}
  */
 export function plan(cwd, { vaultRoot = vault() } = {}) {
   const slug = resolveSlug(cwd, vaultRoot);
@@ -96,6 +114,10 @@ export function plan(cwd, { vaultRoot = vault() } = {}) {
  * 1024-dim vectors at once. The second lock this hook used to take guarded the same file at a
  * coarser scope, and its only observable effect was a SILENT skip: on contention it exited 0 with
  * no output, so a session that indexed nothing looked identical to one that had nothing to index.
+ *
+ * @param {string} cwd
+ * @param {Date} [now]
+ * @returns {RefreshPlan}
  */
 export function refresh(cwd, now = new Date()) {
   const p = plan(cwd);

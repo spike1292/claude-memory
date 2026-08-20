@@ -77,7 +77,7 @@ test('the debounce window is 24h', () => {
 // is held by a genuinely live process rather than a number written into a file.
 const staleRepo = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-repo-'));
-  const git = (...args) =>
+  const git = (/** @type {string[]} */ ...args) =>
     execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe', encoding: 'utf8' });
   git('init', '-q');
   git('config', 'user.email', 't@example.com');
@@ -89,7 +89,7 @@ const staleRepo = () => {
 };
 
 /** A vault holding a report for `cwd` that records a commit this repo has never had. */
-const staleReport = (cwd, vaultRoot = emptyVault()) => {
+const staleReport = (/** @type {string} */ cwd, vaultRoot = emptyVault()) => {
   const dir = path.join(vaultRoot, 'Graph', reportFor(cwd, vaultRoot).slug);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'GRAPH_REPORT.md'), '---\ncommit: 0000000\n---\n');
@@ -97,7 +97,7 @@ const staleReport = (cwd, vaultRoot = emptyVault()) => {
 };
 
 /** Run `fn` with a scratch state dir and a `claude` that sleeps instead of indexing. */
-const isolated = (fn) => {
+const isolated = (/** @type {() => void} */ fn) => {
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-state-'));
   const bin = path.join(state, 'bin');
   fs.mkdirSync(bin);
@@ -120,7 +120,9 @@ test('check takes the lock, hands it to the child, and the next session stands d
   const cwd = staleRepo();
   const vaultRoot = staleReport(cwd);
   isolated(() => {
-    const { lock, marker } = plan(cwd, { vaultRoot });
+    const { lock, marker } = /** @type {import('./graph-staleness-check.mjs').RegenPlan} */ (
+      plan(cwd, { vaultRoot })
+    );
     assert.strictEqual(readMarker(marker), 0, 'precondition: this repo has never been regenerated');
 
     // The try starts at the call that SPAWNS: every assertion after it must run inside, or a

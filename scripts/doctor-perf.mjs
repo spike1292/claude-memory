@@ -9,12 +9,15 @@ import { DatabaseSync } from 'node:sqlite';
 
 // The entry owns the database handle; lib/ takes the numbers as values. Read-only, and null on
 // anything unreadable so the report can say so rather than drop the row.
+/** @type {import('./lib/doctor-perf.mjs').CountsReader} */
 const counts = (file) => {
   try {
     const db = new DatabaseSync(file, { readOnly: true });
     const r = {
-      chunks: db.prepare('select count(*) c from chunks').get().c,
-      notes: db.prepare('select count(distinct file) c from chunks').get().c,
+      chunks: /** @type {{ c: number }} */ (db.prepare('select count(*) c from chunks').get()).c,
+      notes: /** @type {{ c: number }} */ (
+        db.prepare('select count(distinct file) c from chunks').get()
+      ).c,
     };
     db.close();
     return r;

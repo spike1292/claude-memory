@@ -63,6 +63,7 @@ test('an unrecognised platform prunes nothing rather than everything', () => {
 // findPackages decides what gets rm -rf'd, so the cases that matter are the ones it must NOT match.
 function nm() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slim-install-'));
+  /** @type {(p: string) => string | undefined} */
   const mk = (p) => fs.mkdirSync(path.join(root, p), { recursive: true });
   mk('sharp');
   mk('onnxruntime-web');

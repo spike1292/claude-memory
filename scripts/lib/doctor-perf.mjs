@@ -17,7 +17,41 @@ import net from 'node:net';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-/** Bytes as a human reads them. Two significant-ish digits: 1.3 GB, not 1.29 GB or 1 GB. */
+/** @typedef {{ pid: number, rss: number, elapsed: string }} ServerRow */
+/** @typedef {{ bytes: number, files: number, missing: boolean }} DirUsage */
+/** @typedef {{ slug: string, model: string }} IndexName */
+/**
+ * @typedef {{
+ *   slug: string,
+ *   model: string,
+ *   file: string,
+ *   bytes: number,
+ *   chunks: number | null,
+ *   notes: number | null,
+ *   mtime: Date | null,
+ * }} IndexRow
+ */
+/** @typedef {(file: string) => { chunks: number, notes: number } | null} CountsReader */
+/** @typedef {{ ok: true, ms: number, hits: number | null }} ProbeOk */
+/** @typedef {{ ok: false, reason?: string }} ProbeFail */
+/** @typedef {ProbeOk | ProbeFail} ProbeResult */
+/**
+ * @typedef {{
+ *   state: string,
+ *   activeModel: string,
+ *   activeSlug: string,
+ *   modelKeys?: readonly string[],
+ *   counts?: CountsReader,
+ *   ps?: string,
+ * }} ReportOptions
+ */
+
+/**
+ * Bytes as a human reads them. Two significant-ish digits: 1.3 GB, not 1.29 GB or 1 GB.
+ *
+ * @param {number} n
+ * @returns {string}
+ */
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return '-';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -30,7 +64,13 @@ export function formatBytes(n) {
   return `${i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 }
 
-/** Column-aligned rows. The last column is never padded — trailing spaces survive a paste. */
+/**
+ * Column-aligned rows. The last column is never padded — trailing spaces survive a paste.
+ *
+ * @param {readonly string[]} headers
+ * @param {readonly (readonly unknown[])[]} rows
+ * @returns {string}
+ */
 export function table(headers, rows) {
   const all = [headers, ...rows].map((r) => r.map((c) => String(c ?? '')));
   const width = headers.map((_, i) => Math.max(...all.map((r) => (r[i] ?? '').length)));
@@ -50,8 +90,12 @@ export function table(headers, rows) {
  * Parsed rather than looked up by pid file because the thing worth reporting is exactly the case
  * no pid file covers: MORE THAN ONE server alive. `command=` is last so a command containing
  * spaces cannot eat the columns before it.
+ *
+ * @param {unknown} psOutput
+ * @returns {ServerRow[]}
  */
 export function parseServers(psOutput) {
+  /** @type {ServerRow[]} */
   const out = [];
   for (const line of String(psOutput ?? '').split('\n')) {
     const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
@@ -71,6 +115,7 @@ export function parseServers(psOutput) {
 // has to be exact.
 export const MODEL_RSS_THRESHOLD = 100 * 1024 * 1024;
 
+/** @param {number} rss @returns {string} */
 export const modelState = (rss) => (rss >= MODEL_RSS_THRESHOLD ? 'model loaded' : 'model unloaded');
 
 /**
@@ -82,6 +127,9 @@ export const modelState = (rss) => (rss >= MODEL_RSS_THRESHOLD ? 'model loaded' 
  * of the six scanned here is a link today — but because every past size check in this repo that
  * dereferenced one measured something other than what it claimed to (risk R8 in
  * docs/architecture.md), and `$CLAUDE_MEMORY_HOME` is exactly where links get added.
+ *
+ * @param {string} dir
+ * @returns {DirUsage}
  */
 export function dirUsage(dir) {
   let entries;
@@ -112,6 +160,10 @@ export function dirUsage(dir) {
  * cannot be positional — it is driven by the KNOWN model keys, longest first, since `bge-m3` and
  * `bge-small-en` share a prefix. The keys come from MODELS in models.mjs; a second list here would
  * drift and silently mislabel every row.
+ *
+ * @param {string} file
+ * @param {readonly string[]} modelKeys
+ * @returns {IndexName | null}
  */
 export function parseIndexName(file, modelKeys) {
   if (!file.startsWith('semantic-')) return null;
@@ -131,6 +183,11 @@ export function parseIndexName(file, modelKeys) {
  * this module takes the numbers as values and stays testable without a database. Enforced by CI.
  * A db it cannot read comes back null and is REPORTED as unreadable rather than skipped — that is
  * precisely the state that makes recall go quiet.
+ *
+ * @param {string} dbDir
+ * @param {readonly string[]} [modelKeys]
+ * @param {CountsReader} [counts]
+ * @returns {IndexRow[]}
  */
 export function indexStats(dbDir, modelKeys = [], counts = () => null) {
   let files;
@@ -143,7 +200,14 @@ export function indexStats(dbDir, modelKeys = [], counts = () => null) {
     .map((f) => {
       const parts = parseIndexName(f, modelKeys) ?? { slug: f.replace(/\.db$/, ''), model: '?' };
       const full = path.join(dbDir, f);
-      const row = { ...parts, file: f, bytes: 0, chunks: null, notes: null, mtime: null };
+      const row = /** @type {IndexRow} */ ({
+        ...parts,
+        file: f,
+        bytes: 0,
+        chunks: null,
+        notes: null,
+        mtime: null,
+      });
       try {
         const st = fs.statSync(full);
         row.bytes = st.size;
@@ -166,12 +230,17 @@ export function indexStats(dbDir, modelKeys = [], counts = () => null) {
  *
  * Never spawns. `existsSync` is not proof the other end is alive — a socket file outlives the
  * process that bound it — so a refused connection is a normal answer here, not an error.
+ *
+ * @param {string} sockPath
+ * @param {{ slug?: string, q?: string, timeoutMs?: number }} [options]
+ * @returns {Promise<ProbeResult>}
  */
 export function probeSocket(sockPath, { slug, q = 'what did we decide', timeoutMs = 3000 } = {}) {
   return new Promise((resolve) => {
     if (!fs.existsSync(sockPath)) return resolve({ ok: false, reason: 'no socket' });
     const started = process.hrtime.bigint();
     const c = net.createConnection(sockPath);
+    /** @param {ProbeResult} v */
     const done = (v) => {
       try {
         c.destroy();
@@ -192,6 +261,7 @@ export function probeSocket(sockPath, { slug, q = 'what did we decide', timeoutM
     c.on('end', () => {
       clearTimeout(timer);
       const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      /** @type {number|null} */
       let hits = null;
       try {
         hits = JSON.parse(buf)?.results?.length ?? null;
@@ -202,12 +272,14 @@ export function probeSocket(sockPath, { slug, q = 'what did we decide', timeoutM
     });
     c.on('error', (e) => {
       clearTimeout(timer);
-      done({ ok: false, reason: e.code === 'ECONNREFUSED' ? 'socket file is orphaned' : e.code });
+      const code = /** @type {NodeJS.ErrnoException} */ (e).code;
+      done({ ok: false, reason: code === 'ECONNREFUSED' ? 'socket file is orphaned' : code });
     });
   });
 }
 
 // `^(?=.)` and not `^`: indenting a blank line leaves trailing whitespace behind.
+/** @param {string} title @param {string} body @returns {string} */
 const section = (title, body) => `\n${title}\n${body.replace(/^(?=.)/gm, '  ')}\n`;
 
 /**
@@ -215,15 +287,21 @@ const section = (title, body) => `\n${title}\n${body.replace(/^(?=.)/gm, '  ')}\
  *
  * `activeModel` and `activeSlug` are what THIS project resolves to; everything else is
  * machine-wide on purpose — the cost being diagnosed is never confined to one repo.
+ *
+ * @param {ReportOptions} options
+ * @returns {Promise<string>}
  */
-export async function report({
-  state,
-  activeModel,
-  activeSlug,
-  modelKeys = [],
-  counts,
-  ps = readPs(),
-} = {}) {
+export async function report(
+  {
+    state,
+    activeModel,
+    activeSlug,
+    modelKeys = [],
+    counts,
+    ps = readPs(),
+  } = /** @type {ReportOptions} */ ({}),
+) {
+  /** @type {string[]} */
   const out = [];
 
   const servers = parseServers(ps);
@@ -256,6 +334,7 @@ export async function report({
   // points at a cold one, which is the reload this gate exists to avoid. Unknown means do not
   // touch. The length guard is not decoration: every([]) is true.
   const holding = servers.length > 0 && servers.every((s) => s.rss >= MODEL_RSS_THRESHOLD);
+  /** @type {ProbeResult} */
   const first = holding
     ? await probeSocket(sock, { slug: activeSlug })
     : {
@@ -269,7 +348,7 @@ export async function report({
     section(
       'recall round trip',
       first.ok
-        ? `${first.ms.toFixed(0)} ms first query, ${second.ms.toFixed(0)} ms second ` +
+        ? `${first.ms.toFixed(0)} ms first query, ${/** @type {ProbeOk} */ (second).ms.toFixed(0)} ms second ` +
             `(${first.hits ?? '?'} hits, slug ${activeSlug})\n` +
             'A first query far above the second means the index for this slug was loaded on demand.'
         : `not measured: ${first.reason}\n` +
@@ -301,7 +380,9 @@ export async function report({
   );
 
   const dirs = ['db', 'models', 'logs', 'run', 'eval', 'cache'];
-  const usage = dirs.map((d) => [d, dirUsage(path.join(state, d))]);
+  const usage = dirs.map(
+    (d) => /** @type {[string, DirUsage]} */ ([d, dirUsage(path.join(state, d))]),
+  );
   const total = usage.reduce((n, [, u]) => n + u.bytes, 0);
   out.push(
     section(
@@ -330,6 +411,8 @@ export async function report({
  * flag this platform did not like would not error here — it would return rows nothing matches, and
  * the report would say "none running" with a server up. macOS (BSD ps) is covered by running it;
  * that test is what covers the ubuntu CI runners.
+ *
+ * @returns {string}
  */
 export function readPs() {
   try {
