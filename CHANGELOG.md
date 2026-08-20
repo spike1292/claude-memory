@@ -379,7 +379,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   lock by dying, and an hour-old lock is stale even when its pid is alive (a recycled pid, or a
   wedged run). The claim is a single atomic `wx` create in `check()`; an advisory
   read in `plan()` was tried and removed, because it decided nothing the create does not and it
-  masked the mutation that deletes the create. A session that loses says so instead of going quiet. `/memory:doctor` reports
+  masked the mutation that deletes the create. Reclaiming a *stale* lock cannot be atomic — unlink
+  and create are two syscalls — and a plain unlink-then-create is wrong, since the loser's unlink
+  deletes the winner's fresh lock and it then claims the empty path, so both start a re-index. The
+  inode is captured before the staleness verdict and re-checked after it, which narrows that
+  interleaving to one syscall; closing it needs an OS-level lock Node's `fs` does not expose, and
+  the code says so rather than claiming a guarantee it does not provide. A session that loses says so instead of going quiet. `/memory:doctor` reports
   a held lock with its pid and age, and names a stale one as harmless. The wiring is covered by an
   integration test, not only by its constants: a scratch `$CLAUDE_MEMORY_HOME`, two real git repos
   stale against a scratch vault, and a stand-in `claude` that sleeps, so the lock left behind is
