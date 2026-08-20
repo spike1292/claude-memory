@@ -213,3 +213,15 @@ test('a reclaimed lock cannot then be taken a second time', () => {
   assert.strictEqual(takeLock(f, 4242, now, 3600, now), false, 'the next caller does not');
   assert.strictEqual(lockHolder(f, 3600, now), process.pid, "the winner's lock survives");
 });
+
+// The 'error' handler exists so an async spawn failure cannot crash a hook that has already
+// returned a pid. It must still leave a trace: by then the caller has written that pid into a lock
+// file and a 24h debounce marker, and nothing else explains why the child is gone.
+test('detach records an async spawn failure in the log', async () => {
+  const f = path.join(tmp(), 'graphgen.log');
+  detach('/nonexistent/binary', [], { logFile: f });
+  for (let i = 0; i < 100 && !fs.readFileSync(f, 'utf8').includes('spawn failed'); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.match(fs.readFileSync(f, 'utf8'), /spawn failed: .*ENOENT/);
+});

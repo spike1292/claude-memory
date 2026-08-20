@@ -255,8 +255,13 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
       env: env ? { ...process.env, ...env } : process.env,
     });
     // spawn() reports a missing binary ASYNCHRONOUSLY, so the throw below never sees it and an
-    // unhandled 'error' would take the hook down after it had already decided to succeed.
-    child.on('error', () => {});
+    // unhandled 'error' would take the hook down after it had already decided to succeed. It is
+    // recorded rather than swallowed: by this point a pid has been returned and the caller has
+    // written it into a lock and a 24h marker, so a child that dies moments later leaves state
+    // behind that only this line explains. Same reason as the LOCK HANDOVER FAILED banner.
+    child.on('error', (e) => {
+      if (logFile) logBanner(logFile, `spawn failed: ${e.message}`, new Date().toISOString());
+    });
     child.unref();
     return child.pid ?? null;
   } catch {

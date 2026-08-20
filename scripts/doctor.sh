@@ -243,11 +243,21 @@ if [ -f "$lock" ]; then
   # a bash error. Mirrors Number.isFinite() in lockHolder().
   case "${lock_pid:-}${lock_at:-}" in (*[!0-9]*|'') lock_pid=''; lock_at=0 ;; esac
   age=$(( $(date +%s) - ${lock_at:-0} ))
+  # The staleness window is ASKED FOR, not copied: a second 3600 here would drift the moment
+  # LOCK_MAX_SECONDS moves, and doctor would then call a held lock stale (or the reverse).
+  # pathToFileURL, not a bare path: import() of an absolute path is read as a package specifier.
+  lock_max=$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.LOCK_MAX_SECONDS))' \
+    "$ROOT/hooks/lib/graph-staleness-check.mjs" 2>/dev/null)
+  case "${lock_max:-}" in (*[!0-9]*|'') lock_max='' ;; esac
   # `-gt 0`: `kill -0 0` signals our own process group and succeeds, so pid 0 would read as alive.
-  if [ "${lock_pid:-0}" -gt 0 ] && kill -0 "$lock_pid" 2>/dev/null && [ "$age" -lt 3600 ]; then
+  if [ "${lock_pid:-0}" -le 0 ] || ! kill -0 "$lock_pid" 2>/dev/null; then
+    warn "stale graphgen lock in run/" "its owner is gone. The next stale session reclaims it; nothing to do."
+  elif [ -z "$lock_max" ]; then
+    warn "graphgen lock held by live pid $lock_pid (${age}s)" "could not read LOCK_MAX_SECONDS, so whether it is still within its window is unknown. See the runtime section."
+  elif [ "$age" -lt "$lock_max" ]; then
     ok "graph re-index running (pid $lock_pid, ${age}s) — other sessions will not start a second one"
   else
-    warn "stale graphgen lock in run/" "owner is gone or over an hour old. The next stale session reclaims it; nothing to do."
+    warn "stale graphgen lock in run/" "held for ${age}s, past the ${lock_max}s window. The next stale session reclaims it; nothing to do."
   fi
 fi
 
