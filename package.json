@@ -17,6 +17,7 @@
   "scripts": {
     "postinstall": "node scripts/slim-install.mjs",
     "format": "npx --yes prettier@3.6.2 --write .",
-    "format:check": "npx --yes prettier@3.6.2 --check ."
+    "format:check": "npx --yes prettier@3.6.2 --check .",
+    "typecheck": "npx --yes -p typescript@5.9.2 tsc -p tsconfig.json"
   }
 }

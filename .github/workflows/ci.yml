@@ -308,3 +308,14 @@ jobs:
       # a real embedding: that would pull 722 MB of weights into CI for a check this covers.
       - name: transformers still loads against the stubs
         run: node --input-type=module -e "await import('@huggingface/transformers'); console.log('loaded')"
+
+      # Lives in this job, not `test`, because it is the only one that runs a real `npm ci`:
+      # @types/node arrives transitively with @huggingface/transformers and is what makes
+      # `import fs from 'node:fs'` check at all. If that dependency ever stops carrying it, every
+      # file fails here at once rather than silently checking against nothing.
+      #
+      # tsc is pinned and run through npx for the same reason Prettier is: `npm ci` on plugin
+      # install would ship a devDependency into every user's version-pinned cache. Bump the version
+      # here and in package.json's scripts together.
+      - name: Types check
+        run: npm run typecheck
