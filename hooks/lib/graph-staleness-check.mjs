@@ -153,9 +153,13 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * create is the only thing that picks one winner out of two sessions starting in the same second.
  * It is then rewritten to hold the CHILD's pid, since the child is what the next session must wait
  * on — this process is about to exit.
+ *
+ * `opts` is passed straight through to plan(); the entry never sets it. It exists so a test can
+ * point this at a scratch vault instead of the real one — a check() that could only read the live
+ * vault could not be tested at all, and this is the half with the lock sequence in it.
  */
-export function check(cwd) {
-  const p = plan(cwd);
+export function check(cwd, opts) {
+  const p = plan(cwd, opts);
   if (p.action === 'silent') return '';
   if (p.action === 'nudge') return systemMessage(p.message);
   if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))

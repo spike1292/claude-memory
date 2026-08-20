@@ -380,7 +380,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   wedged run). The claim is an atomic `wx` create in `check()`, not the advisory read in `plan()` —
   that read only avoids the work, the create is what picks one winner out of two sessions starting
   in the same second. A session that loses says so instead of going quiet. `/memory:doctor` reports
-  a held lock with its pid and age, and names a stale one as harmless.
+  a held lock with its pid and age, and names a stale one as harmless. The wiring is covered by an
+  integration test, not only by its constants: a scratch `$CLAUDE_MEMORY_HOME`, two real git repos
+  stale against a scratch vault, and a stand-in `claude` that sleeps, so the lock left behind is
+  held by a genuinely live process. `check()` takes plan options for that reason alone — a function
+  that could only read the live vault could not be tested at all.
 - **`detach()` no longer takes the hook down after it has already succeeded.** `spawn()` reports a
   missing binary asynchronously, so the `try/catch` never saw it and the unhandled `error` event
   became an uncaughtException *after* the pid had been returned and the hook had printed its line.

@@ -5,15 +5,19 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   recordedCommit,
   isFresh,
   reportFor,
   plan,
+  check,
   DEBOUNCE_SECONDS,
   LOCK_MAX_SECONDS,
   BUSY_MESSAGE,
+  STALE_MESSAGE,
 } from './graph-staleness-check.mjs';
+import { readMarker, nowSeconds } from './hook-io.mjs';
 
 const emptyVault = () => fs.mkdtempSync(path.join(os.tmpdir(), 'graph-vault-'));
 
@@ -71,4 +75,105 @@ test('the debounce window is 24h', () => {
 test('the regen lock is bounded at an hour and has its own message', () => {
   assert.strictEqual(LOCK_MAX_SECONDS, 3600);
   assert.notStrictEqual(BUSY_MESSAGE, '', 'a busy session says why it is not regenerating');
+});
+
+// The constants above prove nothing about the wiring. What follows drives plan() and check()
+// against a real stale repo, a real vault and a real lock file: the two branches this feature IS.
+//
+// Hermetic by construction — $CLAUDE_MEMORY_HOME, the vault root, the repo and `claude` itself are
+// all built per test. The stand-in `claude` is a script that sleeps, so the lock it leaves behind
+// is held by a genuinely live process rather than a number written into a file.
+const staleRepo = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-repo-'));
+  const git = (...args) =>
+    execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe', encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  fs.writeFileSync(path.join(dir, 'f'), 'x');
+  git('add', '.');
+  git('commit', '-qm', 'one');
+  return dir;
+};
+
+/** A vault holding a report for `cwd` that records a commit this repo has never had. */
+const staleReport = (cwd, vaultRoot = emptyVault()) => {
+  const { slug } = reportFor(cwd, vaultRoot);
+  const dir = path.join(vaultRoot, 'Graph', slug);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'GRAPH_REPORT.md'), '---\ncommit: 0000000\n---\n');
+  return { vaultRoot, slug };
+};
+
+/** Run `fn` with a scratch state dir and a `claude` that sleeps instead of indexing. */
+const isolated = (fn) => {
+  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-state-'));
+  const bin = path.join(state, 'bin');
+  fs.mkdirSync(bin);
+  const claude = path.join(bin, 'claude');
+  fs.writeFileSync(claude, '#!/bin/sh\nsleep 30\n');
+  fs.chmodSync(claude, 0o755);
+  const prev = { home: process.env.CLAUDE_MEMORY_HOME, p: process.env.PATH };
+  process.env.CLAUDE_MEMORY_HOME = state;
+  process.env.PATH = `${bin}${path.delimiter}${prev.p}`;
+  try {
+    return fn({ state });
+  } finally {
+    if (prev.home === undefined) delete process.env.CLAUDE_MEMORY_HOME;
+    else process.env.CLAUDE_MEMORY_HOME = prev.home;
+    process.env.PATH = prev.p;
+  }
+};
+
+test('plan REGENERATES a stale repo, and stands down while another run holds the lock', () => {
+  const cwd = staleRepo();
+  const { vaultRoot } = staleReport(cwd);
+  isolated(() => {
+    const go = plan(cwd, { vaultRoot });
+    assert.strictEqual(go.action, 'regen', 'precondition: this repo is stale and regenerable');
+    assert.ok(go.lock, 'the lock path travels with the decision');
+
+    // Another repo's session, already running: a live pid in the machine-wide lock.
+    fs.writeFileSync(go.lock, `${process.pid} ${nowSeconds()}\n`);
+    const busy = plan(cwd, { vaultRoot });
+    assert.strictEqual(busy.action, 'nudge');
+    assert.strictEqual(busy.reason, 'another run in flight');
+    assert.strictEqual(busy.message, BUSY_MESSAGE);
+
+    // A dead owner is not an owner. This is what stops one killed run wedging every repo.
+    fs.writeFileSync(go.lock, `2147483647 ${nowSeconds()}\n`);
+    assert.strictEqual(plan(cwd, { vaultRoot }).action, 'regen');
+  });
+});
+
+test('check takes the lock, hands it to the child, and the next session stands down', () => {
+  const cwd = staleRepo();
+  const { vaultRoot } = staleReport(cwd);
+  isolated(() => {
+    const { lock, marker } = plan(cwd, { vaultRoot });
+    assert.strictEqual(readMarker(marker), 0, 'precondition: this repo has never been regenerated');
+
+    const first = check(cwd, { vaultRoot });
+    assert.ok(first.includes(STALE_MESSAGE), 'the session that wins says it is regenerating');
+    assert.ok(readMarker(marker) > 0, 'and the 24h per-repo debounce is now set');
+
+    const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
+    assert.notStrictEqual(pid, process.pid, 'the lock is handed to the CHILD — this process exits');
+    assert.doesNotThrow(() => process.kill(pid, 0), 'and that child is alive');
+
+    try {
+      // The whole point: ANOTHER repo's SessionStart. Its own 24h marker is unset, so the
+      // per-repo debounce has nothing to say here — only the machine-wide lock stops it.
+      const other = staleRepo();
+      staleReport(other, vaultRoot);
+      const second = check(other, { vaultRoot });
+      assert.ok(second.includes(BUSY_MESSAGE), 'no second full re-index starts');
+    } finally {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
 });
