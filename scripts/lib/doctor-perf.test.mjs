@@ -260,6 +260,29 @@ test('report measures the round trip when every server is warm', async () => {
   }
 });
 
+// The second probe can fail on its own even after the first succeeded — the server exits, or the
+// socket is evicted, between the two. Before this, the report cast the second result to the success
+// shape and `undefined.toFixed()` ended the whole thing with a stack trace. The server here answers
+// once and then closes, which is the cheapest way to make the second call fail for real.
+test('report survives a second probe that fails after the first succeeded', async () => {
+  const state = tmp();
+  const sock = path.join(state, 'run', 'search-bge-m3.sock');
+  fs.mkdirSync(path.join(state, 'run'), { recursive: true });
+  let answered = 0;
+  const server = net.createServer((c) =>
+    c.on('data', () => {
+      c.end(JSON.stringify({ slug: 'x', results: [1] }) + '\n');
+      if (++answered === 1) server.close(() => fs.rmSync(sock, { force: true }));
+    }),
+  );
+  await /** @type {Promise<void>} */ (new Promise((r) => server.listen(sock, r)));
+  const ps = '  501 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
+  const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps });
+  assert.match(out, /\d+ ms first query/);
+  assert.match(out, /second not measured:/);
+  assert.doesNotMatch(out, /undefined/);
+});
+
 // Everything above feeds parseServers a synthetic listing, so nothing checked that the `ps` flags
 // work on the platform running them. A wrong flag would not error — it would return rows nothing
 // matches, and the report would say "none running" while a server was up. This finds THIS process

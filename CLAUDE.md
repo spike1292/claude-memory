@@ -42,7 +42,8 @@ transitively with `@huggingface/transformers` and is what makes `node:fs` check 
 **There is no linter and adding one needs new numbers**: of the three rules that were candidates,
 `tsc` gives unused-imports for free and a CI check already covers `hooks/lib` side effects.
 [docs/decisions/2026-08-20-types-and-linting.md](docs/decisions/2026-08-20-types-and-linting.md) has
-the measurements, including why partial `strict` is not a thing here.
+the measurements. A second CI step asserts that every tracked `.mjs` is in what `tsc` actually
+checked — an include glob that stops matching would otherwise pass by checking nothing.
 
 **It formats code only.** `.prettierignore` excludes `*.md`, `*.yml` and `package-lock.json`:
 CLAUDE.md and `commands/*.md` are read by Claude Code as instructions, the workflow comments record

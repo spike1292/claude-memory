@@ -49,7 +49,7 @@ export const VARS = [
 /**
  * Render a resolved environment as `NAME='value'` lines, safe to `eval`.
  *
- * @param {Record<string, string>} values
+ * @param {Record<string, string | undefined>} values
  * @returns {string}
  */
 export function render(values) {

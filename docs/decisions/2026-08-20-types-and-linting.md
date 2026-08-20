@@ -15,31 +15,43 @@ form; and add a linter, and if so which rules.
 
 ## What the measurements said
 
-`tsc` was run over every non-test `.mjs` in `hooks/` and `scripts/` — 6737 lines — before any
-annotation existed.
+`tsc` 5.9.2 was run over every non-test `.mjs` in `hooks/` and `scripts/` — 39 files, 6737 lines —
+at the commit before any annotation existed.
 
 | Configuration | Diagnostics |
 | --- | --- |
 | `checkJs`, no strict | 34 |
-| `checkJs` + `noUnusedLocals` | +15 |
-| `strict` | 499 |
-| `strict` with `noImplicitAny` off | 1 |
+| `checkJs` + `noUnusedLocals` | 48 |
+| `checkJs` + `noUnusedLocals` + `noUnusedParameters` | 49 |
+| `strict` | 484 |
+| `strict` + both unused flags | 499 |
+| `strict` with `noImplicitAny` off | 91 |
+| `strictNullChecks` alone | 80 |
 
 **`checkJs` alone found zero bugs.** All 34 were inference gaps, not defects: 14 `opts = {}` option
 bags inferred as `{}`, 7 `node:sqlite` `SQLOutputValue` unions that do not narrow, 3 `err.code` on
 `Error`, 3 `new Response(process.stdin)`, and 2 one-offs. A checker that finds nothing in six
 thousand lines is not an argument for adopting it retrospectively; its whole value is prospective.
 
-**The 15 unused-import diagnostics were all real.** `scripts/memory-semantic.mjs` imported `os`,
-`net` and `MODELS` and used none of them; `scripts/lib/memory-audit-checks.mjs` imported `execSync`,
-`path` and `paths` and used none; `scripts/lib/memory-synth-vault.mjs` imported `fs`, `path` and
-`paths` and used none. They are deleted rather than suppressed.
+**The 15 unused-symbol diagnostics were all real** — 14 dead imports and one unused parameter. The
+imports: `os`, `net` and `MODELS` in `scripts/memory-semantic.mjs`; `path`, `paths` and `STOP` in
+`scripts/lib/memory-semantic.mjs`; `execSync`, `path` and `paths` in
+`scripts/lib/memory-audit-checks.mjs`; `fs`, `path` and `paths` in
+`scripts/lib/memory-synth-vault.mjs`; `assert` and `fileURLToPath` in
+`hooks/lib/distill-session.mjs`. All deleted rather than suppressed.
 
-**The last row is why `strict` is all-or-nothing here.** The obvious staging plan — turn on
-`strictNullChecks` first, leave `noImplicitAny` for later — does not work. With `noImplicitAny` off
-every value is `any`, so the null checks never fire and the count collapses from 499 to 1. The ~384
-parameter annotations are the entry fee, and null safety only begins working after they are paid.
-Do not re-propose partial adoption without new numbers.
+**Staged adoption was possible and was declined, not ruled out.** `strictNullChecks` without
+`noImplicitAny` is 80 diagnostics, 32 of them genuine null-safety codes (TS18047, TS2532, TS2531,
+TS18048) — real findings, reachable without writing a single parameter annotation. Full `strict`
+was taken anyway because it was what the issue asked for and because the staged path leaves ~384
+parameters implicitly `any` indefinitely, which is the state that made the null checking worth
+having in the first place. Anyone re-opening this should know the cheap door existed.
+
+> An earlier draft of this record claimed that row was **1**, and argued from it that no partial
+> adoption was possible. That number came from a malformed `tsc` invocation whose single
+> diagnostic was `TS5023: Unknown compiler option` — the measurement never ran. Caught in local
+> review before merge. Every row above was re-measured with a verified binary and a check that no
+> diagnostic was an invocation error.
 
 ## Why not real TypeScript with a build
 
@@ -96,6 +108,25 @@ made `message`, `lock`, `marker`, `claude`, `args` and `transcript` all possibly
 every call site — 13 diagnostics from one root cause. Annotating them as proper discriminated unions
 restored narrowing and all 13 went away with no assertion anywhere. That is the shape of value this
 check adds: it makes a return type that was accidentally vague into one that is stated.
+
+## Where a cast was hiding a real defect, the defect was fixed
+
+"Annotation only" holds everywhere except three places, and the exception is deliberate: a cast that
+silences a live bug is worse than the bug, because it moves a real possibility out of sight and
+tells the next reader the type system checked it. Local review found all three.
+
+- `report()` in `scripts/lib/doctor-perf.mjs` timed the recall round trip twice and cast the second
+  probe to the success shape. The second probe can fail on its own — the server may exit or evict
+  the socket between the two — and `undefined.toFixed()` would have killed `/memory:doctor --perf`
+  mid-report, in the one command someone runs when things are already wrong. It now prints what
+  went wrong with the second probe instead.
+- The same function could print `not measured: undefined`, since `ErrnoException.code` is optional
+  and so is the field it lands in. Both optional, so the checker was satisfied.
+- `assertVectorWidth()` in `scripts/lib/memory-semantic.mjs` read `r.vec.byteLength` behind a
+  double cast through `unknown` — the strongest available "trust me", buying exactly the guarantee
+  the type check was added to provide. A row arriving with no vector at all is the same corruption
+  the function exists to catch, so it is now reported by the function's own message rather than
+  throwing a TypeError one line earlier.
 
 ## Found while annotating, not fixed here
 

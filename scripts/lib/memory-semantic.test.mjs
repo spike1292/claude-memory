@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
   MAX_CHARS,
@@ -799,4 +800,36 @@ test('searchIn: the reserve promotes an L1 note into the window', () => {
     if (reserve === undefined) delete process.env.MEMORY_FUSE_RESERVE;
     else process.env.MEMORY_FUSE_RESERVE = reserve;
   }
+});
+
+// assertVectorWidth exits the process, so it is checked from a child. A row arriving with NO vector
+// used to reach `r.vec.byteLength` behind a double cast through `unknown` and die with a TypeError
+// one line before the message that explains what to do about it.
+test('assertVectorWidth reports a missing vector instead of throwing', () => {
+  const mod = fileURLToPath(new URL('./memory-semantic.mjs', import.meta.url));
+  /** @param {string} rows */
+  const run = (rows) => {
+    try {
+      return execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { assertVectorWidth } = await import(${JSON.stringify(mod)});` +
+            `assertVectorWidth(${rows}, 4, 'probe');`,
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+    } catch (err) {
+      const e = /** @type {{ stdout?: string, stderr?: string }} */ (err);
+      return (e.stdout ?? '') + (e.stderr ?? '');
+    }
+  };
+
+  const missing = run('[{ note: "a" }]');
+  assert.match(missing, /1\/1 vectors are missing bytes/);
+  assert.doesNotMatch(missing, /TypeError/);
+
+  assert.match(run('[{ vec: new Uint8Array(8) }]'), /1\/1 vectors are 8 bytes, expected 16/);
+  assert.equal(run('[{ vec: new Uint8Array(16) }]').trim(), '');
 });

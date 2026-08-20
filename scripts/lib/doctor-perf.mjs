@@ -273,7 +273,10 @@ export function probeSocket(sockPath, { slug, q = 'what did we decide', timeoutM
     c.on('error', (e) => {
       clearTimeout(timer);
       const code = /** @type {NodeJS.ErrnoException} */ (e).code;
-      done({ ok: false, reason: code === 'ECONNREFUSED' ? 'socket file is orphaned' : code });
+      done({
+        ok: false,
+        reason: code === 'ECONNREFUSED' ? 'socket file is orphaned' : (code ?? 'connection failed'),
+      });
     });
   });
 }
@@ -348,7 +351,12 @@ export async function report(
     section(
       'recall round trip',
       first.ok
-        ? `${first.ms.toFixed(0)} ms first query, ${/** @type {ProbeOk} */ (second).ms.toFixed(0)} ms second ` +
+        ? `${first.ms.toFixed(0)} ms first query, ` +
+            // The second probe can fail on its own: the server may have exited, or evicted the
+            // socket, between the two. Saying so beats a stack trace where a line belongs.
+            (second?.ok
+              ? `${second.ms.toFixed(0)} ms second `
+              : `second not measured: ${second?.reason ?? 'no answer'} `) +
             `(${first.hits ?? '?'} hits, slug ${activeSlug})\n` +
             'A first query far above the second means the index for this slug was loaded on demand.'
         : `not measured: ${first.reason}\n` +

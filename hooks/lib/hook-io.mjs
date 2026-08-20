@@ -34,8 +34,9 @@ export function readStdin() {
  *   transcript_path?: string,
  *   hook_event_name?: string,
  *   tool_name?: string,
- *   tool_input?: Record<string, any>,
- * } & Record<string, any>} HookPayload
+ *   tool_input?: Record<string, unknown>,
+ *   stop_hook_active?: boolean,
+ * } & Record<string, unknown>} HookPayload
  */
 
 /**
@@ -160,8 +161,9 @@ export const which = (cmd) => {
  * after itself — it is killed, the machine sleeps, the parent hook exited minutes ago — so the
  * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
  * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
+ *
+ * @param {number} pid
  */
-/** @param {number} pid */
 const alive = (pid) => {
   try {
     process.kill(pid, 0);

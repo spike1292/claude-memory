@@ -467,17 +467,17 @@ export function cosine(a, b) {
 // the bytes and returns a plausible-looking score. That is how a mixed-dimension index (384 + 1024 in
 // one table, 2026-08-15) can serve nonsense with no error anywhere.
 /**
- * @template {{ vec: Uint8Array }} T
- * @param {readonly T[]} rows
+ * @param {readonly Partial<ChunkRow>[]} rows
  * @param {number} dim
  * @param {string} [label]
- * @returns {readonly T[]}
  */
 export function assertVectorWidth(rows, dim, label = 'index') {
   const want = dim * 4;
-  const bad = rows.filter((r) => r.vec.byteLength !== want);
-  if (!bad.length) return rows;
-  const widths = [...new Set(bad.map((r) => r.vec.byteLength))].join(', ');
+  // `?.`, not `.`: a row reaching here without a vector at all is the same corruption this
+  // exists to catch, and it must produce the message below rather than a TypeError one line up.
+  const bad = rows.filter((r) => r.vec?.byteLength !== want);
+  if (!bad.length) return;
+  const widths = [...new Set(bad.map((r) => r.vec?.byteLength ?? 'missing'))].join(', ');
   console.log(
     `⚠ ${label}: ${bad.length}/${rows.length} vectors are ${widths} bytes, expected ${want} (${dim}-dim).`,
   );
@@ -653,12 +653,7 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
   // exactly how the 2026-08-15 alias measurement was first taken (1034 notes before, 1047 after)
   // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
   const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
-  if (dim != null)
-    assertVectorWidth(
-      /** @type {readonly ChunkRow[]} */ (/** @type {unknown} */ (rowsUsed)),
-      dim,
-      'query',
-    );
+  if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
   return {
     slug,
     dbPath,

@@ -92,7 +92,7 @@ try {
   // Keyed by MODEL alone: one server holds the model and answers for every project, with the slug
   // sent per request. It used to be per slug+model, which meant one ~1.3GB model per indexed repo.
   const sockPath = path.join(runDir, `search-${model}.sock`);
-  /** @typedef {{ results?: import('./lib/memory-recall.mjs').Hit[] | null } | null} ServerReply */
+  /** @typedef {{ results?: import('./lib/memory-recall.mjs').ServerHit[] | null } | null} ServerReply */
   /**
    * @param {string} q
    * @returns {Promise<ServerReply>}
