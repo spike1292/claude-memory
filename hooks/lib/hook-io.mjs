@@ -156,17 +156,40 @@ export function releaseLock(file) {
   }
 }
 
+const inode = (file) => {
+  try {
+    return fs.statSync(file).ino;
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Claim the lock. True only for the caller that created the file.
  *
- * `wx` is what makes two sessions starting in the same second pick one winner; the reclaim path
- * unlinks first and then races on `wx` again, so a stale lock also has exactly one taker.
+ * `wx` is atomic, so two sessions racing for a FREE lock always pick one winner. Reclaiming a
+ * STALE one cannot be atomic — unlink and create are two syscalls — and a plain unlink-then-create
+ * is wrong: the loser's unlink deletes the winner's fresh lock and it then claims the empty path,
+ * so both believe they hold it and both start a re-index (the thing this exists to prevent).
+ *
+ * The inode is therefore captured before the staleness verdict and re-checked after it: a lock
+ * that has been replaced in the meantime is somebody else's, and we stand down rather than unlink
+ * it.
+ *
+ * ponytail: that narrows the race to the gap between the re-check and the unlink and does not
+ * close it. Closing it needs an OS-level lock, which Node's `fs` does not expose — the upgrade is
+ * a native `flock` binding, and the residual cost is one extra re-index in an interleaving of
+ * microseconds that also requires the previous owner to be dead.
  */
 export function takeLock(file, pid, seconds, maxSeconds, now = nowSeconds()) {
   const claim = () => writeLock(file, pid, seconds, 'wx');
   if (claim()) return true;
+
+  const stale = inode(file);
   if (lockHolder(file, maxSeconds, now)) return false;
-  releaseLock(file); // stale: drop it, then race on `wx` again so it still has one taker
+  if (stale === null || inode(file) !== stale) return false; // reclaimed by someone else already
+
+  releaseLock(file);
   return claim();
 }
 

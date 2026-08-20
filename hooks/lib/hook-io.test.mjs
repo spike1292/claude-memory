@@ -197,3 +197,19 @@ test('a lock claiming pid 0 holds nothing', () => {
   assert.strictEqual(lockHolder(f, 3600, 1000), null);
   assert.strictEqual(takeLock(f, process.pid, 1000, 3600, 1000), true, 'and is reclaimable');
 });
+
+// Reclaiming a stale lock is unlink-then-create, which is not atomic as a unit: without a guard,
+// the loser's unlink deletes the winner's fresh lock and it then claims the empty path, so both
+// callers believe they hold it. What is asserted here is the OUTCOME — a reclaimed lock is not
+// taken twice. The inode guard that narrows the interleaving has no deterministic test: it fires
+// only between another process's verdict and its unlink, which cannot be reached from a sequential
+// caller, and injecting a seam to reach it would be more machinery than the guard.
+test('a reclaimed lock cannot then be taken a second time', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+  writeLock(f, 0x7fffffff, now); // dead owner: stale, and therefore reclaimable
+
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true, 'the winner reclaims it');
+  assert.strictEqual(takeLock(f, 4242, now, 3600, now), false, 'the next caller does not');
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid, "the winner's lock survives");
+});
