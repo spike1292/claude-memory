@@ -11,6 +11,28 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`/memory:doctor --perf` — where the RAM, the disk and the milliseconds actually went.**
+  `doctor.sh` could say whether a thing was wired up; it could not answer the question this plugin
+  generates, since one `--serve` process holds a ~1.3 GB model, six of them once ran at once on a
+  16 GB machine, and onnxruntime's arena never gives memory back. The flag appends four sections:
+  every resident search server with its RSS, uptime and whether the model is currently loaded
+  (`modelIdleMs` unloads it and leaves the socket and indexes behind, so the two states are an
+  order of magnitude apart in RSS — 15 MB idle against 370 MB after a query, measured 2026-08-20 —
+  and the threshold sits at the midpoint rather than near either); the recall round trip, timed
+  twice, since a first query far above the second is an index loading on demand and not a slow
+  server; every index on the machine with its size, chunk and note counts, marked against the
+  active project and model, because an index on an inactive model is dead weight that every mode
+  except `--index` refuses to touch; and the disk split under `$CLAUDE_MEMORY_HOME`.
+  **Read-only is a hard rule here, not a preference**: it never starts a server, loads a model or
+  re-indexes, so `not measured: no socket` is a state rather than a fault, and a socket file
+  without a listener behind it — which outlives the process that bound it — reports as orphaned.
+  It is a flag on the existing command rather than a second one: the numbers are only readable next
+  to the wiring checks, and one paste is what an issue wants. Node rather than more bash because
+  every line of it loops. The index filename split is driven by the model keys from `MODELS`, not
+  by the last dash: both halves contain dashes (`semantic-github.com-spike1292-claude-memory-bge-m3.db`),
+  and a second copy of that list here would drift and silently mislabel every row. Closes #38.
+
+
 - **`hooks/vault-memory-sync.test.mjs` — a characterisation test for the one script the repo has
   always refused to touch.** 163 lines of bash that migrate `legacy_key` → `project_key`, move
   notes and repoint `~/.claude/projects/<slug>/memory`, with no test since the day it cost 24
