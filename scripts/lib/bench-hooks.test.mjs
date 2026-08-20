@@ -20,6 +20,7 @@ import {
 } from './bench-hooks.mjs';
 import { projectKey } from '../../hooks/lib/paths.mjs';
 import { resolveSlug } from '../../hooks/lib/semantic-index-refresh.mjs';
+import { gatePlan, MIN_MESSAGES } from '../../hooks/lib/distill-session.mjs';
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -106,11 +107,22 @@ test('makeFixture writes the note counts it was asked for', () => {
 });
 
 // The distiller's gate must say "trivial session"; a fixture transcript long enough to trip
-// MIN_MESSAGES would detach a headless `claude` on every iteration of the bench.
+// MIN_MESSAGES would detach a real worker on every iteration of the bench. Asserted through
+// gatePlan() itself rather than against a copied constant — the first version of this test
+// compared with STOP_MIN_MESSAGES (400), which SessionEnd never reaches, and so passed while the
+// row it guards was spawning.
 test('makeFixture keeps the transcript below the distiller threshold', () => {
   const root = tmp();
   const f = makeFixture(root, { slug: 'proj', notes: 3 });
-  assert.ok(fs.readFileSync(f.transcript, 'utf8').trim().split('\n').length < 400);
+  assert.ok(fs.readFileSync(f.transcript, 'utf8').trim().split('\n').length < MIN_MESSAGES);
+  const plan = gatePlan({
+    cwd: root,
+    hook_event_name: 'SessionEnd',
+    transcript_path: f.transcript,
+    session_id: 'bench',
+  });
+  assert.equal(plan.run, false);
+  assert.equal(plan.reason, 'trivial session');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

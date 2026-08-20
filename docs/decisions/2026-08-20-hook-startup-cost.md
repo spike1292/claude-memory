@@ -47,6 +47,13 @@ the same `projectKey()` and stat work. Without that it detaches a real `memory-s
 --index` child that loads the model, under a scratch root the bench then deletes. The row is
 unmoved by the change: 40.5 ms median on a re-run (n=20) against 40.0 ms in the table below.
 
+`distill-session` was the same mistake in the other direction: its gate applies the 400-line
+STOP_MIN_MESSAGES floor only to a Stop event, and on the SessionEnd payload this row sends the
+floor is MIN_MESSAGES (15), so a 40-line fixture transcript detached a worker every sample. The
+fixture is 10 lines, and the test asserts through `gatePlan()` rather than against a copied
+constant. Also unmoved: 41.1 ms median on the same re-run against 40.0 ms below — though the
+row's p90 of 173.6 ms in the first run was the spawn, and does not recur.
+
 A cloud-backed vault moves all of this substantially (SessionStart 798 ms vs 485 ms in the
 2026-08-17 record). These are the local-disk numbers and comparable only with other local-disk ones.
 

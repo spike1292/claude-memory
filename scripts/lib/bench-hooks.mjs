@@ -123,9 +123,11 @@ export function makeFixture(root, { slug, notes = 50 }) {
     );
 
   // A short transcript: long enough for the distiller's gate to stat and count it, short enough
-  // that the gate says "trivial session" instead of detaching a headless `claude`.
+  // that the gate says "trivial session" instead of detaching a headless `claude`. The floor is
+  // MIN_MESSAGES (15), not STOP_MIN_MESSAGES (400) — SessionEnd, which is what this row sends,
+  // skips the higher one, so 40 lines detached a real worker on every sample.
   const transcript = path.join(root, 'transcript.jsonl');
-  fs.writeFileSync(transcript, `${JSON.stringify({ role: 'user', content: 'hi' })}\n`.repeat(40));
+  fs.writeFileSync(transcript, `${JSON.stringify({ role: 'user', content: 'hi' })}\n`.repeat(10));
 
   return {
     vault,
