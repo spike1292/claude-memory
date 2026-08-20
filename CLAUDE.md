@@ -33,7 +33,7 @@ every user's version-pinned plugin cache to format code they will never edit.
 Bump the version in `package.json`'s scripts and in `.github/workflows/ci.yml` together.
 
 **Types are JSDoc, checked by `tsc --noEmit`, and there is still no build step.** `tsconfig.json`
-exists only for that check: `checkJs` + `strict` + `noUnusedLocals` over `hooks/`, `scripts/` and
+exists only for that check: `checkJs` + `strict` + both unused-symbol flags over `hooks/`, `scripts/` and
 `stubs/`, tests included. Source stays runnable `.mjs`, since `hooks.json` and `commands/*.md` name
 entry paths as a contract and a `dist/` would put a compiled file where both expect a source file.
 `tsc` is pinned and run via `npx` under the same devDependency rule as Prettier, and the check lives

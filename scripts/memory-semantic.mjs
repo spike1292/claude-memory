@@ -752,7 +752,7 @@ if (flag('--serve')) {
   /** @type {NodeJS.Timeout | null} */
   let modelIdle = null;
   const armModelIdle = () => {
-    clearTimeout(/** @type {NodeJS.Timeout} */ (modelIdle));
+    if (modelIdle) clearTimeout(modelIdle);
     modelIdle = setTimeout(async () => {
       // A request still holding the session (see singleFlight.borrow) means the unload declines.
       // Re-arm rather than give up: only a new connection calls bump(), so without this the model

@@ -328,7 +328,7 @@ jobs:
       - name: The type check covers every tracked .mjs
         run: |
           npm run typecheck --silent -- --listFiles > /tmp/listed.txt
-          grep -v '/node_modules/' /tmp/listed.txt | sed "s#^$PWD/##" | grep '\.mjs | sort -u > /tmp/checked.txt
+          grep -v '/node_modules/' /tmp/listed.txt | sed "s#^$PWD/##" | grep -E '[.]mjs$' | sort -u > /tmp/checked.txt
           git ls-files '*.mjs' | sort -u > /tmp/tracked.txt
           missing=$(comm -13 /tmp/checked.txt /tmp/tracked.txt)
           if [ -n "$missing" ]; then

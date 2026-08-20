@@ -29,8 +29,9 @@ at the commit before any annotation existed.
 | `strictNullChecks` alone | 80 |
 
 **`checkJs` alone found zero bugs.** All 34 were inference gaps, not defects: 14 `opts = {}` option
-bags inferred as `{}`, 7 `node:sqlite` `SQLOutputValue` unions that do not narrow, 3 `err.code` on
-`Error`, 3 `new Response(process.stdin)`, and 2 one-offs. A checker that finds nothing in six
+bags inferred as `{}`, 7 `node:sqlite` `SQLOutputValue` unions that do not narrow, 5 reads of a
+union return in `doctor-perf` that had no annotation to narrow it, 3 `err.code` on `Error`, 3
+`new Response(process.stdin)`, and 2 one-offs. A checker that finds nothing in six
 thousand lines is not an argument for adopting it retrospectively; its whole value is prospective.
 
 **The 15 unused-symbol diagnostics were all real** — 14 dead imports and one unused parameter. The
@@ -43,9 +44,9 @@ imports: `os`, `net` and `MODELS` in `scripts/memory-semantic.mjs`; `path`, `pat
 **Staged adoption was possible and was declined, not ruled out.** `strictNullChecks` without
 `noImplicitAny` is 80 diagnostics, 32 of them genuine null-safety codes (TS18047, TS2532, TS2531,
 TS18048) — real findings, reachable without writing a single parameter annotation. Full `strict`
-was taken anyway because it was what the issue asked for and because the staged path leaves ~384
-parameters implicitly `any` indefinitely, which is the state that made the null checking worth
-having in the first place. Anyone re-opening this should know the cheap door existed.
+was taken anyway because it was what the issue asked for and because the staged path leaves the 348
+parameters and binding elements that `strict` reports as implicitly `any` (TS7006, TS7031) that way
+indefinitely, which is the state that made the null checking worth having in the first place. Anyone re-opening this should know the cheap door existed.
 
 > An earlier draft of this record claimed that row was **1**, and argued from it that no partial
 > adoption was possible. That number came from a malformed `tsc` invocation whose single
@@ -84,8 +85,12 @@ One rule out of three does not pay for ESLint, oxlint or Biome.
 
 `tsc` is pinned and run through `npx`, never a devDependency, for the same reason Prettier is —
 Claude Code runs `npm ci` on plugin install, and a devDependency would ship into every user's
-version-pinned cache. The version is written in `package.json`'s scripts and in `ci.yml`; bump them
-together.
+version-pinned cache. Unlike Prettier, whose pin `ci.yml` also names, the `tsc` version lives in
+`package.json`'s scripts and nowhere else.
+
+A second step asserts that every tracked `.mjs` appears in what `tsc` actually checked, compared
+against `git ls-files` rather than a hardcoded number. An include glob that stops matching would
+otherwise make this check pass by checking nothing, which is a failure this repo has shipped twice.
 
 The check runs in the `install` job rather than `test`, because that is the only job that does a
 real `npm ci`. **`@types/node` is not a declared dependency** — it arrives transitively with

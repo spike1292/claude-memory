@@ -276,11 +276,17 @@ test('report survives a second probe that fails after the first succeeded', asyn
     }),
   );
   await /** @type {Promise<void>} */ (new Promise((r) => server.listen(sock, r)));
-  const ps = '  501 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
-  const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps });
-  assert.match(out, /\d+ ms first query/);
-  assert.match(out, /second not measured:/);
-  assert.doesNotMatch(out, /undefined/);
+  try {
+    const ps = '  501 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
+    const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps });
+    assert.match(out, /\d+ ms first query/);
+    assert.match(out, /second not measured:/);
+    assert.doesNotMatch(out, /undefined/);
+  } finally {
+    // The close above only runs if the FIRST probe answered. Without this, a failure there leaves
+    // the handle open and the runner hangs instead of reporting it.
+    if (server.listening) await new Promise((r) => server.close(r));
+  }
 });
 
 // Everything above feeds parseServers a synthetic listing, so nothing checked that the `ps` flags

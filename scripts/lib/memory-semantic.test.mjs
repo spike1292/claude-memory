@@ -818,7 +818,7 @@ test('assertVectorWidth reports a missing vector instead of throwing', () => {
           `const { assertVectorWidth } = await import(${JSON.stringify(mod)});` +
             `assertVectorWidth(${rows}, 4, 'probe');`,
         ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
       );
     } catch (err) {
       const e = /** @type {{ stdout?: string, stderr?: string }} */ (err);
