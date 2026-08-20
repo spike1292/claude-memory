@@ -396,7 +396,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
   became an uncaughtException *after* the pid had been returned and the hook had printed its line.
   It now returns the child pid (or `null`), which is what the lock above is written from.
 
-
 - **`reindex()` called a bare `which`, so every distillation aborted right after writing its notes
   — on unreleased `main` only.** #20 deleted `distill-session.mjs`'s local copy of `which` without
   adding an import; the ReferenceError killed the child after `writeNotes()` and before the ctx and

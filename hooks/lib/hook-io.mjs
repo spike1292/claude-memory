@@ -137,11 +137,16 @@ export function lockHolder(file, maxSeconds, now = nowSeconds()) {
   }
 }
 
-/** `wx` claims a lock that must not already exist; the default `w` hands an existing one over. */
-export function writeLock(file, pid, seconds, flag = 'w') {
+/**
+ * `wx` claims a lock that must not already exist; the default `w` hands an existing one over.
+ *
+ * `at` is a TIMESTAMP, and is named to match lockHolder's destructured `at` — `maxSeconds` next to
+ * it is a duration, and one edit blurring the two would silently change what "stale" means.
+ */
+export function writeLock(file, pid, at, flag = 'w') {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${pid} ${seconds}\n`, { flag });
+    fs.writeFileSync(file, `${pid} ${at}\n`, { flag });
     return true;
   } catch {
     return false; // a lock we cannot write degrades to the old behaviour: another run may start
@@ -181,8 +186,8 @@ const inode = (file) => {
  * a native `flock` binding, and the residual cost is one extra re-index in an interleaving of
  * microseconds that also requires the previous owner to be dead.
  */
-export function takeLock(file, pid, seconds, maxSeconds, now = nowSeconds()) {
-  const claim = () => writeLock(file, pid, seconds, 'wx');
+export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
+  const claim = () => writeLock(file, pid, at, 'wx');
   if (claim()) return true;
 
   const stale = inode(file);
