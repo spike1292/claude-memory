@@ -322,8 +322,16 @@ export async function report({
   return out.join('');
 }
 
-/** `ps` for every process on the machine. Failure is an empty listing, never a throw. */
-function readPs() {
+/**
+ * `ps` for every process on the machine. Failure is an empty listing, never a throw.
+ *
+ * Exported for one reason: a test runs the REAL `ps` on whatever platform it is on and checks that
+ * parseServers can find THIS process in the output. `-Ao pid=,rss=,etime=,command=` is POSIX, but a
+ * flag this platform did not like would not error here — it would return rows nothing matches, and
+ * the report would say "none running" with a server up. macOS (BSD ps) is covered by running it;
+ * that test is what covers the ubuntu CI runners.
+ */
+export function readPs() {
   try {
     return execFileSync('ps', ['-Ao', 'pid=,rss=,etime=,command='], {
       encoding: 'utf8',

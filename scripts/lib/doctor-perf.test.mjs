@@ -16,6 +16,7 @@ import {
   indexStats,
   probeSocket,
   report,
+  readPs,
 } from './doctor-perf.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'perf-'));
@@ -247,4 +248,24 @@ test('report measures the round trip when every server is warm', async () => {
   } finally {
     await new Promise((r) => server.close(r));
   }
+});
+
+// Everything above feeds parseServers a synthetic listing, so nothing checked that the `ps` flags
+// work on the platform running them. A wrong flag would not error — it would return rows nothing
+// matches, and the report would say "none running" while a server was up. This finds THIS process
+// in the real output, which pins the column ORDER as well as the shape.
+test('the ps flags produce rows this platform can parse', () => {
+  const out = readPs();
+  assert.ok(out.length > 0, 'ps produced no output at all');
+
+  const mine = out
+    .split('\n')
+    .map((l) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l))
+    .filter(Boolean)
+    .find((m) => Number(m[1]) === process.pid);
+
+  assert.ok(mine, `no row matched pid ${process.pid} — check the ps flags for this platform`);
+  assert.ok(Number(mine[2]) > 0, 'the rss column is not a size');
+  assert.match(mine[3], /^(\d+-)?(\d+:)?\d+:\d\d$/, 'the etime column is not an elapsed time');
+  assert.match(mine[4], /node/, 'the command column does not hold the command');
 });
