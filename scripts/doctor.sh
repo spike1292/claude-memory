@@ -13,18 +13,23 @@
 # `--stats[=DAYS]` appends the recall analytics report — inject/abstain rates, the reasons, score
 # and latency distributions, and which notes never surface. Unlike every other section here it
 # prints NOTE NAMES from the vault, so it is the one part of this report that is not safe to paste
-# into a public issue. Both are Node (scripts/doctor-perf.mjs),
-# because every line of them loops, and both are read-only.
+# into a public issue.
+# `--hooks[=DAYS]` appends the hook analytics report — per-hook invocation counts, duration
+# percentiles, the outcome breakdown, and how close each hook ran to the timeout hooks.json
+# declares for it. All three are Node (scripts/doctor-perf.mjs), because every line of them loops,
+# and all three are read-only.
 #
 # One entry point rather than a second command: the numbers are only readable next to the wiring
-# checks, and a paste of the whole thing is what an issue wants. Two FLAGS rather than one because
-# they answer different questions — "why is this slow" and "is this helping" — and combining them
-# would make the common case print a page nobody asked for.
+# checks, and a paste of the whole thing is what an issue wants. Separate FLAGS rather than one
+# because they answer different questions — "why is this slow", "is this helping" and "is this
+# alive" — and combining them would make the common case print a page nobody asked for.
 set -uo pipefail
 
 perf=0
 stats=0
 stats_arg=--stats
+hooks=0
+hooks_arg=--hooks
 for arg in "$@"; do
   case "$arg" in
     --perf) perf=1 ;;
@@ -36,7 +41,12 @@ for arg in "$@"; do
       stats=1
       stats_arg="$arg"
       ;;
-    *) echo "unknown option: $arg — usage: doctor.sh [--perf] [--stats[=DAYS]]"; exit 0 ;;
+    --hooks) hooks=1 ;;
+    --hooks=*)
+      hooks=1
+      hooks_arg="$arg"
+      ;;
+    *) echo "unknown option: $arg — usage: doctor.sh [--perf] [--stats[=DAYS]] [--hooks[=DAYS]]"; exit 0 ;;
   esac
 done
 
@@ -341,6 +351,19 @@ if [ "$stats" -eq 1 ]; then
   else
     echo
     warn "cannot report recall stats without node" "see the runtime section above."
+  fi
+fi
+
+if [ "$hooks" -eq 1 ]; then
+  # Reads the hook logs and hooks.json. Writes nothing and runs no hook: with no logs it reports
+  # "not measured" rather than firing one to produce some.
+  if command -v node >/dev/null 2>&1; then
+    echo
+    node --disable-warning=ExperimentalWarning "$ROOT/scripts/doctor-perf.mjs" "$PWD" "$hooks_arg" 2>&1 |
+      sed 's/^./  &/'
+  else
+    echo
+    warn "cannot report hook stats without node" "see the runtime section above."
   fi
 fi
 

@@ -15,6 +15,7 @@ import {
   DEBOUNCE_SECONDS,
   BUSY_MESSAGE,
   STALE_MESSAGE,
+  REASONS,
 } from './graph-staleness-check.mjs';
 import { readMarker } from './hook-io.mjs';
 
@@ -129,7 +130,10 @@ test('check takes the lock, hands it to the child, and the next session stands d
     // failing one leaks the stand-in `claude` for its full sleep.
     const first = check(cwd, { vaultRoot });
     try {
-      assert.ok(first.includes(STALE_MESSAGE), 'the session that wins says it is regenerating');
+      assert.ok(
+        first.line.includes(STALE_MESSAGE),
+        'the session that wins says it is regenerating',
+      );
       assert.ok(readMarker(marker) > 0, 'and the 24h per-repo debounce is now set');
 
       const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
@@ -140,11 +144,19 @@ test('check takes the lock, hands it to the child, and the next session stands d
       // debounce has nothing to say here — only the machine-wide lock stops it.
       const other = staleRepo();
       staleReport(other, vaultRoot);
-      assert.ok(check(other, { vaultRoot }).includes(BUSY_MESSAGE), 'no second re-index starts');
+      assert.ok(
+        check(other, { vaultRoot }).line.includes(BUSY_MESSAGE),
+        'no second re-index starts',
+      );
     } finally {
       const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
       try {
-        process.kill(pid, 'SIGKILL');
+        // The GROUP, not the pid. What the lock holds is hooks/log-worker.mjs — the supervisor
+        // that exists so the background run gets a log line of its own — and the stand-in `claude`
+        // is its child, not its process. `detach()` spawns the supervisor with setsid, so it is
+        // the group leader and one negative pid takes both; killing the pid alone would leave a
+        // 30-second sleep behind.
+        process.kill(-pid, 'SIGKILL');
       } catch {
         /* already gone, or never spawned */
       }
@@ -155,4 +167,27 @@ test('check takes the lock, hands it to the child, and the next session stands d
     // which exits immediately and lets init reap, sees it disappear. That branch is covered
     // directly in hook-io.test.mjs ('a lock whose owner died is reclaimed').
   });
+});
+
+test('check names the reason it stayed silent, so a guard is not read as a miss', () => {
+  const prev = process.env.CBM_GRAPHGEN_CHILD;
+  process.env.CBM_GRAPHGEN_CHILD = '1';
+  try {
+    const r = check(process.cwd());
+    // The background regeneration fires SessionStart itself. Without an outcome, its own suppressed
+    // run and a session where the report was simply fresh are the same empty line.
+    assert.strictEqual(r.line, '');
+    assert.strictEqual(r.outcome, 'child-guard');
+    assert.strictEqual(r.reason, REASONS.child, 'the constant plan() returns, not a copy of it');
+  } finally {
+    if (prev === undefined) delete process.env.CBM_GRAPHGEN_CHILD;
+    else process.env.CBM_GRAPHGEN_CHILD = prev;
+  }
+});
+
+test('no report yet is a decision, not a missing dependency', () => {
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'graphvault-'));
+  const r = check(process.cwd(), { vaultRoot });
+  assert.strictEqual(r.outcome, 'ran');
+  assert.strictEqual(r.reason, 'no report yet');
 });

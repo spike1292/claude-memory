@@ -9,6 +9,61 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`/memory:doctor --hooks` — what every hook did, and how long it took.** Nine hook invocations
+  fire per session and none of them recorded anything, so a hook that has been permanently dead
+  since a dependency vanished looked exactly like a healthy one: both exit 0 and print nothing.
+  Every Node hook now appends one line per invocation to a daily-dated `hooks-*.jsonl` beside the
+  recall logs — hook, event, elapsed ms, an outcome from a closed set (`ran`, `spawned`,
+  `debounced`, `child-guard`, `noop-missing-dep`, `error`), a short reason, and the session id. The
+  new flag aggregates the last 7 files and reports invocation counts, p50/p95/max duration per hook,
+  the outcome breakdown, and how many invocations ran at or past **half** their declared timeout.
+  The timeouts are read from `hooks/hooks.json` at run time and are written down nowhere else, so
+  they cannot drift. `--hooks=30` widens the window. Read-only in the same hard sense as `--perf`
+  and `--stats`: it runs no hook, starts nothing, writes no file, and reports an absent log as
+  "not measured".
+  The `logs/` directory is machine-wide, so the report is **scoped to the project it is run from**
+  and says how many invocations in the window belonged to others. Unlike `--stats` it prints no note
+  names, though it does print the project slug — the normalised git remote — which names a private
+  repo.
+  Two limits it states in its own output rather than leaving to be discovered: a hook killed at its
+  timeout is killed by a signal and writes no line, so **a real breach is invisible** and the
+  near-timeout column counts only how close the survivors ran; and a headless `claude` run fires
+  SessionStart itself, so lines written inside one are flagged and counted separately from lines a
+  session produced.
+  ([#46](https://github.com/spike1292/claude-memory/issues/46))
+- **A worker line for two of the three detached hooks.** `distill-session` and
+  `semantic-index-refresh` decide in milliseconds and hand the real work to a detached child, so
+  their own elapsed time measures a gate and never the work. Each now writes a second line — same
+  session id, `event: worker` — when the background run finishes, carrying its real duration and
+  whether it failed. It comes from one supervisor (`hooks/log-worker.mjs`) that `detach({ worker })`
+  puts in front of the command.
+  **`graph-staleness-check` deliberately does not get one.** The pid written into `graphgen.lock`
+  has to be a process that lives exactly as long as the work does, because `lockHolder()` frees a
+  lock whose pid is dead. A supervisor breaks that: lose it to a crash or an OOM and the headless
+  `claude` regenerates on as an orphan while the lock reads as free, so the next session starts a
+  second concurrent re-index — the one thing that lock exists to prevent. The report names the gap
+  rather than leaving it to be discovered.
+  The supervisor also re-checks that the real command is executable before wrapping it: it rewrites
+  the command to `node`, which always spawns, and that would have turned a `claude` binary gone
+  non-executable into a truthy pid — muting a stale repo for 24 h as if a regeneration had run.
+
+  Measured with `node scripts/bench-hooks.mjs -n 40 --notes 50` before and after: **+1.5 to +3.6 ms
+  per hook** at the median, against a 31.5 ms bare-node floor. A disarmed recall is unchanged
+  (36.7 → 35.7 ms) because nothing is logged above the arming gate, and an armed one is flat at the
+  median despite writing two lines, since it had already resolved the project key and paid one
+  append. The one new cost worth naming: `validate-note` did not previously resolve a project key,
+  so the first Write in a repo whose key cache is cold forks git once (~40 ms) into a cache every
+  later hook reads.
+
+### Changed
+
+- **Recall's inline JSONL appender is gone; it writes through the shared one.** Its records are
+  unchanged — same field names, same order, same rule that an absent key means "not measured"
+  rather than zero — and `--stats` reads exactly what it read before. Recall additionally writes a
+  hook line, but only when it is armed: an inert feature must not cost every prompt a file append.
+
 ## [0.5.0] - 2026-08-20
 
 ### Added

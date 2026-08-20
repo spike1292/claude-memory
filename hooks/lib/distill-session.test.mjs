@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
   gatePlan,
+  gateOutcome,
+  GATE_REASONS,
   MIN_MESSAGES,
   STOP_MIN_MESSAGES,
   STOP_DEBOUNCE_SECONDS,
@@ -461,4 +463,28 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     );
   // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
+});
+
+test('gateOutcome tells a guard from a decision from a debounce', () => {
+  // These are the three states that look identical from outside the hook: it exited 0 and printed
+  // nothing. Which one it was is the difference between "working as designed" and "off for weeks".
+  // Through the CONSTANTS, not through literals: gatePlan() and gateOutcome() have to agree, and a
+  // test written against a copy of the string cannot see them stop agreeing.
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.child }), 'child-guard');
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.stopActive }), 'child-guard');
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.debounced }), 'debounced');
+  // And end to end for the one branch that needs no fixture, so the wiring itself is exercised.
+  process.env.CLAUDE_DISTILL_CHILD = '1';
+  try {
+    assert.strictEqual(gateOutcome(gatePlan({})), 'child-guard');
+  } finally {
+    delete process.env.CLAUDE_DISTILL_CHILD;
+  }
+  assert.strictEqual(gateOutcome({ run: false, reason: 'trivial session' }), 'ran');
+  assert.strictEqual(gateOutcome({ run: false, reason: 'transcript missing' }), 'ran');
+  assert.strictEqual(
+    gateOutcome({ run: true, transcript: '/t', marker: '/m', now: 1, lines: 60 }),
+    'spawned',
+    'the gate never claims to have done the work — the worker line says that',
+  );
 });

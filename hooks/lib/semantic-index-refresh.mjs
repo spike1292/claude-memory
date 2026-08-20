@@ -18,6 +18,15 @@ import path from 'node:path';
 import { vault, projectKey, legacyKey, stateDir, scriptsDir, pluginRoot } from './paths.mjs';
 import { detach, logBanner } from './hook-io.mjs';
 
+// The reasons are constants because outcomeOf() below decides on them. Two literals — one here,
+// one there — is a drift that no test written against a literal can see: reword this string and a
+// dead dependency starts reporting as a healthy hook, with the suite green.
+export const REASONS = {
+  noVault: 'no vault memory for this project',
+  noScript: 'indexer script missing',
+  noRuntime: 'embedding runtime not installed',
+};
+
 /**
  * @typedef {{ run: false, reason: string, warn?: string }} SkipPlan
  * @typedef {{ run: true, slug: string, script: string, args: string[], logFile: string }} RunPlan
@@ -82,10 +91,10 @@ export function runtimeInstalled(root = pluginRoot) {
  */
 export function plan(cwd, { vaultRoot = vault() } = {}) {
   const slug = resolveSlug(cwd, vaultRoot);
-  if (!slug) return { run: false, reason: 'no vault memory for this project' };
+  if (!slug) return { run: false, reason: REASONS.noVault };
 
   const script = path.join(scriptsDir, 'memory-semantic.mjs');
-  if (!fs.existsSync(script)) return { run: false, reason: 'indexer script missing' };
+  if (!fs.existsSync(script)) return { run: false, reason: REASONS.noScript };
 
   // The embedding runtime is an npm install, and Claude Code's plugin auto-install skips lifecycle
   // scripts — so onnxruntime-node's native binary may be missing even when the package dir exists.
@@ -93,7 +102,7 @@ export function plan(cwd, { vaultRoot = vault() } = {}) {
   if (!runtimeInstalled())
     return {
       run: false,
-      reason: 'embedding runtime not installed',
+      reason: REASONS.noRuntime,
       warn: '⚠ memory: embedding runtime not installed — semantic recall is off. Run /memory:install',
     };
 
@@ -117,15 +126,34 @@ export function plan(cwd, { vaultRoot = vault() } = {}) {
  *
  * @param {string} cwd
  * @param {Date} [now]
+ * @param {string} [session]
  * @returns {RefreshPlan}
  */
-export function refresh(cwd, now = new Date()) {
+export function refresh(cwd, now = new Date(), session) {
   const p = plan(cwd);
   if (!p.run) {
     if (p.warn) console.error(p.warn);
     return p;
   }
   logBanner(p.logFile, p.slug, now.toISOString().replace(/\.\d+Z$/, 'Z'));
-  detach(process.execPath, p.args, { cwd, logFile: p.logFile });
+  detach(process.execPath, p.args, {
+    cwd,
+    logFile: p.logFile,
+    worker: { hook: 'semantic-index-refresh', session },
+  });
   return p;
+}
+
+// A hook that is permanently dead because its runtime was never installed must not read as a hook
+// that ran and found nothing to do — that is the whole point of logging an outcome rather than a
+// duration. These are the same objects plan() returns, not copies of their text.
+const MISSING_DEP = new Set([REASONS.noRuntime, REASONS.noScript]);
+
+/**
+ * @param {RefreshPlan} p
+ * @returns {import('./hook-io.mjs').HookOutcome}
+ */
+export function outcomeOf(p) {
+  if (p.run) return 'spawned';
+  return MISSING_DEP.has(p.reason) ? 'noop-missing-dep' : 'ran';
 }

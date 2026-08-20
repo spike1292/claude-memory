@@ -44,7 +44,20 @@ import {
  *   logFile: string,
  * }} RegenPlan
  * @typedef {SilentPlan | NudgePlan | RegenPlan} GraphPlan
+ * @typedef {{
+ *   line: string,
+ *   outcome: import('./hook-io.mjs').HookOutcome,
+ *   reason?: string,
+ * }} CheckResult
  */
+
+// Constants because outcomeOf() decides on them. A reworded literal here and a stale literal there
+// silently turns a missing `claude` back into an indistinguishable "ran".
+export const REASONS = {
+  child: 'child run',
+  debounced: 'debounced',
+  noClaude: 'no claude CLI',
+};
 
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
 
@@ -137,7 +150,7 @@ export function reportFor(cwd, vaultRoot = vault()) {
  * @returns {GraphPlan}
  */
 export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
-  if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: 'child run' };
+  if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: REASONS.child };
 
   const { slug, report } = reportFor(cwd, vaultRoot);
   // Never auto-generate the FIRST report: that is a minutes-long unattended run the user never
@@ -160,10 +173,10 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
 
   const marker = markerPath(`graphgen-${slug}`);
   if (withinDebounce(readMarker(marker), DEBOUNCE_SECONDS, now))
-    return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'debounced', slug };
+    return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.debounced, slug };
 
   const claude = findClaude();
-  if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'no claude CLI', slug };
+  if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.noClaude, slug };
 
   return {
     action: 'regen',
@@ -193,16 +206,26 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * point this at a scratch vault instead of the real one — a check() that could only read the live
  * vault could not be tested at all, and this is the half with the lock sequence in it.
  *
+ * This is the ONE detached hook that does NOT run under hooks/log-worker.mjs, and the reason is
+ * the lock. `lockHolder()` frees a lock whose pid is dead, so the pid written into `graphgen.lock`
+ * has to be a process that lives exactly as long as the work does. A supervisor breaks that: kill
+ * it, or lose it to an OOM, and the headless `claude` keeps regenerating as an orphan while the
+ * lock reads as free — so the next session starts a SECOND concurrent re-index, which is the one
+ * thing this lock exists to prevent. A worker line is worth less than that, so this hook is
+ * observed at its gate only and `--hooks` says so.
+ *
+ *
  * @param {string} cwd
  * @param {PlanOptions} [opts]
- * @returns {string}
+ * @returns {CheckResult}
  */
 export function check(cwd, opts) {
   const p = plan(cwd, opts);
-  if (p.action === 'silent') return '';
-  if (p.action === 'nudge') return systemMessage(p.message);
+  if (p.action === 'silent') return { line: '', outcome: outcomeOf(p), reason: p.reason };
+  if (p.action === 'nudge')
+    return { line: systemMessage(p.message), outcome: outcomeOf(p), reason: p.reason };
   if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
-    return systemMessage(BUSY_MESSAGE);
+    return { line: systemMessage(BUSY_MESSAGE), outcome: 'ran', reason: 'lock held elsewhere' };
 
   const pid = detach(
     p.claude,
@@ -214,7 +237,7 @@ export function check(cwd, opts) {
   // and writing it first meant a failed spawn muted this repo for 24h as if a regen had happened.
   if (!pid) {
     releaseLock(p.lock);
-    return systemMessage(NUDGE_MESSAGE);
+    return { line: systemMessage(NUDGE_MESSAGE), outcome: 'error', reason: 'spawn failed' };
   }
   writeMarker(p.marker, p.now);
   // The handover is the one write whose failure is WORSE than not locking at all: the file would
@@ -229,5 +252,18 @@ export function check(cwd, opts) {
       `LOCK HANDOVER FAILED (child ${pid}) — another session may start a second re-index`,
       new Date().toISOString(),
     );
-  return systemMessage(p.message);
+  return { line: systemMessage(p.message), outcome: 'spawned', reason: p.slug };
+}
+
+/**
+ * @param {SilentPlan | NudgePlan} p
+ * @returns {import('./hook-io.mjs').HookOutcome}
+ */
+function outcomeOf(p) {
+  if (p.reason === REASONS.child) return 'child-guard';
+  if (p.reason === REASONS.debounced) return 'debounced';
+  // A missing `claude` CLI is the one dependency this hook has, and losing it is invisible from
+  // outside: the nudge it prints instead is the same nudge a debounced run prints.
+  if (p.reason === REASONS.noClaude) return 'noop-missing-dep';
+  return 'ran';
 }

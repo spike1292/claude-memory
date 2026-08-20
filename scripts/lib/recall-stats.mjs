@@ -32,17 +32,21 @@ export const DEFAULT_DAYS = 7;
 const TOP_N = 10;
 
 /**
- * The daily log files in the window, oldest first.
+ * The daily log files of one family, oldest first.
  *
- * The window is counted in FILES, not in days elapsed: names are dated and recall only writes a
+ * The window is counted in FILES, not in days elapsed: names are dated and a family only gets a
  * file on a day it ran, so "the last 7 files" is the last 7 days recall was armed. Nothing here
  * reads the clock — a machine that has been off for a month still reports its last week of use.
  *
+ * `family` is a parameter because the hook log (scripts/lib/hook-stats.mjs) is the same shape read
+ * the same way; a second copy of this and of readLines() below is how the two would drift.
+ *
  * @param {string} dir
  * @param {number} [days]
+ * @param {string} [family]
  * @returns {string[]}
  */
-export function logFiles(dir, days = DEFAULT_DAYS) {
+export function logFiles(dir, days = DEFAULT_DAYS, family = 'recall') {
   let names;
   try {
     names = fs.readdirSync(dir);
@@ -50,7 +54,7 @@ export function logFiles(dir, days = DEFAULT_DAYS) {
     return [];
   }
   return names
-    .filter((f) => /^recall-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+    .filter((f) => new RegExp(`^${family}-\\d{4}-\\d{2}-\\d{2}\\.jsonl$`).test(f))
     .sort()
     .slice(-Math.max(1, days))
     .map((f) => path.join(dir, f));

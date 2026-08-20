@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { stateDir } from './paths.mjs';
+import { stateDir, hooksDir, projectKey } from './paths.mjs';
 
 /** Claude Code sends hook input as one JSON object on stdin. A hook must never die on bad input. */
 export function readStdin() {
@@ -327,10 +327,20 @@ function openLog(file) {
  *
  * Returns the child pid, or null. The pid is what a caller writes into its lock file.
  *
+ * `worker` puts hooks/log-worker.mjs in front of the command, so the BACKGROUND run gets a log
+ * line of its own. Without it a heavy hook is only ever observed at its gate: the gate decides in
+ * milliseconds and exits, and how long the distillation, the re-index or the headless graph regen
+ * actually took — or that it died — is recorded nowhere. One supervisor covers all three, including
+ * the one whose worker is the `claude` binary and cannot be instrumented from the inside.
+ *
+ * The pid returned is then the supervisor's, which is the pid a caller wants anyway: it is alive
+ * for as long as the work is, where the old one was a process that may have exited long before.
+ *
  * @typedef {object} DetachOptions
  * @property {Record<string, string|undefined>} [env]
  * @property {string} [cwd]
  * @property {string} [logFile]
+ * @property {{ hook: string, session?: string }} [worker]
  */
 
 /**
@@ -339,8 +349,41 @@ function openLog(file) {
  * @param {DetachOptions} [opts]
  * @returns {number|null}
  */
-export function detach(cmd, args, { env, cwd, logFile } = {}) {
+export function detach(cmd, args, { env, cwd, logFile, worker } = {}) {
   const fd = logFile ? openLog(logFile) : null;
+  if (worker) {
+    // The supervisor would otherwise MASK a command that cannot start. `spawn` reports a missing
+    // or non-executable binary asynchronously, so before this wrapper existed the caller learned
+    // about it through a null pid — and graph-staleness-check.mjs uses exactly that to release its
+    // lock and NOT write a 24h marker. Wrapped, `process.execPath` always spawns, the pid is always
+    // truthy, and a repo whose `claude` had been chmod'd 0644 would go quiet for a day as if a
+    // regeneration had happened. Checking here restores the signal at the moment it is acted on;
+    // `findClaude()` checks at plan time, which is a different moment.
+    //
+    // ponytail: an X_OK check, not an exec. It does not see an exec-format error, or a binary
+    // deleted in the microseconds after it — the supervisor's own line reports those as `error`,
+    // minutes later.
+    try {
+      fs.accessSync(cmd, fs.constants.X_OK);
+    } catch {
+      if (logFile) logBanner(logFile, `cannot execute ${cmd}`, new Date().toISOString());
+      if (fd != null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* nothing else holds it */
+        }
+      }
+      return null;
+    }
+    args = [
+      path.join(hooksDir, 'log-worker.mjs'),
+      JSON.stringify({ ...worker, cwd }),
+      cmd,
+      ...args,
+    ];
+    cmd = process.execPath;
+  }
   try {
     const child = spawn(cmd, args, {
       cwd,
@@ -445,6 +488,125 @@ export function logBanner(file, label, iso) {
   } catch {
     /* best effort */
   }
+}
+
+// ---------------------------------------------------------------- structured logs
+//
+// One appender, one shape, two families: `recall-<date>.jsonl` (what recall decided) and
+// `hooks-<date>.jsonl` (what every hook did). Recall's copy was inline in its entry and was the
+// only structured log in the system; this is that copy, moved, and the reason the second family
+// costs eight lines instead of eighty.
+//
+// Dated filenames ARE the rotation. A size cap would be the second mechanism for the same job, and
+// the recall logs have settled the question already: a day is the unit anyone reads these in.
+//
+// Nothing here is allowed to throw, and nothing here is allowed to be slow — every call sits on a
+// path that must exit in milliseconds, and one of them is per-prompt.
+//
+// It is not free, and the number comes from `node scripts/bench-hooks.mjs -n 40 --notes 50` run
+// before and after, not from a hand-timed loop — synthetic vault, local disk, macOS, 2026-08-20.
+// Medians, ms: insights-surface 41.3 -> 42.8, memory-link-lint 41.9 -> 45.5,
+// semantic-index-refresh 36.1 -> 39.7, graph-staleness-check 36.7 -> 40.3, validate-note
+// 41.1 -> 43.0, distill-session gate 36.9 -> 38.7. So **+1.5 to +3.6 ms per hook**, against a 31.5
+// ms bare-node floor.
+//
+// Two of those rows are the design being confirmed rather than measured. `memory-recall (inert)`
+// moved 36.7 -> 35.7 — no line is written at all when recall is disarmed, which is the whole point
+// of logging below the arming gate rather than above it. And `memory-recall (armed)` is flat at
+// the median (70.3 vs 73.2 over 30 runs of that row alone) even though it now writes TWO lines,
+// because it had already resolved `projectKey` and paid one append.
+//
+// The write is the cost and there is nothing else to cut: `stateDir()`'s mkdir is 0.015 ms and
+// `projectKey()` on an already-resolved cwd is 0.0002 ms. A cwd whose key is NOT yet cached forks
+// git once (~40 ms), which validate-note did not previously pay — once per repo, on the first
+// Write, into a cache every other hook in the session then reads.
+
+/**
+ * Append one record to a daily-dated log family under `$CLAUDE_MEMORY_HOME/logs/`.
+ *
+ * The record is stamped with an ISO timestamp and the project slug and written verbatim after
+ * them, so a caller controls every field and their order. `slug` is the scoping key: the logs are
+ * MACHINE-WIDE — every project appends to the same daily file — and a reader that ignored it would
+ * report one project's numbers against another's (measured for recall, 5 slugs in one 7-file
+ * window).
+ *
+ * An unresolvable key logs `null` rather than throwing or guessing; `projectKey` memoises per
+ * process, so a caller that already resolved it pays nothing here.
+ *
+ * @param {string} family
+ * @param {string | undefined} cwd
+ * @param {Record<string, unknown>} record
+ */
+export function appendJsonl(family, cwd, record) {
+  try {
+    const t = new Date().toISOString();
+    /** @type {string | null} */
+    let slug = null;
+    try {
+      slug = projectKey(cwd);
+    } catch {
+      /* no repo, or a key we cannot resolve — the line is still worth writing */
+    }
+    fs.appendFileSync(
+      path.join(stateDir('logs'), `${family}-${t.slice(0, 10)}.jsonl`),
+      JSON.stringify({ t, slug, ...record }) + '\n',
+    );
+  } catch {
+    /* a log that cannot be written must never fail or delay a hook */
+  }
+}
+
+/**
+ * The closed set of hook outcomes.
+ *
+ * The point of the set is that a hook which did nothing is DISTINGUISHABLE from one that ran —
+ * hooks are best-effort and degrade silently by design, so a permanently dead hook and a healthy
+ * one look identical from outside. `spawned` is a gate line only: it says the work was handed to a
+ * detached child, whose own line arrives later under the same session id.
+ *
+ * @typedef {'ran' | 'noop-missing-dep' | 'debounced' | 'child-guard' | 'spawned' | 'error'} HookOutcome
+ */
+
+/**
+ * @typedef {{
+ *   hook: string,
+ *   event?: string,
+ *   cwd?: string,
+ *   session?: string,
+ *   outcome: HookOutcome,
+ *   reason?: unknown,
+ * }} HookLogInput
+ */
+
+/**
+ * One line per hook invocation.
+ *
+ * `ms` is `performance.now()`, which is measured from PROCESS START and not from the top of the
+ * hook — the same reasoning recall's own line documents. A hook's timeout in `hooks.json` applies
+ * to the whole process, so node's startup and the entry's static import graph have to be inside
+ * the number for a near-miss to mean anything.
+ *
+ * @param {HookLogInput} input
+ */
+export function logHook({ hook, event = '', cwd, session, outcome, reason }) {
+  // The heavy hooks spawn a headless `claude`, which fires SessionStart and so runs FOUR of these
+  // hooks again, plus validate-note per write it makes. Their `*_CHILD` guards suppress only their
+  // own hook, so without this flag a distillation's four extra lines are indistinguishable from a
+  // user session's — inflating counts and skewing percentiles with a run whose vault state and
+  // cache warmth are nothing like a real session's. Marked rather than suppressed: what a hook
+  // costs inside a background run is a real number, it is just not the same number.
+  const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
+  appendJsonl('hooks', cwd, {
+    hook,
+    event,
+    ms: +performance.now().toFixed(1),
+    outcome,
+    ...(child ? { child: true } : {}),
+    // Omitted rather than null when absent, so a reader can tell "not recorded" from "recorded as
+    // empty" — the same omission rule recall's records already follow.
+    ...(reason == null || reason === '' ? {} : { reason: String(reason).slice(0, 200) }),
+    ...(session ? { session } : {}),
+  });
 }
 
 /**

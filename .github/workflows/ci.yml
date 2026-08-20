@@ -169,6 +169,11 @@ jobs:
               # hooks/lib/env-shell.mjs beside paths.mjs. A scripts/lib/env.mjs would file
               # hook-resolution infra under scripts/, split from the module it exists to serve.
               scripts/env.mjs) continue ;;
+              # log-worker.mjs is not an entry: nothing in hooks.json points at it. It is the
+              # supervisor detach() puts in front of background work so the worker gets a log line,
+              # and it is 20 lines of spawn-wait-log. A lib/ twin would be a module whose only
+              # caller is a file shorter than it.
+              hooks/log-worker.mjs) continue ;;
             esac
             echo "::error file=$f::no lib/ twin — move the logic into $d/lib/$b and leave argv/stdin/stdout in the entry, or allowlist $f in this step with a stated reason"
             rc=1

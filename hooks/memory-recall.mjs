@@ -36,7 +36,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { detach } from './lib/hook-io.mjs';
+import { appendJsonl, detach, logHook } from './lib/hook-io.mjs';
 import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
 import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memory-recall.mjs';
 
@@ -44,12 +44,44 @@ import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memo
 // user's call:  {"recall": true} in $CLAUDE_MEMORY_HOME/config.json, or MEMORY_RECALL_ENABLED=1.
 if (!recallEnabled()) process.exit(0);
 
+// One line per ARMED invocation, in the `hooks` family, beside the decision line this hook has
+// always written in the `recall` family. Two lines because they answer two questions: the recall
+// line is about retrieval quality, this one is about the hook as a hook — how long the whole
+// process took against its 10 s timeout, and whether it reached a decision at all.
+//
+// Registered on `exit` rather than called at each return, because this file exits from four
+// places and the paths that exit EARLIEST (a prompt below MIN_PROMPT, an unparseable payload) are
+// exactly the ones no decision line covers. A disarmed session writes nothing at all: recall ships
+// inert, and an inert feature must not cost every prompt of every user a file append.
+/** @type {import('./lib/hook-io.mjs').HookOutcome} */
+let outcome = 'ran';
+/** @type {string | undefined} */
+let hookReason;
+/** @type {{ cwd?: string, session?: string, event?: string }} */
+const ctx = {};
+process.on('exit', () =>
+  logHook({
+    hook: 'memory-recall',
+    event: ctx.event ?? '',
+    cwd: ctx.cwd,
+    session: ctx.session,
+    outcome,
+    reason: hookReason,
+  }),
+);
+
 try {
   const raw = fs.readFileSync(0, 'utf8');
   const payload = JSON.parse(raw || '{}');
   const prompt = (payload.prompt || '').trim();
   const cwd = payload.cwd || process.cwd();
-  if (prompt.length < MIN_PROMPT) process.exit(0);
+  ctx.cwd = cwd;
+  ctx.session = payload.session_id;
+  ctx.event = payload.hook_event_name;
+  if (prompt.length < MIN_PROMPT) {
+    hookReason = 'prompt shorter than MIN_PROMPT';
+    process.exit(0);
+  }
 
   const slug = projectKey(cwd);
   // Indexes are per-model, so the DB name depends on the active model. Recall reads chunk TEXT and
@@ -62,27 +94,21 @@ try {
   const model = activeModel();
   const dbPath = path.join(stateDir('db'), `semantic-${slug}-${model}.db`);
 
-  const logDir = stateDir('logs');
   const runDir = stateDir('run');
+  // The appender is shared with every other hook (hooks/lib/hook-io.mjs) and stamps `t` and `slug`;
+  // everything after them is this record, in this order, unchanged since the log began. It swallows
+  // its own errors — logging must never break the prompt either.
   const log = (/** @type {import('./lib/memory-recall.mjs').LogEntry} */ entry) => {
-    try {
-      fs.appendFileSync(
-        path.join(logDir, `recall-${new Date().toISOString().slice(0, 10)}.jsonl`),
-        JSON.stringify({
-          t: new Date().toISOString(),
-          slug,
-          ...entry,
-          // `performance.now()` is measured from process start, NOT from here, and that is the
-          // point: a prompt waits for the whole process, so node's own startup and this file's
-          // static import graph — ~40 ms of the budget — are inside the number. A clock started
-          // at the top of this try would have excluded exactly the part nobody can see. Read it
-          // against the 700 ms socket timeout, which it contains rather than sits beside.
-          ms: +performance.now().toFixed(1),
-        }) + '\n',
-      );
-    } catch {
-      /* logging must never break the prompt either */
-    }
+    hookReason = entry.abstained ? `abstained: ${entry.reason ?? ''}`.trim() : 'injected';
+    appendJsonl('recall', cwd, {
+      ...entry,
+      // `performance.now()` is measured from process start, NOT from here, and that is the
+      // point: a prompt waits for the whole process, so node's own startup and this file's
+      // static import graph — ~40 ms of the budget — are inside the number. A clock started
+      // at the top of this try would have excluded exactly the part nobody can see. Read it
+      // against the 700 ms socket timeout, which it contains rather than sits beside.
+      ms: +performance.now().toFixed(1),
+    });
   };
 
   // The log is defined BEFORE the first exit on purpose. It used to sit after the missing-DB check,
@@ -161,6 +187,10 @@ try {
   const fromKeyword = keywordArm(cards, prompt);
   log(fromKeyword.entry);
   if (fromKeyword.output) console.log(fromKeyword.output);
-} catch {
+} catch (e) {
+  outcome = 'error';
+  // With no reason this line reads as "the hook threw", which is how a malformed payload — bad
+  // input, not a fault — was being reported. The message is the only thing that tells them apart.
+  hookReason = String(/** @type {Error} */ (e)?.message ?? e);
   process.exit(0); // fail-open, always
 }

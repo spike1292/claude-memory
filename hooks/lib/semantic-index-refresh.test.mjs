@@ -5,7 +5,13 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSlug, runtimeInstalled, plan } from './semantic-index-refresh.mjs';
+import {
+  resolveSlug,
+  runtimeInstalled,
+  plan,
+  outcomeOf,
+  REASONS,
+} from './semantic-index-refresh.mjs';
 import { legacyKey } from './paths.mjs';
 
 const vaultWith = (/** @type {readonly string[]} */ dirs) => {
@@ -49,4 +55,22 @@ test('runtimeInstalled DEREFERENCES a symlinked node_modules', () => {
 
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-bare-'));
   assert.strictEqual(runtimeInstalled(bare), false);
+});
+
+test('outcomeOf separates a missing dependency from a quiet decision', () => {
+  // The whole point of the outcome field. An install whose embedding runtime never finished is
+  // permanently doing nothing, and it exits 0 and prints the same nothing as a project that simply
+  // has no vault memory yet.
+  // Through the CONSTANTS plan() itself returns. A test holding its own copy of the string cannot
+  // see plan() and outcomeOf() stop agreeing — the drift would just quietly report `ran`.
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noRuntime }), 'noop-missing-dep');
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noScript }), 'noop-missing-dep');
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noVault }), 'ran');
+  // And end to end: an empty vault root reaches the noVault branch through plan(), not a literal.
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-empty-'));
+  assert.strictEqual(outcomeOf(plan(process.cwd(), { vaultRoot: empty })), 'ran');
+  assert.strictEqual(
+    outcomeOf({ run: true, slug: 's', script: '/x', args: [], logFile: '/l' }),
+    'spawned',
+  );
 });

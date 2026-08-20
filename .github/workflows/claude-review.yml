@@ -73,6 +73,15 @@ jobs:
                a dependency is missing; `validate-note.sh` warns and never blocks; heavy
                hooks detach, debounce, and guard against recursing into themselves via a
                `*_CHILD` variable.
+               Every hook logs one line per invocation through `logHook()` in
+               `hooks/lib/hook-io.mjs`, which is the ONLY JSONL appender in the repo —
+               flag a second one, a log write that can throw or block a hook, a
+               size cap added to what dated filenames already rotate, and any hook
+               timeout written down outside `hooks/hooks.json` (the reader parses
+               the manifest at run time so the two cannot drift). A `reason:` string
+               that an outcome mapper compares against is a shared constant, never a
+               literal copied into the mapper — the copy drifts silently and its test
+               stays green.
             5. Config resolution drift. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
                then the built-in default, and it must be read when the hook runs.
                `hooks/lib/vault-env.sh` is the source of truth and `hooks/lib/paths.mjs`

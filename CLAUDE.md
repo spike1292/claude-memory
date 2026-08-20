@@ -230,6 +230,32 @@ is Node. `hooks/lib/hook-io.mjs` is the shared plumbing for the gates — stdin 
 markers, `findClaude()`, `detach()` — and it exists because three bash scripts had each grown their
 own copy of all four, already drifted.
 
+**There is exactly one JSONL appender, and it is `appendJsonl()` in `hook-io.mjs`.** It stamps `t`
+and the project slug, writes the caller's record verbatim after them, and swallows every error:
+these lines are written from the per-prompt recall path and from every SessionStart hook, so a log
+that cannot be written must never fail or delay a hook. Two families use it — `recall-<date>.jsonl`
+(what recall decided) and `hooks-<date>.jsonl` (`logHook()`, one line per hook invocation with a
+duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
+cap.** The read views are `/memory:doctor --stats` and `--hooks`.
+
+`logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what
+`hooks.json`'s timeout applies to. **Those timeouts live in `hooks.json` and nowhere else**:
+`scripts/lib/hook-stats.mjs` parses the manifest at run time, and a copy anywhere would drift in
+silence. A gate's own duration is a decision and never the work, so `distill-session` and
+`semantic-index-refresh` write a second line from `hooks/log-worker.mjs`, the supervisor
+`detach({ worker })` puts in front of background work.
+
+**`graph-staleness-check` must NOT be given that supervisor.** `graphgen.lock` holds a pid and
+`lockHolder()` frees a lock whose pid is dead, so the pid has to be a process that lives exactly as
+long as the work — a supervisor that dies orphans the headless `claude` and frees the lock under
+it, which is two concurrent re-indexes. The same rewrite is why `detach({ worker })` re-checks
+`X_OK` on the real command first: it replaces the command with `node`, which always spawns, and the
+null pid that told a caller "this could not start" would otherwise never come back.
+
+**A reason string that an outcome mapper decides on is a constant, not a literal** (`GATE_REASONS`,
+`REASONS`) — a literal in the plan and a copy in the mapper drift apart in silence, and every test
+written against the copy stays green while a dead dependency starts reporting as `ran`.
+
 **Fork count decides, not language — but count them before quoting a floor.** bash's floor is ~5 ms
 and Node's ~40 ms, so a hook that loops over notes belongs in Node and a bare **gate** belongs in
 bash. The three gates ported on 2026-08-18 were not bare: each sourced `vault-env.sh` (15 ms) and

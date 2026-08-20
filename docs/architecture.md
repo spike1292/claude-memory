@@ -119,8 +119,8 @@ because Claude Code names `~/.claude/projects/<slug>/` after it. Both live in
                     │ hooks/lib/hook-io.mjs│  ┌────────────────────┐ ┌────────────────────────┐
                     │ stdin · debounce ·   │  │ scripts/lib/       │ │ scripts/               │
                     │ detach() ·findClaude()│ │ memory-audit-checks│ │ memory-semantic.mjs    │
-                    └──────────────────────┘  └────────────────────┘ │ 920 lines — see G1     │
-                                                                     │ CLI · model lifecycle ·│
+                    │ appendJsonl()·logHook│  └────────────────────┘ │ 920 lines — see G1     │
+                    └──────────────────────┘                         │ CLI · model lifecycle ·│
                                                                      │ SCHEMA OWNER · indexer·│
                                                                      │ 4 reports·loadIndex·   │
                                                                      │ DAEMON                 │
@@ -200,7 +200,8 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
   stdout; every gate, score and log record above is hooks/lib/memory-recall.mjs, which
   takes rows as values. The record carries the candidate list and elapsed ms as well as
   the top hit, and `/memory:doctor --stats` (scripts/lib/recall-stats.mjs) aggregates
-  those files read-only.
+  those files read-only. The appender itself is hook-io.mjs's — the same one every
+  hook writes its own hooks-<date>.jsonl line through, since 2026-08-20.
 ```
 
 ### Flow 3 — the search daemon
@@ -338,6 +339,7 @@ exists because a comment once claimed a CI check that did not exist.
 | Resolution has one implementation | **code** — `vault-env.sh` cannot resolve; it `eval`s `node scripts/env.mjs` | there is nothing left to keep in step, so nothing to enforce |
 | Shell-bound values are `eval`-safe | **test** — `shellQuote()` round-trips through bash itself | a `$`, backtick or quote in a vault path is an injection otherwise |
 | Entry files are thin wrappers over `lib/` | **CI (partial)** — the *Every entry has a lib/ twin* step fails an entry with no `hooks\|scripts/lib/<name>.mjs`, unless allowlisted with a reason | it checks the twin **exists**, not that the entry delegates to it: an empty twin passes. Holds in **12 of 16**. 15 have a twin (only `scripts/env.mjs` does not), but a twin is not the invariant: three entries keep the real behaviour beside one. Re-counted 2026-08-19 after `scripts/prune-logs.mjs` was added as a compliant 16th; see [G1](#g1--the-entrylib-rule-is-inverted-where-it-matters) |
+| A hook's timeout is written down once | **code** — `hook-stats.mjs` parses `hooks/hooks.json` at run time | added 2026-08-20 with `--hooks`. No timeout is copied into a log line or into the reader; a second copy would drift and report near-misses that are not |
 | No retrieval number without a case set | **NOTHING** — convention | the one standing violation, `MIN_SCORE = 6.0`, got its sweep on 2026-08-19 (item 12); nothing stops the next one |
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
@@ -410,6 +412,7 @@ deleted on 2026-08-19, and the `preFiltered` parameter it had become went with i
   hooks/lib/validate-note.mjs ──────────▶ scripts/lib/memory-audit-checks.mjs
   hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
   scripts/lib/recall-stats.mjs ─────────▶ hooks/lib/memory-recall.mjs (MAX_CHARS)
+  scripts/lib/hook-stats.mjs ───────────▶ hooks/hooks.json (the declared timeouts)
   scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │
   scripts/lib/memory-semantic.mjs ──┐                    │

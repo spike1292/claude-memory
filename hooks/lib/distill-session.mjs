@@ -657,6 +657,15 @@ export const STOP_MIN_MESSAGES = 400;
 /** …and at most this often, so a hard-killed long session loses at most two hours of lessons. */
 export const STOP_DEBOUNCE_SECONDS = 7200;
 
+// Constants because gateOutcome() decides on them. Two literals — one in the plan, one in the
+// mapper — drift apart silently: reword one and a recursion guard starts reporting as a hook that
+// ran, with every test still green.
+export const GATE_REASONS = {
+  child: 'child run',
+  stopActive: 'stop_hook_active',
+  debounced: 'stop: debounced',
+};
+
 /**
  * Decide whether this event should distil, without spawning or writing.
  *
@@ -672,9 +681,9 @@ export const STOP_DEBOUNCE_SECONDS = 7200;
 export function gatePlan(p, { now = nowSeconds() } = {}) {
   // The headless extractor runs as a `claude` session, whose Stop fires this hook again. Without
   // this the distiller distils its own distillation, recursively.
-  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: 'child run' };
+  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: GATE_REASONS.child };
   // Claude Code's own Stop-loop guard. Absent on SessionEnd, harmless there.
-  if (p?.stop_hook_active === true) return { run: false, reason: 'stop_hook_active' };
+  if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
 
   const transcript = p?.transcript_path;
   if (!transcript) return { run: false, reason: 'no transcript path' };
@@ -693,7 +702,7 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   if (p?.hook_event_name !== 'SessionEnd') {
     if (lines < STOP_MIN_MESSAGES) return { run: false, reason: 'stop: session too short', lines };
     if (withinDebounce(readMarker(marker), STOP_DEBOUNCE_SECONDS, now))
-      return { run: false, reason: 'stop: debounced', lines };
+      return { run: false, reason: GATE_REASONS.debounced, lines };
   }
 
   return { run: true, transcript, marker, now, lines };
@@ -716,7 +725,29 @@ export function gate(p) {
   detach(
     process.execPath,
     [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, p?.cwd || process.cwd()],
-    { cwd: p?.cwd, logFile: path.join(paths.stateDir('logs'), 'distill.log') },
+    {
+      cwd: p?.cwd,
+      logFile: path.join(paths.stateDir('logs'), 'distill.log'),
+      worker: { hook: 'distill-session', session: p?.session_id },
+    },
   );
   return plan;
+}
+
+/**
+ * The gate's outcome, for the hook log.
+ *
+ * `stop_hook_active` is Claude Code's own recursion guard and `child run` is this hook's, so both
+ * are the same story: the hook fired inside work it had itself started. Every other skip is a real
+ * decision about a real session and reads as `ran`.
+ *
+ * @param {GatePlan} plan
+ * @returns {import('./hook-io.mjs').HookOutcome}
+ */
+export function gateOutcome(plan) {
+  if (plan.run) return 'spawned';
+  if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
+    return 'child-guard';
+  if (plan.reason === GATE_REASONS.debounced) return 'debounced';
+  return 'ran';
 }
