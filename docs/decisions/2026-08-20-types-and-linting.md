@@ -16,8 +16,11 @@ form; and add a linter, and if so which rules.
 ## What the measurements said
 
 `tsc` 5.9.2 was run over every non-test `.mjs` in `hooks/` and `scripts/` — 39 files, 6737 lines —
-at the commit before any annotation existed. The repo has since moved to TypeScript 7; see the
-amendment at the end for what those rows become, and why the decision does not change.
+at the commit before any annotation existed.
+
+**Every figure in this section — the table and the prose — is a 5.9.2 figure.** The repo has since
+moved to TypeScript 7, which changes most of them; the amendment at the end gives both columns and
+says why the decision does not change.
 
 | Configuration | Diagnostics |
 | --- | --- |
@@ -145,31 +148,63 @@ Two pre-existing defects, both filed separately rather than smuggled into a typi
 
 ## Amendment: TypeScript 7
 
-The pin moved from 5.9.2 to 7.0.2 the same day. TypeScript 7 is the native compiler — a Go
-rewrite shipped as platform-specific binaries under `optionalDependencies`, the way esbuild does it.
-On this tree it is a drop-in: zero diagnostics against the same `tsconfig.json`, `--listFiles`
-unchanged so the coverage guard still works, and an identical message on a planted error. It is not
-faster here in any way worth quoting — 61 files with `skipLibCheck` is ~0.15 s either way, and the
-`npx` fetch dominates. Speed was not the reason; being on the supported line is.
+The pin moved from 5.9.2 to 7.0.2 the same day. TypeScript 7 is the native compiler — a Go rewrite
+shipped as platform-specific binaries under `optionalDependencies`, the way esbuild does it. On this
+tree it is a drop-in: zero diagnostics against the same `tsconfig.json`, `--listFiles` unchanged so
+the coverage guard still works, and character-identical messages on a planted error.
 
-**The platform binaries never reach a user.** That matters in this repo more than most, since
+**It is about 6× faster here**: 1.22–1.67 s for 5.9.2 against 0.17–0.31 s for 7.0.2, five runs each,
+whole repo, `skipLibCheck` on. End to end through `npx` on a warm cache the gap narrows but does not
+close, because the fetch is a larger share of 7's total.
+
+> An earlier draft of this amendment said "not faster here in any way worth quoting — ~0.15 s either
+> way". That was wrong for a stupid reason: a stray `npm i typescript@7` had walked up a directory
+> and overwritten the 5.9.2 install being used as the control, so both columns were 7.0.2 timing
+> itself. Caught in local review. Every number below was re-taken with `--version` printed at the
+> point of use. This is the second measurement in this file to fail that way — check what you ran,
+> not what you meant to run.
+
+Speed was not the reason for the move and still is not; being on the supported line is.
+
+**The platform binaries never reach a user**, which matters here more than most repos, since
 `slim-install.mjs` exists precisely because a dependency shipped every platform's native runtime in
-one tarball. `tsc` is invoked through `npx`, so it lands in the npm cache and never in
-`package.json`, never in the lockfile, and never in a version-pinned plugin cache.
+one tarball. `tsc` is invoked through `npx`, so it lands in `~/.npm/_npx` and never in
+`package.json`, never in `package-lock.json`, and never in a version-pinned plugin cache. `npm ci`
+cannot pull what is not in the lockfile. Verified after a real run: both manifests unchanged,
+`git status` clean, no `node_modules/typescript`. The 20 platform packages are declared at an exact
+version by typescript itself, so the pin does not float, and a missing one throws from the shim
+rather than silently skipping the check.
 
-Two behavioural differences found while migrating, neither of which changes anything here because
-`tsconfig.json` was already explicit about both:
+Two behavioural differences, neither of which changes anything here because `tsconfig.json` was
+already explicit about both:
 
-- **`strict` is on by default in 7.** The explicit `"strict": true` is now redundant and stays
-  anyway: it states the intent, and it does not silently follow a future change of default.
-- **`"types"` is load-bearing where it used to be optional.** Without `"types": ["node"]`, 7 does
-  not pick up `@types/node` from `node_modules/@types` the way 5 did, and reports
-  `TS2591: Cannot find name 'process'` on nearly every file. Ours sets it, and the case this repo
-  actually cares about — `@types/node` ceasing to arrive transitively — still fails loudly:
-  `TS2688: Cannot find type definition file for 'node'`, exit 1, verified rather than assumed.
+- **`strict` is on by default in 7.** Drop the key entirely and 7 reports 0 on this tree where 5.9.2
+  reports 11. The explicit `"strict": true` is now redundant and stays anyway: it states the intent,
+  and it does not silently follow a future change of default.
+- **`"types"` is load-bearing where it used to be optional.** Without `"types": ["node"]`, 7 does not
+  pick up `@types/node` from `node_modules/@types` the way 5 did — 471 errors, 365 of them
+  `TS2591: Cannot find name 'process'`, against 0 under 5.9.2. Ours sets it, and the case this repo
+  actually cares about — `@types/node` ceasing to arrive transitively — still fails loudly on both:
+  `TS2688`, exit 1.
 
-The table above was measured with 5.9.2 and is left as it was taken. Under 7.0.2 the same tree gives
-33 rather than 34 with strict off, 100 rather than 91 for strict-minus-`noImplicitAny`, and 89 for
-`strictNullChecks` on top of an otherwise non-strict config. The decision rests on the shape — bare
-`checkJs` finds no bugs, a staged path exists and was declined — and that shape holds on both
-compilers.
+### What the measured table becomes
+
+Five of the seven rows move. Because `strict` is default-on in 7, the four non-strict rows are not
+expressible without an explicit `--strict false`; with it, they are comparable.
+
+| Configuration | 5.9.2 | 7.0.2 |
+| --- | --- | --- |
+| `checkJs`, no strict | 34 | 33 |
+| `checkJs` + `noUnusedLocals` | 48 | 47 |
+| `checkJs` + both unused flags | 49 | 48 |
+| `strict` | 484 | 484 |
+| `strict` + both unused flags | 499 | 499 |
+| `strict` with `noImplicitAny` off | 91 | 100 |
+| `strictNullChecks` alone | 80 | 89 |
+
+The null-safety subtotal inside that sixth row is 32 under 5.9.2 and 33 under 7.0.2. The prose above
+quotes the 5.9.2 column throughout, including "all 34 were inference gaps" and its itemised
+breakdown, which sums to 34 and not to 33.
+
+The decision rests on the shape rather than the digits — bare `checkJs` finds no real bug, and a
+staged path exists and was declined — and that shape holds on both compilers.

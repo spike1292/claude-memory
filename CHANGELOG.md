@@ -20,9 +20,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   compiler, whose platform-specific binaries stay in the npm cache rather than any user's plugin
   cache precisely because `npx` runs it. A second step asserts that every tracked
   `.mjs` is actually in what `tsc` checked, because a check that passes by checking nothing has
-  shipped here twice. The numbers behind the choice — 34 diagnostics under bare `checkJs` and none
-  of them a real bug, 499 under `strict`, and 80 from `strictNullChecks` alone, so the staged path
-  existed and was declined rather than ruled out — are in
+  shipped here twice. The numbers behind the choice, all measured with 5.9.2 before the
+  pin moved — 34 diagnostics under bare `checkJs` and none of them a real bug, 499 under `strict`,
+  and 80 from `strictNullChecks` alone, so the staged path existed and was declined rather than
+  ruled out — are in
   [docs/decisions/2026-08-20-types-and-linting.md](docs/decisions/2026-08-20-types-and-linting.md),
   which also records why no linter was added: of the three rules that were candidates, `tsc` gives
   one for free and a CI check already covers another.
