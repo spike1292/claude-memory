@@ -105,7 +105,8 @@ export function makeFixture(root, { slug, notes = 50 }) {
   const vault = path.join(root, 'vault');
   const memory = path.join(vault, 'Memory', slug);
   const mistakes = path.join(vault, 'Insights', slug, 'Mistakes');
-  for (const d of [memory, mistakes, path.join(root, 'home'), path.join(root, 'state')])
+  const emptyVault = path.join(root, 'vault-empty');
+  for (const d of [memory, mistakes, emptyVault, path.join(root, 'home'), path.join(root, 'state')])
     fs.mkdirSync(d, { recursive: true });
 
   const names = Array.from({ length: notes }, (_, i) => `note-${String(i).padStart(3, '0')}`);
@@ -128,6 +129,7 @@ export function makeFixture(root, { slug, notes = 50 }) {
 
   return {
     vault,
+    emptyVault,
     memory,
     mistakes,
     transcript,
@@ -157,19 +159,24 @@ export function benchEnv(root, base = process.env) {
  * that needs recall armed: the hook ships inert, and quoting the inert cost as "the recall hook"
  * would be timing an excluded path — this repo's own recurring mistake.
  *
- * @param {{cwd: string, transcript: string, note: string}} f
+ * @param {{cwd: string, transcript: string, note: string, emptyVault: string}} f
  */
-export function hookSpecs({ cwd, transcript, note: notePath }) {
+export function hookSpecs({ cwd, transcript, note: notePath, emptyVault }) {
   const payload = (/** @type {Record<string, unknown>} */ o) => JSON.stringify({ cwd, ...o });
   const start = payload({ hook_event_name: 'SessionStart', source: 'startup' });
   return [
     { name: 'insights-surface', entry: 'hooks/insights-surface.mjs', stdin: start, env: {} },
     { name: 'memory-link-lint', entry: 'hooks/memory-link-lint.mjs', stdin: start, env: {} },
     {
+      // Pointed at an empty scratch vault, and that is what keeps this row on the gate path.
+      // With the populated one resolveSlug() matches, plan() says run, and the hook detaches a
+      // real memory-semantic.mjs --index child that loads the model — under a scratch root the
+      // bench then deletes. Empty vault means resolveSlug() returns null after the same
+      // projectKey() and stat work, so the number is the gate and nothing spawns.
       name: 'semantic-index-refresh',
       entry: 'hooks/semantic-index-refresh.mjs',
       stdin: start,
-      env: {},
+      env: { CLAUDE_VAULT: emptyVault },
     },
     {
       name: 'graph-staleness-check',
@@ -299,7 +306,12 @@ export function bench({
   for (const b of baselineSpecs(pluginRoot))
     push({ name: b.name, ...sample(node, b.args, { env, cwd }, n) });
 
-  for (const h of hookSpecs({ cwd, transcript: fixture.transcript, note: fixture.note }))
+  for (const h of hookSpecs({
+    cwd,
+    transcript: fixture.transcript,
+    note: fixture.note,
+    emptyVault: fixture.emptyVault,
+  }))
     push({
       name: h.name,
       ...sample(

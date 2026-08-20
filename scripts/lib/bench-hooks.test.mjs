@@ -18,6 +18,8 @@ import {
   stats,
   timeOnce,
 } from './bench-hooks.mjs';
+import { projectKey } from '../../hooks/lib/paths.mjs';
+import { resolveSlug } from '../../hooks/lib/semantic-index-refresh.mjs';
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -113,14 +115,24 @@ test('makeFixture keeps the transcript below the distiller threshold', () => {
 });
 
 test('every hook spec names an entry that exists', () => {
-  for (const h of hookSpecs({ cwd: '/tmp/x', transcript: '/tmp/t.jsonl', note: '/tmp/n.md' })) {
+  for (const h of hookSpecs({
+    cwd: '/tmp/x',
+    transcript: '/tmp/t.jsonl',
+    note: '/tmp/n.md',
+    emptyVault: '/tmp/empty',
+  })) {
     assert.ok(fs.existsSync(path.join(pluginRoot, h.entry)), `${h.entry} is missing`);
     assert.doesNotThrow(() => JSON.parse(h.stdin));
   }
 });
 
 test('only the armed recall row arms recall', () => {
-  const specs = hookSpecs({ cwd: '/tmp/x', transcript: '/tmp/t.jsonl', note: '/tmp/n.md' });
+  const specs = hookSpecs({
+    cwd: '/tmp/x',
+    transcript: '/tmp/t.jsonl',
+    note: '/tmp/n.md',
+    emptyVault: '/tmp/empty',
+  });
   const armed = specs.filter((s) => s.env?.MEMORY_RECALL_ENABLED === '1');
   assert.equal(armed.length, 1);
   assert.match(armed[0].name, /armed/);
@@ -156,7 +168,7 @@ test('bench runs every row against the fixture and none of them fail', () => {
       root,
       pluginRoot,
       cwd: pluginRoot,
-      slug: 'bench-proj',
+      slug: projectKey(pluginRoot),
       n: 1,
       notes: 5,
     });
@@ -165,6 +177,28 @@ test('bench runs every row against the fixture and none of them fail', () => {
       assert.equal(r.failures, 0, `${r.name} exited non-zero`);
       assert.ok(r.median > 0);
     }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The reason the semantic row gets its own vault: with the populated one the hook stops being a
+// gate and detaches a real indexer. Both halves are asserted, so a future edit that drops the
+// override fails here instead of quietly spawning a model load under the bench.
+test('the semantic-index-refresh row cannot reach a vault it would index', () => {
+  const root = scratchRoot();
+  try {
+    const slug = projectKey(pluginRoot);
+    const f = makeFixture(root, { slug, notes: 3 });
+    const spec = hookSpecs({
+      cwd: pluginRoot,
+      transcript: f.transcript,
+      note: f.note,
+      emptyVault: f.emptyVault,
+    }).find((s) => s.name === 'semantic-index-refresh');
+    assert.equal(spec?.env?.CLAUDE_VAULT, f.emptyVault);
+    assert.equal(resolveSlug(pluginRoot, f.emptyVault), null);
+    assert.equal(resolveSlug(pluginRoot, f.vault), slug);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

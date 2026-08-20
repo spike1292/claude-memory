@@ -40,6 +40,13 @@ Conditions for every number below, because a hook timing without them is not evi
 | machine | Node v24.16.0, darwin/arm64 |
 | path | the **gate path** — every hook decides there is nothing to do; nothing detaches |
 
+The gate path is not free by luck. `semantic-index-refresh` is the one hook the fixture would
+otherwise satisfy — a populated `Memory/<slug>` plus an installed runtime is all `plan()` asks —
+so it is given an empty scratch vault of its own, and `resolveSlug()` returns null after doing
+the same `projectKey()` and stat work. Without that it detaches a real `memory-semantic.mjs
+--index` child that loads the model, under a scratch root the bench then deletes. The row is
+unmoved by the change: 40.5 ms median on a re-run (n=20) against 40.0 ms in the table below.
+
 A cloud-backed vault moves all of this substantially (SessionStart 798 ms vs 485 ms in the
 2026-08-17 record). These are the local-disk numbers and comparable only with other local-disk ones.
 
