@@ -15,6 +15,10 @@ import {
   writeMarker,
   logBanner,
   detach,
+  lockHolder,
+  takeLock,
+  writeLock,
+  releaseLock,
 } from './hook-io.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
@@ -125,4 +129,61 @@ test('detach caps a runaway log before the child writes to it', async () => {
   assert.ok(after.includes('child ran'), 'the child still appended to the trimmed file');
   assert.ok(after.includes('line 59999 '), 'the newest content survived');
   assert.ok(!after.includes('line 0 '), 'the oldest content is gone');
+});
+
+// The lock that stops N stale repos becoming N parallel full re-indexes (#34). Ownership is a live
+// pid, so every branch below is about what happens when the owner is gone, dead or too old.
+test('takeLock picks exactly one winner, and a live holder keeps it', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true, 'free lock is taken');
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), false, 'a live holder keeps it');
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid);
+});
+
+test('a lock whose owner died is reclaimed', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+  // A pid that is certainly not running: reserved by POSIX, never a real process.
+  writeLock(f, 0x7fffffff, now);
+  assert.strictEqual(lockHolder(f, 3600, now), null, 'dead pid holds nothing');
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true);
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid);
+});
+
+test('a lock older than maxSeconds is stale even when its pid is alive', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  writeLock(f, process.pid, 1000);
+  assert.strictEqual(lockHolder(f, 3600, 4599), process.pid, 'inside the window');
+  assert.strictEqual(lockHolder(f, 3600, 4600), null, 'a wedged run is not held forever');
+});
+
+test('a missing or corrupt lock file holds nothing', () => {
+  const d = tmp();
+  assert.strictEqual(lockHolder(path.join(d, 'nope.lock'), 3600, 1000), null);
+  const f = path.join(d, 'junk.lock');
+  fs.writeFileSync(f, 'not a lock\n');
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  assert.strictEqual(takeLock(f, process.pid, 1000, 3600, 1000), true, 'and is reclaimable');
+});
+
+test('releaseLock frees it, and is safe when already gone', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  takeLock(f, process.pid, 1000, 3600, 1000);
+  releaseLock(f);
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  releaseLock(f);
+});
+
+test('detach returns the child pid — it is what the caller writes into its lock', () => {
+  const pid = detach(process.execPath, ['-e', '']);
+  assert.ok(Number.isInteger(pid) && pid > 0, 'a pid, not just truthy');
+});
+
+// spawn() fails asynchronously for a missing binary. Before the handler, this crashed the process
+// AFTER detach() had returned a pid — a hook that had already printed its line.
+test('detach survives a missing binary instead of throwing later', async () => {
+  detach('/nonexistent/binary', []);
+  await new Promise((r) => setTimeout(r, 50));
 });

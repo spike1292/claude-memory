@@ -7,6 +7,7 @@
 //   - not a git work tree    -> nothing to compare against
 //   - report >= HEAD         -> fresh
 //   - debounced (24h/repo)   -> nudge, don't respawn while stale
+//   - another run in flight  -> nudge; the lock is machine-wide, the debounce is only per-repo
 //   - claude CLI missing     -> nudge
 
 import fs from 'node:fs';
@@ -20,17 +21,31 @@ import {
   readMarker,
   writeMarker,
   withinDebounce,
+  lockPath,
+  lockHolder,
+  takeLock,
+  writeLock,
+  releaseLock,
   nowSeconds,
   systemMessage,
 } from './hook-io.mjs';
 
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
 
+// The debounce is keyed by repo, so N stale repos opened together were N legal parallel runs, each
+// a headless `claude` plus an MCP server plus a full index (#34). One machine-wide lock, because a
+// full index is already CPU-bound: a second concurrent run buys nothing and costs everything.
+export const LOCK_NAME = 'graphgen';
+export const LOCK_MAX_SECONDS = 3600; // a full index is minutes; an hour means gone or wedged
+
 export const STALE_MESSAGE =
   'Graph report is stale — regenerating in the background (full re-index, takes a few minutes). ' +
   'It will be current for your next session.';
 export const NUDGE_MESSAGE =
   'Graph report is stale (commits newer than the report) — run /memory:graph-report to refresh.';
+export const BUSY_MESSAGE =
+  'Graph report is stale — a background regeneration is already running for another repo. ' +
+  'It will pick this one up on a later session, or run /memory:graph-report to refresh now.';
 
 // Full index mode preserves clone/semantic edges, which an incremental pass drops.
 export const REGEN_PROMPT =
@@ -111,12 +126,17 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   const claude = findClaude();
   if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'no claude CLI', slug };
 
+  const lock = lockPath(LOCK_NAME);
+  if (lockHolder(lock, LOCK_MAX_SECONDS, now))
+    return { action: 'nudge', message: BUSY_MESSAGE, reason: 'another run in flight', slug };
+
   return {
     action: 'regen',
     message: STALE_MESSAGE,
     slug,
     claude,
     marker,
+    lock,
     now,
     logFile: path.join(stateDir('logs'), 'graphgen.log'),
   };
@@ -128,17 +148,29 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * `--dangerously-skip-permissions`: a headless run must call MCP tools and Write with no prompt.
  * `CBM_GRAPHGEN_CHILD=1`: the background run fires SessionStart too, and without this it would
  * schedule another one of itself.
+ *
+ * The lock is claimed HERE and not in plan(): plan()'s check is advisory and racy, and the atomic
+ * create is the only thing that picks one winner out of two sessions starting in the same second.
+ * It is then rewritten to hold the CHILD's pid, since the child is what the next session must wait
+ * on — this process is about to exit.
  */
 export function check(cwd) {
   const p = plan(cwd);
   if (p.action === 'silent') return '';
   if (p.action === 'nudge') return systemMessage(p.message);
+  if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
+    return systemMessage(BUSY_MESSAGE);
 
   writeMarker(p.marker, p.now);
-  detach(
+  const pid = detach(
     p.claude,
     ['-p', REGEN_PROMPT, '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions'],
     { cwd, logFile: p.logFile, env: { CBM_GRAPHGEN_CHILD: '1' } },
   );
+  if (!pid) {
+    releaseLock(p.lock);
+    return systemMessage(NUDGE_MESSAGE);
+  }
+  writeLock(p.lock, pid, p.now);
   return systemMessage(p.message);
 }

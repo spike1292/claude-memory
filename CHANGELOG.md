@@ -371,6 +371,22 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The graph re-index can no longer run several times at once.** The debounce that guards it is
+  keyed by repo (`graphgen-<slug>`, 24h), so three stale repos opened together were three legal
+  parallel runs — each a headless `claude`, an MCP server and a full index — and the machine spent
+  its CPU and RAM on them (#34). `hooks/lib/hook-io.mjs` gains a lock whose owner is a **live pid**
+  rather than a release call: a detached child that is killed, or a machine that sleeps, frees the
+  lock by dying, and an hour-old lock is stale even when its pid is alive (a recycled pid, or a
+  wedged run). The claim is an atomic `wx` create in `check()`, not the advisory read in `plan()` —
+  that read only avoids the work, the create is what picks one winner out of two sessions starting
+  in the same second. A session that loses says so instead of going quiet. `/memory:doctor` reports
+  a held lock with its pid and age, and names a stale one as harmless.
+- **`detach()` no longer takes the hook down after it has already succeeded.** `spawn()` reports a
+  missing binary asynchronously, so the `try/catch` never saw it and the unhandled `error` event
+  became an uncaughtException *after* the pid had been returned and the hook had printed its line.
+  It now returns the child pid (or `null`), which is what the lock above is written from.
+
+
 - **`reindex()` called a bare `which`, so every distillation aborted right after writing its notes
   — on unreleased `main` only.** #20 deleted `distill-session.mjs`'s local copy of `which` without
   adding an import; the ReferenceError killed the child after `writeNotes()` and before the ctx and

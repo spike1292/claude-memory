@@ -158,7 +158,8 @@ Claude Code fires SessionStart
    │
    └─▶ hooks/graph-staleness-check.mjs     10s   plan() -> silent | nudge | regen
           -> lib/graph-staleness-check.mjs       staleness by RECORDED COMMIT, not
-          (detached; needs codebase-memory-mcp)  mtime; 24h debounce per repo
+          (detached; needs codebase-memory-mcp)  mtime; 24h debounce per repo AND one
+                                                 machine-wide run/graphgen.lock
 ```
 
 Every Node hook is guarded `command -v node >/dev/null 2>&1 && node ... || exit 0`. Every hook is

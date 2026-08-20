@@ -233,6 +233,20 @@ stale=$(find "$STATE/run" -name 'search-*.sock' ! -name "search-$model.sock" 2>/
 [ "${stale:-0}" -gt 0 ] && warn "$stale leftover socket(s) in run/" \
   "from the per-project scheme or another model. The next server start evicts them." || true
 
+# The graph-regen lock (#34). Held = a full re-index is running somewhere on this machine and every
+# other session will nudge instead of starting a second one. Read-only: never reclaim it here.
+lock="$STATE/run/graphgen.lock"
+if [ -f "$lock" ]; then
+  lock_pid=$(awk '{print $1}' "$lock" 2>/dev/null)
+  lock_at=$(awk '{print $2}' "$lock" 2>/dev/null)
+  age=$(( $(date +%s) - ${lock_at:-0} ))
+  if [ -n "${lock_pid:-}" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$age" -lt 3600 ]; then
+    ok "graph re-index running (pid $lock_pid, ${age}s) — other sessions will not start a second one"
+  else
+    warn "stale graphgen lock in run/" "owner is gone or over an hour old. The next stale session reclaims it; nothing to do."
+  fi
+fi
+
 echo
 echo "recall"
 if [ "$(recall_config)" = "true" ]; then

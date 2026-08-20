@@ -107,6 +107,81 @@ export const which = (cmd) => {
 };
 
 /**
+ * A machine-wide lock for background work too heavy to run twice at once.
+ *
+ * Ownership is a LIVE PID, not a release call. A detached child cannot be trusted to clean up
+ * after itself — it is killed, the machine sleeps, the parent hook exited minutes ago — so the
+ * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
+ * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
+ */
+export function lockPath(name) {
+  return path.join(stateDir('run'), `${name}.lock`);
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** The pid holding `file`, or null when the lock is free, stale or unreadable. */
+export function lockHolder(file, maxSeconds, now = nowSeconds()) {
+  try {
+    const [pid, at] = fs.readFileSync(file, 'utf8').trim().split(/\s+/).map(Number);
+    if (!Number.isFinite(pid) || !Number.isFinite(at)) return null;
+    if (now - at >= maxSeconds) return null;
+    return alive(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLock(file, pid, seconds) {
+  try {
+    fs.writeFileSync(file, `${pid} ${seconds}\n`);
+  } catch {
+    /* a lock we cannot write degrades to the old behaviour: another run may start */
+  }
+}
+
+/**
+ * Claim the lock. True only for the caller that created the file.
+ *
+ * `wx` is what makes two sessions starting in the same second pick one winner; the reclaim path
+ * unlinks first and then races on `wx` again, so a stale lock also has exactly one taker.
+ */
+export function takeLock(file, pid, seconds, maxSeconds, now = nowSeconds()) {
+  const claim = () => {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${pid} ${seconds}\n`, { flag: 'wx' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (claim()) return true;
+  if (lockHolder(file, maxSeconds, now)) return false;
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* someone else got there first — claim() below decides */
+  }
+  return claim();
+}
+
+export function releaseLock(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* already gone, or never ours */
+  }
+}
+
+/**
  * Locate the `claude` CLI.
  *
  * PATH first, then the three install locations a GUI-launched session may not have on PATH. One
@@ -150,6 +225,8 @@ function openLog(file) {
  * detached + unref + stdio to a file (or /dev/null) is the whole contract: this process must be
  * free to exit immediately, and the child must survive it. A child that inherited a pipe would
  * hold the event loop open; one that inherited stderr would print into the session transcript.
+ *
+ * Returns the child pid, or null. The pid is what a caller writes into its lock file.
  */
 export function detach(cmd, args, { env, cwd, logFile } = {}) {
   const fd = logFile ? openLog(logFile) : null;
@@ -160,10 +237,13 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
       stdio: fd == null ? 'ignore' : ['ignore', fd, fd],
       env: env ? { ...process.env, ...env } : process.env,
     });
+    // spawn() reports a missing binary ASYNCHRONOUSLY, so the throw below never sees it and an
+    // unhandled 'error' would take the hook down after it had already decided to succeed.
+    child.on('error', () => {});
     child.unref();
-    return true;
+    return child.pid ?? null;
   } catch {
-    return false; // a hook never fails because its background work could not start
+    return null; // a hook never fails because its background work could not start
   } finally {
     if (fd != null) {
       try {

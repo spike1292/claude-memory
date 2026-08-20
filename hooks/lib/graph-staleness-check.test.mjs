@@ -11,6 +11,8 @@ import {
   reportFor,
   plan,
   DEBOUNCE_SECONDS,
+  LOCK_MAX_SECONDS,
+  BUSY_MESSAGE,
 } from './graph-staleness-check.mjs';
 
 const emptyVault = () => fs.mkdtempSync(path.join(os.tmpdir(), 'graph-vault-'));
@@ -62,4 +64,11 @@ test('plan stays silent inside its own background run', () => {
 
 test('the debounce window is 24h', () => {
   assert.strictEqual(DEBOUNCE_SECONDS, 86_400);
+});
+
+// The debounce is per repo; the lock is per machine. Both bounds exist and neither replaces the
+// other — see #34.
+test('the regen lock is bounded at an hour and has its own message', () => {
+  assert.strictEqual(LOCK_MAX_SECONDS, 3600);
+  assert.notStrictEqual(BUSY_MESSAGE, '', 'a busy session says why it is not regenerating');
 });
