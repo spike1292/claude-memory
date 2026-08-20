@@ -1,5 +1,5 @@
 ---
-description: Diagnose the memory install — runtime, dependencies, vault, index, recall, and with --perf where the RAM and disk went. Read-only.
+description: Diagnose the memory install — runtime, dependencies, vault, index, recall, with --perf where the RAM and disk went and --stats whether recall is helping. Read-only.
 ---
 
 Run the check script and show its output verbatim as a checklist. It is read-only and always
@@ -11,10 +11,17 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
 "$MEM/scripts/doctor.sh"
 ```
 
-Add `--perf` to that command — and nothing else — when the user asked about speed, memory or disk:
+Add `--perf` to that command when the user asked about speed, memory or disk:
 
 ```bash
 "$MEM/scripts/doctor.sh" --perf
+```
+
+Add `--stats` instead when the user asked whether recall is working, what it retrieves, how often it
+stays silent, or which notes never surface:
+
+```bash
+"$MEM/scripts/doctor.sh" --stats
 ```
 
 Then, in at most three lines:
@@ -24,8 +31,8 @@ Then, in at most three lines:
   "this feature is off", not "this is broken". Per-prompt recall being off is the intended default.
 - If everything passed, say so and stop. Do not suggest improvements nobody asked for.
 
-Do not splice the user's words into either command line. The script takes one flag, so decide
-which of the two above to run and type it out.
+Do not splice the user's words into either command line. Decide which of the three forms above to
+run and type it out; the flags may be combined, but only do that if the user asked about both.
 
 `--perf` appends a performance report: resident search servers with their RSS and whether the model
 is currently loaded, the recall round trip against a socket that is **already** listening, every
@@ -36,6 +43,25 @@ second index on an inactive model is dead weight, more than one server is the 16
 and a first query far slower than the second is just an index loading on demand.
 
 It never starts a server or re-indexes, so "not measured: no socket" is a state, not a fault.
+
+`--stats` appends the recall analytics report, read from the daily `recall-*.jsonl` logs (the last 7
+days recall ran; `--stats=30` widens the window) plus this project's index. The logs are
+machine-wide and the index is not, so the report is scoped to the project you run it from and says
+how many decisions in the window belonged to other projects. It reports how often recall injected versus abstained,
+the abstention reasons, score and latency distributions per arm, the notes injected most, and the
+indexed notes never injected at all. Read it with three things in mind: **abstention is the design**,
+not a fault, so a high abstain rate is only a problem if the injections are also poor; the two arms'
+scores are on **different scales** (cosine against 0.55, BM25 against 6.0) and must never be compared
+across rows; and a **never-injected note is not necessarily dead** — it may simply be phrased in
+words no prompt has used yet. Lines logged before latency existed are counted as unmeasured, not as
+zero.
+
+**The `--stats` section prints note names from the user's vault.** Everything else `/memory:doctor`
+prints is safe to paste into a public issue; that section is not. Show it to the user, and if they
+are about to file an issue with it, say so and offer the rates without the note lists.
+
+Do not offer to retune either gate from what it prints unless the user asks — moving a gate is a
+separate change that needs its own case-set run behind it.
 
 Run it from the project directory you care about: the index check resolves the project key from
 `pwd`, so running it from elsewhere reports on a different project's index.

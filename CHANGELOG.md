@@ -9,6 +9,40 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`/memory:doctor --stats` — what per-prompt recall actually did.** Both recall gates (cosine
+  0.55, BM25 6.0) were tuned on small hand-made sets, and the comment beside each says to read the
+  abstain rate in the log before moving it. Nothing could read it. The new flag aggregates the daily
+  `recall-*.jsonl` files — the last 7 by default — and reports the injection and abstention rates,
+  the abstentions grouped by reason, score and latency distributions split by arm, the most-injected
+  notes, and the notes in this project's index that have **never** been injected. It is a second
+  flag rather than more of `--perf` because it answers a different question, and because the hook
+  and cost sections planned beside it belong next to this, not next to the RSS table. `--stats=30`
+  widens the window. Read-only in the same hard sense as `--perf`: it starts no server, loads no
+  model, writes no file of its own, and reports absent logs as "not measured" rather than arming
+  recall to produce some. (Resolving the project key can refresh the shared `cache/project-keys.json`,
+  exactly as `--perf` already did.)
+  The `logs/` directory is machine-wide while an index is per project, so the report is **scoped to
+  the project it is run from** and says how many decisions in the window belonged to others —
+  measured here at 5 slugs in one 7-file window, so an unscoped rate would mostly have been another
+  project's. It is also the only doctor section that prints note names from the vault, and it says
+  so in its own output: safe to read, not safe to paste into a public issue.
+- **Three optional fields on the recall log record**: elapsed milliseconds, the number of candidates
+  the arm returned, and the candidate note paths in render order. Only `top` — a single note — was
+  recorded before, so "which notes never surface" could not be answered from the log at all, and
+  nothing on the recall path was timed. `injected` is a prefix of the candidate list, so a record
+  where `k > injected` is one where rendering stopped early — the character budget for the semantic
+  arm, and usually the trailing weak-hit floor for the keyword one, which applies it first. The
+  clock lives in the hook entry, which owns it, and reads from process start, so `ms` includes
+  node's own startup — the part of the wait nobody could otherwise see. The arms stay pure and
+  untimed. Every new field
+  follows `score`'s existing discipline — an unmeasured value omits its key rather than logging a
+  `0` that reads like a measurement — and the reader counts each metric only over the lines that
+  carry it, so log files written before this change stay readable and are reported as unmeasured
+  rather than as fast. `via` semantics are unchanged: `'server'` is the fused vector arm and its
+  absence is the BM25 fallback.
+
 ## [0.4.0] - 2026-08-20
 
 ### Added
