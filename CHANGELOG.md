@@ -42,7 +42,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
   in the entry point, which owns the handle and injects a reader, so the report module is testable
   without a database. Closes #38.
 
-
 - **`hooks/vault-memory-sync.test.mjs` — a characterisation test for the one script the repo has
   always refused to touch.** 163 lines of bash that migrate `legacy_key` → `project_key`, move
   notes and repoint `~/.claude/projects/<slug>/memory`, with no test since the day it cost 24
