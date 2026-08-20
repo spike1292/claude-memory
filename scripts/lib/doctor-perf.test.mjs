@@ -101,8 +101,9 @@ test('dirUsage sums a tree, skips symlinks, and reports a missing directory', ()
   fs.writeFileSync(path.join(d, 'a'), 'x'.repeat(100));
   fs.mkdirSync(path.join(d, 'sub'));
   fs.writeFileSync(path.join(d, 'sub', 'b'), 'x'.repeat(50));
-  // models/ is a symlink into a shared node_modules once share-modules.mjs has run; following it
-  // would bill one copy of the weights to every installed version.
+  // A link is counted as a link, not as what it points at. No directory scanned today is one —
+  // this is the standing precaution against risk R8, where every past size check that dereferenced
+  // a symlink measured something other than what it claimed.
   fs.symlinkSync(path.join(d, 'a'), path.join(d, 'link'));
 
   assert.deepStrictEqual(dirUsage(d), { bytes: 150, files: 2, missing: false });
@@ -226,4 +227,24 @@ test('report does not probe when one of two servers is cold', async () => {
 test('report says so when there is no server at all', async () => {
   const out = await report({ state: tmp(), activeModel: 'bge-m3', activeSlug: 'x', ps: '' });
   assert.match(out, /no server running/);
+});
+
+// The three tests above cover only the branches that decline to probe. This one drives the whole
+// assembly through the OTHER side of the gate: a warm ps listing, a real listening socket at the
+// path report() computes, and both probes answering.
+test('report measures the round trip when every server is warm', async () => {
+  const state = tmp();
+  fs.mkdirSync(path.join(state, 'run'), { recursive: true });
+  const server = net.createServer((c) =>
+    c.on('data', () => c.end(JSON.stringify({ slug: 'x', results: [1, 2] }) + '\n')),
+  );
+  await new Promise((r) => server.listen(path.join(state, 'run', 'search-bge-m3.sock'), r));
+  try {
+    const ps = '  501 593920  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
+    const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps });
+    assert.match(out, /\d+ ms first query, \d+ ms second \(2 hits, slug x\)/);
+    assert.doesNotMatch(out, /not measured/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });
