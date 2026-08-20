@@ -15,6 +15,10 @@ import {
   writeMarker,
   logBanner,
   detach,
+  lockHolder,
+  takeLock,
+  writeLock,
+  releaseLock,
 } from './hook-io.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
@@ -125,4 +129,99 @@ test('detach caps a runaway log before the child writes to it', async () => {
   assert.ok(after.includes('child ran'), 'the child still appended to the trimmed file');
   assert.ok(after.includes('line 59999 '), 'the newest content survived');
   assert.ok(!after.includes('line 0 '), 'the oldest content is gone');
+});
+
+// The lock that stops N stale repos becoming N parallel full re-indexes (#34). Ownership is a live
+// pid, so every branch below is about what happens when the owner is gone, dead or too old.
+test('takeLock picks exactly one winner, and a live holder keeps it', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true, 'free lock is taken');
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), false, 'a live holder keeps it');
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid);
+});
+
+test('a lock whose owner died is reclaimed', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+  // A pid that is certainly not running: reserved by POSIX, never a real process.
+  writeLock(f, 0x7fffffff, now);
+  assert.strictEqual(lockHolder(f, 3600, now), null, 'dead pid holds nothing');
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true);
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid);
+});
+
+test('a lock older than maxSeconds is stale even when its pid is alive', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  writeLock(f, process.pid, 1000);
+  assert.strictEqual(lockHolder(f, 3600, 4599), process.pid, 'inside the window');
+  assert.strictEqual(lockHolder(f, 3600, 4600), null, 'a wedged run is not held forever');
+});
+
+test('a missing or corrupt lock file holds nothing', () => {
+  const d = tmp();
+  assert.strictEqual(lockHolder(path.join(d, 'nope.lock'), 3600, 1000), null);
+  const f = path.join(d, 'junk.lock');
+  fs.writeFileSync(f, 'not a lock\n');
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  assert.strictEqual(takeLock(f, process.pid, 1000, 3600, 1000), true, 'and is reclaimable');
+});
+
+test('releaseLock frees it, and is safe when already gone', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  takeLock(f, process.pid, 1000, 3600, 1000);
+  releaseLock(f);
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  releaseLock(f);
+});
+
+test('detach returns the child pid — it is what the caller writes into its lock', () => {
+  const pid = detach(process.execPath, ['-e', '']);
+  assert.ok(Number.isInteger(pid) && pid > 0, 'a pid, not just truthy');
+});
+
+// spawn() fails asynchronously for a missing binary. Before the handler, this crashed the process
+// AFTER detach() had returned a pid — a hook that had already printed its line.
+test('detach survives a missing binary instead of throwing later', async () => {
+  detach('/nonexistent/binary', []);
+  await new Promise((r) => setTimeout(r, 50));
+});
+
+// pid 0 is not "no such process": POSIX reads kill(0, sig) as "my own process group", so it is the
+// one value that passes a finite check and then reports itself alive. A truncated lock file is the
+// realistic way it gets written.
+test('a lock claiming pid 0 holds nothing', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  writeLock(f, 0, 1000);
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  assert.strictEqual(takeLock(f, process.pid, 1000, 3600, 1000), true, 'and is reclaimable');
+});
+
+// Reclaiming a stale lock is unlink-then-create, which is not atomic as a unit: without a guard,
+// the loser's unlink deletes the winner's fresh lock and it then claims the empty path, so both
+// callers believe they hold it. What is asserted here is the OUTCOME — a reclaimed lock is not
+// taken twice. The inode guard that narrows the interleaving has no deterministic test: it fires
+// only between another process's verdict and its unlink, which cannot be reached from a sequential
+// caller, and injecting a seam to reach it would be more machinery than the guard.
+test('a reclaimed lock cannot then be taken a second time', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  const now = 1000;
+  writeLock(f, 0x7fffffff, now); // dead owner: stale, and therefore reclaimable
+
+  assert.strictEqual(takeLock(f, process.pid, now, 3600, now), true, 'the winner reclaims it');
+  assert.strictEqual(takeLock(f, 4242, now, 3600, now), false, 'the next caller does not');
+  assert.strictEqual(lockHolder(f, 3600, now), process.pid, "the winner's lock survives");
+});
+
+// The 'error' handler exists so an async spawn failure cannot crash a hook that has already
+// returned a pid. It must still leave a trace: by then the caller has written that pid into a lock
+// file and a 24h debounce marker, and nothing else explains why the child is gone.
+test('detach records an async spawn failure in the log', async () => {
+  const f = path.join(tmp(), 'graphgen.log');
+  detach('/nonexistent/binary', [], { logFile: f });
+  for (let i = 0; i < 100 && !fs.readFileSync(f, 'utf8').includes('spawn failed'); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.match(fs.readFileSync(f, 'utf8'), /spawn failed: .*ENOENT/);
 });

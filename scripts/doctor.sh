@@ -233,6 +233,40 @@ stale=$(find "$STATE/run" -name 'search-*.sock' ! -name "search-$model.sock" 2>/
 [ "${stale:-0}" -gt 0 ] && warn "$stale leftover socket(s) in run/" \
   "from the per-project scheme or another model. The next server start evicts them." || true
 
+# The graph-regen lock (#34). Held = a full re-index is running somewhere on this machine and every
+# other session will nudge instead of starting a second one. Read-only: never reclaim it here.
+lock="$STATE/run/graphgen.lock"
+if [ -f "$lock" ]; then
+  lock_pid=$(awk '{print $1}' "$lock" 2>/dev/null)
+  lock_at=$(awk '{print $2}' "$lock" 2>/dev/null)
+  # Each field validated SEPARATELY before any arithmetic, because a lock truncated mid-write to
+  # just "123" leaves a digit-only pid and an empty age — concatenating them hid that, and the age
+  # then defaulted to 0 and reported a 56-year-old lock instead of a gone owner. An unusable age
+  # zeroes the pid too, so both land on the same verdict lockHolder() reaches via Number.isFinite.
+  case "${lock_pid:-}" in (*[!0-9]*|'') lock_pid=0 ;; esac
+  case "${lock_at:-}" in (*[!0-9]*|'') lock_pid=0; lock_at=0 ;; esac
+  age=$(( $(date +%s) - ${lock_at:-0} ))
+  # The staleness window is ASKED FOR, not copied: a second 3600 here would drift the moment
+  # LOCK_MAX_SECONDS moves, and doctor would then call a held lock stale (or the reverse).
+  # Deliberately NOT guarded by `command -v node`, unlike the perf block: a missing node leaves
+  # lock_max empty and the branch below already reports that, where the perf block has no output
+  # to fall back to. Do not "fix" this into a guard that silently skips the check.
+  # pathToFileURL, not a bare path: import() of an absolute path is read as a package specifier.
+  lock_max=$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.LOCK_MAX_SECONDS))' \
+    "$ROOT/hooks/lib/graph-staleness-check.mjs" 2>/dev/null)
+  case "${lock_max:-}" in (*[!0-9]*|'') lock_max='' ;; esac
+  # `-gt 0`: `kill -0 0` signals our own process group and succeeds, so pid 0 would read as alive.
+  if [ "${lock_pid:-0}" -le 0 ] || ! kill -0 "$lock_pid" 2>/dev/null; then
+    warn "stale graphgen lock in run/" "its owner is gone. The next stale session reclaims it; nothing to do."
+  elif [ -z "$lock_max" ]; then
+    warn "graphgen lock held by live pid $lock_pid (${age}s)" "could not read LOCK_MAX_SECONDS, so whether it is still within its window is unknown. See the runtime section."
+  elif [ "$age" -lt "$lock_max" ]; then
+    ok "graph re-index running (pid $lock_pid, ${age}s) — other sessions will not start a second one"
+  else
+    warn "stale graphgen lock in run/" "held for ${age}s, past the ${lock_max}s window. The next stale session reclaims it; nothing to do."
+  fi
+fi
+
 echo
 echo "recall"
 if [ "$(recall_config)" = "true" ]; then

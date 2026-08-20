@@ -107,6 +107,102 @@ export const which = (cmd) => {
 };
 
 /**
+ * A machine-wide lock for background work too heavy to run twice at once.
+ *
+ * Ownership is a LIVE PID, not a release call. A detached child cannot be trusted to clean up
+ * after itself — it is killed, the machine sleeps, the parent hook exited minutes ago — so the
+ * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
+ * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
+ */
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** The pid holding `file`, or null when the lock is free, stale or unreadable. */
+export function lockHolder(file, maxSeconds, now = nowSeconds()) {
+  try {
+    const [pid, at] = fs.readFileSync(file, 'utf8').trim().split(/\s+/).map(Number);
+    // pid 0 is the one value the finite check lets through and `kill(0, 0)` accepts: POSIX reads
+    // it as "my own process group", so a lock truncated to `0 <ts>` would read as held for an hour.
+    if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(at)) return null;
+    if (now - at >= maxSeconds) return null;
+    return alive(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `wx` claims a lock that must not already exist; the default `w` hands an existing one over.
+ *
+ * `at` is a TIMESTAMP, and is named to match lockHolder's destructured `at` — `maxSeconds` next to
+ * it is a duration, and one edit blurring the two would silently change what "stale" means.
+ */
+export function writeLock(file, pid, at, flag = 'w') {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${pid} ${at}\n`, { flag });
+    return true;
+  } catch {
+    return false; // a lock we cannot write degrades to the old behaviour: another run may start
+  }
+}
+
+export function releaseLock(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* already gone, or never ours */
+  }
+}
+
+const inode = (file) => {
+  try {
+    return fs.statSync(file).ino;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Claim the lock. True only for the caller that created the file.
+ *
+ * `wx` is atomic, so two sessions racing for a FREE lock always pick one winner. Reclaiming a
+ * STALE one cannot be atomic — unlink and create are two syscalls — and a plain unlink-then-create
+ * is wrong: the loser's unlink deletes the winner's fresh lock and it then claims the empty path,
+ * so both believe they hold it and both start a re-index (the thing this exists to prevent).
+ *
+ * The inode is therefore captured before the staleness verdict and re-checked after it: a lock
+ * that has been replaced in the meantime is somebody else's, and we stand down rather than unlink
+ * it.
+ *
+ * ponytail: that narrows the race to the gap between the re-check and the unlink and does not
+ * close it. Closing it needs an OS-level lock, which Node's `fs` does not expose — the upgrade is
+ * a native `flock` binding, and the residual cost is one extra re-index in an interleaving of
+ * microseconds that also requires the previous owner to be dead.
+ */
+export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
+  const claim = () => writeLock(file, pid, at, 'wx');
+  if (claim()) return true;
+
+  const stale = inode(file);
+  if (lockHolder(file, maxSeconds, now)) return false;
+  // Vanished between the failed claim and here — released by its owner, not reclaimed by a rival.
+  // `wx` settles it atomically, so retry rather than reporting busy while nothing is running. It
+  // must NOT unlink first: the file it would remove could be a lock created since.
+  if (stale === null) return claim();
+  if (inode(file) !== stale) return false; // replaced: the lock we judged is somebody else's now
+
+  releaseLock(file);
+  return claim();
+}
+
+/**
  * Locate the `claude` CLI.
  *
  * PATH first, then the three install locations a GUI-launched session may not have on PATH. One
@@ -150,6 +246,8 @@ function openLog(file) {
  * detached + unref + stdio to a file (or /dev/null) is the whole contract: this process must be
  * free to exit immediately, and the child must survive it. A child that inherited a pipe would
  * hold the event loop open; one that inherited stderr would print into the session transcript.
+ *
+ * Returns the child pid, or null. The pid is what a caller writes into its lock file.
  */
 export function detach(cmd, args, { env, cwd, logFile } = {}) {
   const fd = logFile ? openLog(logFile) : null;
@@ -160,10 +258,18 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
       stdio: fd == null ? 'ignore' : ['ignore', fd, fd],
       env: env ? { ...process.env, ...env } : process.env,
     });
+    // spawn() reports a missing binary ASYNCHRONOUSLY, so the throw below never sees it and an
+    // unhandled 'error' would take the hook down after it had already decided to succeed. It is
+    // recorded rather than swallowed: by this point a pid has been returned and the caller has
+    // written it into a lock and a 24h marker, so a child that dies moments later leaves state
+    // behind that only this line explains. Same reason as the LOCK HANDOVER FAILED banner.
+    child.on('error', (e) => {
+      if (logFile) logBanner(logFile, `spawn failed: ${e.message}`, new Date().toISOString());
+    });
     child.unref();
-    return true;
+    return child.pid ?? null;
   } catch {
-    return false; // a hook never fails because its background work could not start
+    return null; // a hook never fails because its background work could not start
   } finally {
     if (fd != null) {
       try {

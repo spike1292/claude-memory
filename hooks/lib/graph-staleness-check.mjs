@@ -8,6 +8,7 @@
 //   - report >= HEAD         -> fresh
 //   - debounced (24h/repo)   -> nudge, don't respawn while stale
 //   - claude CLI missing     -> nudge
+// then check() claims the machine-wide lock, or nudges: the debounce above is only per-repo.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,17 +21,29 @@ import {
   readMarker,
   writeMarker,
   withinDebounce,
+  logBanner,
+  takeLock,
+  writeLock,
+  releaseLock,
   nowSeconds,
   systemMessage,
 } from './hook-io.mjs';
 
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
 
+// The debounce is keyed by repo, so N stale repos opened together were N legal parallel runs, each
+// a headless `claude` plus an MCP server plus a full index (#34). One machine-wide lock, because a
+// full index is already CPU-bound: a second concurrent run buys nothing and costs everything.
+export const LOCK_MAX_SECONDS = 3600; // a full index is minutes; an hour means gone or wedged
+
 export const STALE_MESSAGE =
   'Graph report is stale — regenerating in the background (full re-index, takes a few minutes). ' +
   'It will be current for your next session.';
 export const NUDGE_MESSAGE =
   'Graph report is stale (commits newer than the report) — run /memory:graph-report to refresh.';
+export const BUSY_MESSAGE =
+  'Graph report is stale — a background regeneration is already running for another repo. ' +
+  'It will pick this one up on a later session, or run /memory:graph-report to refresh now.';
 
 // Full index mode preserves clone/semantic edges, which an incremental pass drops.
 export const REGEN_PROMPT =
@@ -117,6 +130,7 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
     slug,
     claude,
     marker,
+    lock: path.join(stateDir('run'), 'graphgen.lock'),
     now,
     logFile: path.join(stateDir('logs'), 'graphgen.log'),
   };
@@ -128,17 +142,47 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * `--dangerously-skip-permissions`: a headless run must call MCP tools and Write with no prompt.
  * `CBM_GRAPHGEN_CHILD=1`: the background run fires SessionStart too, and without this it would
  * schedule another one of itself.
+ *
+ * The lock is claimed HERE and not in plan(): an advisory read there would decide nothing the
+ * atomic create does not, and the create is the only thing that picks one winner out of two
+ * sessions starting in the same second. It is then rewritten to hold the CHILD's pid, since the
+ * child is what the next session must wait on — this process is about to exit.
+ *
+ * `opts` is passed straight through to plan(); the entry never sets it. It exists so a test can
+ * point this at a scratch vault instead of the real one — a check() that could only read the live
+ * vault could not be tested at all, and this is the half with the lock sequence in it.
  */
-export function check(cwd) {
-  const p = plan(cwd);
+export function check(cwd, opts) {
+  const p = plan(cwd, opts);
   if (p.action === 'silent') return '';
   if (p.action === 'nudge') return systemMessage(p.message);
+  if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
+    return systemMessage(BUSY_MESSAGE);
 
-  writeMarker(p.marker, p.now);
-  detach(
+  const pid = detach(
     p.claude,
     ['-p', REGEN_PROMPT, '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions'],
     { cwd, logFile: p.logFile, env: { CBM_GRAPHGEN_CHILD: '1' } },
   );
+  // The marker is written only for a run that actually started. It used to be written first, to
+  // stop a second session piling in while the spawn was still in flight; the lock does that now,
+  // and writing it first meant a failed spawn muted this repo for 24h as if a regen had happened.
+  if (!pid) {
+    releaseLock(p.lock);
+    return systemMessage(NUDGE_MESSAGE);
+  }
+  writeMarker(p.marker, p.now);
+  // The handover is the one write whose failure is WORSE than not locking at all: the file would
+  // keep this process's pid, this process exits a line later, and the next session would then see
+  // a dead owner and start a second re-index while the child is still indexing. Nothing better can
+  // be done about it here — a filesystem that refused this write will refuse the next one too — so
+  // it is made loud instead of silent. This repo's own list of past defects has "silent fail-open
+  // from missing logging" on it.
+  if (!writeLock(p.lock, pid, p.now))
+    logBanner(
+      p.logFile,
+      `LOCK HANDOVER FAILED (child ${pid}) — another session may start a second re-index`,
+      new Date().toISOString(),
+    );
   return systemMessage(p.message);
 }
