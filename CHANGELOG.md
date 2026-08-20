@@ -384,7 +384,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   deletes the winner's fresh lock and it then claims the empty path, so both start a re-index. The
   inode is captured before the staleness verdict and re-checked after it, which narrows that
   interleaving to one syscall; closing it needs an OS-level lock Node's `fs` does not expose, and
-  the code says so rather than claiming a guarantee it does not provide. A session that loses says so instead of going quiet. `/memory:doctor` reports
+  the code says so rather than claiming a guarantee it does not provide. A session that
+  loses the lock prints `BUSY_MESSAGE` rather than going quiet, and `/memory:doctor` reports
   a held lock with its pid and age, and names a stale one as harmless. The wiring is covered by an
   integration test, not only by its constants: a scratch `$CLAUDE_MEMORY_HOME`, two real git repos
   stale against a scratch vault, and a stand-in `claude` that sleeps, so the lock left behind is

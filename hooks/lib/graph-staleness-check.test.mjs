@@ -123,25 +123,28 @@ test('check takes the lock, hands it to the child, and the next session stands d
     const { lock, marker } = plan(cwd, { vaultRoot });
     assert.strictEqual(readMarker(marker), 0, 'precondition: this repo has never been regenerated');
 
+    // The try starts at the call that SPAWNS: every assertion after it must run inside, or a
+    // failing one leaks the stand-in `claude` for its full sleep.
     const first = check(cwd, { vaultRoot });
-    assert.ok(first.includes(STALE_MESSAGE), 'the session that wins says it is regenerating');
-    assert.ok(readMarker(marker) > 0, 'and the 24h per-repo debounce is now set');
-
-    const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
-    assert.notStrictEqual(pid, process.pid, 'the lock is handed to the CHILD — this process exits');
-    assert.doesNotThrow(() => process.kill(pid, 0), 'and that child is alive');
-
-    // The whole point: ANOTHER repo's SessionStart. Its own 24h marker is unset, so the per-repo
-    // debounce has nothing to say here — only the machine-wide lock stops it.
-    const other = staleRepo();
-    staleReport(other, vaultRoot);
     try {
+      assert.ok(first.includes(STALE_MESSAGE), 'the session that wins says it is regenerating');
+      assert.ok(readMarker(marker) > 0, 'and the 24h per-repo debounce is now set');
+
+      const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
+      assert.notStrictEqual(pid, process.pid, 'the lock is handed to the CHILD — this one exits');
+      assert.doesNotThrow(() => process.kill(pid, 0), 'and that child is alive');
+
+      // The whole point: ANOTHER repo's SessionStart. Its own 24h marker is unset, so the per-repo
+      // debounce has nothing to say here — only the machine-wide lock stops it.
+      const other = staleRepo();
+      staleReport(other, vaultRoot);
       assert.ok(check(other, { vaultRoot }).includes(BUSY_MESSAGE), 'no second re-index starts');
     } finally {
+      const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
       try {
         process.kill(pid, 'SIGKILL');
       } catch {
-        /* already gone */
+        /* already gone, or never spawned */
       }
     }
 
