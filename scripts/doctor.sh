@@ -243,7 +243,8 @@ if [ -f "$lock" ]; then
   # a bash error. Mirrors Number.isFinite() in lockHolder().
   case "${lock_pid:-}${lock_at:-}" in (*[!0-9]*|'') lock_pid=''; lock_at=0 ;; esac
   age=$(( $(date +%s) - ${lock_at:-0} ))
-  if [ -n "${lock_pid:-}" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$age" -lt 3600 ]; then
+  # `-gt 0`: `kill -0 0` signals our own process group and succeeds, so pid 0 would read as alive.
+  if [ "${lock_pid:-0}" -gt 0 ] && kill -0 "$lock_pid" 2>/dev/null && [ "$age" -lt 3600 ]; then
     ok "graph re-index running (pid $lock_pid, ${age}s) — other sessions will not start a second one"
   else
     warn "stale graphgen lock in run/" "owner is gone or over an hour old. The next stale session reclaims it; nothing to do."

@@ -187,3 +187,13 @@ test('detach survives a missing binary instead of throwing later', async () => {
   detach('/nonexistent/binary', []);
   await new Promise((r) => setTimeout(r, 50));
 });
+
+// pid 0 is not "no such process": POSIX reads kill(0, sig) as "my own process group", so it is the
+// one value that passes a finite check and then reports itself alive. A truncated lock file is the
+// realistic way it gets written.
+test('a lock claiming pid 0 holds nothing', () => {
+  const f = path.join(tmp(), 'graphgen.lock');
+  writeLock(f, 0, 1000);
+  assert.strictEqual(lockHolder(f, 3600, 1000), null);
+  assert.strictEqual(takeLock(f, process.pid, 1000, 3600, 1000), true, 'and is reclaimable');
+});

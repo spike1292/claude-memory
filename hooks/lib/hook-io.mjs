@@ -131,7 +131,9 @@ const alive = (pid) => {
 export function lockHolder(file, maxSeconds, now = nowSeconds()) {
   try {
     const [pid, at] = fs.readFileSync(file, 'utf8').trim().split(/\s+/).map(Number);
-    if (!Number.isFinite(pid) || !Number.isFinite(at)) return null;
+    // pid 0 is the one value the finite check lets through and `kill(0, 0)` accepts: POSIX reads
+    // it as "my own process group", so a lock truncated to `0 <ts>` would read as held for an hour.
+    if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(at)) return null;
     if (now - at >= maxSeconds) return null;
     return alive(pid) ? pid : null;
   } catch {
