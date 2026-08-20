@@ -8,7 +8,20 @@
 #
 # Exit 0 always: this is a report, and a non-zero exit inside a slash command reads as the
 # command itself being broken.
+#
+# `--perf` appends the performance report — server RSS, index sizes, disk split, recall round trip.
+# One entry point rather than a second command: the perf numbers are only readable next to the
+# wiring checks, and a paste of the whole thing is what an issue wants. It is Node
+# (scripts/doctor-perf.mjs), because every line of it loops.
 set -uo pipefail
+
+perf=0
+for arg in "$@"; do
+  case "$arg" in
+    --perf) perf=1 ;;
+    *) echo "unknown option: $arg — usage: doctor.sh [--perf]"; exit 0 ;;
+  esac
+done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -281,6 +294,24 @@ fi
 if recall_enabled && [ -z "$(ls "$STATE/logs"/recall-*.jsonl 2>/dev/null)" ]; then
   warn "recall is armed but has never logged a decision" \
        "expected until a session runs with it armed; if it persists, the hook is not firing."
+fi
+
+if [ "$perf" -eq 1 ]; then
+  # Read-only like everything else here: it never starts a server, loads a model or re-indexes, so
+  # a missing socket is reported as "not measured" rather than spawned into existence.
+  if command -v node >/dev/null 2>&1; then
+    echo
+    echo "performance"
+    # `^.` and not `^`: indenting a blank line would leave trailing whitespace behind.
+    # --disable-warning, not `2>/dev/null`: node:sqlite is experimental below 22.22 and its warning
+    # lands MID-REPORT (the handle is opened lazily, while the index table is being built), but
+    # stderr still has to reach the reader — a crash in doctor-perf.mjs must not vanish.
+    node --disable-warning=ExperimentalWarning "$ROOT/scripts/doctor-perf.mjs" "$PWD" 2>&1 |
+      sed 's/^./  &/'
+  else
+    echo
+    warn "cannot report performance without node" "see the runtime section above."
+  fi
 fi
 
 echo

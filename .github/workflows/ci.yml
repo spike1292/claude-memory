@@ -107,6 +107,24 @@ jobs:
           fi
           echo "node:test confined to test files"
 
+      # `## [Unreleased]` becomes the release notes VERBATIM, and .prettierignore excludes *.md, so
+      # nothing else looks at its whitespace. A stray double blank line was caught by review twice
+      # in one day (#43, #44) before this existed. Scoped to that section on purpose: an already
+      # released section carries one, and rewriting shipped notes for whitespace is churn.
+      - name: no double blank line in the [Unreleased] changelog section
+        run: |
+          bad=$(awk '
+            /^## \[/ { inside = ($0 ~ /^## \[Unreleased\]/) }
+            inside && prev == "" && $0 == "" { print NR }
+            inside { prev = $0 }
+          ' CHANGELOG.md)
+          if [ -n "$bad" ]; then
+            echo "::error file=CHANGELOG.md::double blank line in [Unreleased] at line(s): $bad"
+            echo "that section ships as the release notes verbatim; prettier does not format *.md"
+            exit 1
+          fi
+          echo "[Unreleased] spacing is single-blank throughout"
+
       # node:sqlite belongs to the entry points, which own the handle. A lib/ module that opens a
       # database is not testable without one, and the side-effect check above cannot catch this:
       # it suppresses ExperimentalWarning precisely because node:sqlite emits one, so an import
