@@ -43,13 +43,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   arm, and usually the trailing weak-hit floor for the keyword one, which applies it first. The
   clock lives in the hook entry, which owns it, and reads from process start, so `ms` includes
   node's own startup — the part of the wait nobody could otherwise see. The arms stay pure and
-  untimed. Every new field
-  follows `score`'s existing discipline — an unmeasured value omits its key rather than logging a
+  untimed. Every new field follows `score`'s existing discipline — an unmeasured value omits its key rather than logging a
   `0` that reads like a measurement — and the reader counts each metric only over the lines that
   carry it, so log files written before this change stay readable and are reported as unmeasured
   rather than as fast. `via` semantics are unchanged: `'server'` is the fused vector arm and its
   absence is the BM25 fallback.
-||||||| ae7ce77
 
 ### Changed
 
