@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-20
+
 ### Added
 
 - **`scripts/bench-hooks.mjs` — a repeatable measurement of what a hook costs at startup.**
@@ -905,7 +907,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/spike1292/claude-memory/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/spike1292/claude-memory/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/spike1292/claude-memory/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/spike1292/claude-memory/compare/v0.2.0...v0.3.0

@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Layered memory for Claude Code",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "plugins": [
     {
       "name": "memory",
       "source": "./",
       "description": "Layered memory for Claude Code, backed by a plain-Markdown Obsidian vault. Per-project facts, session logs, auto-distilled lessons, and hybrid semantic + lexical recall that runs entirely on your machine.",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "author": {
         "name": "Henk Bakker"
       },
