@@ -16,7 +16,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   diagnostic. Source stays plain `.mjs` and stays directly runnable: nothing resolves an absolute
   install path and `hooks/hooks.json` names entry paths as a contract, so a `dist/` would have put a
   compiled file where both of those expect a source file. `tsc` is pinned and invoked through `npx`,
-  never a devDependency, for the same reason Prettier is. A second step asserts that every tracked
+  never a devDependency, for the same reason Prettier is — and pinned to TypeScript 7, the native
+  compiler, whose platform-specific binaries stay in the npm cache rather than any user's plugin
+  cache precisely because `npx` runs it. A second step asserts that every tracked
   `.mjs` is actually in what `tsc` checked, because a check that passes by checking nothing has
   shipped here twice. The numbers behind the choice — 34 diagnostics under bare `checkJs` and none
   of them a real bug, 499 under `strict`, and 80 from `strictNullChecks` alone, so the staged path

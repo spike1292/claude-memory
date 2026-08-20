@@ -36,7 +36,8 @@ Bump the version in `package.json`'s scripts and in `.github/workflows/ci.yml` t
 exists only for that check: `checkJs` + `strict` + both unused-symbol flags over `hooks/`, `scripts/` and
 `stubs/`, tests included. Source stays runnable `.mjs`, since `hooks.json` and `commands/*.md` name
 entry paths as a contract and a `dist/` would put a compiled file where both expect a source file.
-`tsc` is pinned and run via `npx` under the same devDependency rule as Prettier, and the check lives
+`tsc` is pinned to TypeScript 7 — the native compiler, whose platform binaries stay in the npm cache
+because `npx` runs it — under the same devDependency rule as Prettier, and the check lives
 in CI's `install` job because that is the only one doing a real `npm ci` — `@types/node` arrives
 transitively with `@huggingface/transformers` and is what makes `node:fs` check at all.
 **There is no linter and adding one needs new numbers**: of the three rules that were candidates,

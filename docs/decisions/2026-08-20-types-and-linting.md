@@ -1,6 +1,6 @@
 # JSDoc types with `checkJs --strict`, checked in CI; no linter
 
-**Date:** 2026-08-20 · **Status:** shipped · **Closes [#35](https://github.com/spike1292/claude-memory/issues/35)**
+**Date:** 2026-08-20 · **Status:** shipped · **Amended the same day: TypeScript 7** · **Closes [#35](https://github.com/spike1292/claude-memory/issues/35)**
 
 ## Question
 
@@ -16,7 +16,8 @@ form; and add a linter, and if so which rules.
 ## What the measurements said
 
 `tsc` 5.9.2 was run over every non-test `.mjs` in `hooks/` and `scripts/` — 39 files, 6737 lines —
-at the commit before any annotation existed.
+at the commit before any annotation existed. The repo has since moved to TypeScript 7; see the
+amendment at the end for what those rows become, and why the decision does not change.
 
 | Configuration | Diagnostics |
 | --- | --- |
@@ -141,3 +142,34 @@ Two pre-existing defects, both filed separately rather than smuggled into a typi
   `while (allNames.length < TOTAL)`, so a low `--notes` silently yields 120 notes.
 - `report()` in `scripts/lib/doctor-perf.mjs` has an `= {}` default it cannot honour: `state` is used
   unguarded. Every caller passes the bag, so the default is unreachable and misleading.
+
+## Amendment: TypeScript 7
+
+The pin moved from 5.9.2 to 7.0.2 the same day. TypeScript 7 is the native compiler — a Go
+rewrite shipped as platform-specific binaries under `optionalDependencies`, the way esbuild does it.
+On this tree it is a drop-in: zero diagnostics against the same `tsconfig.json`, `--listFiles`
+unchanged so the coverage guard still works, and an identical message on a planted error. It is not
+faster here in any way worth quoting — 61 files with `skipLibCheck` is ~0.15 s either way, and the
+`npx` fetch dominates. Speed was not the reason; being on the supported line is.
+
+**The platform binaries never reach a user.** That matters in this repo more than most, since
+`slim-install.mjs` exists precisely because a dependency shipped every platform's native runtime in
+one tarball. `tsc` is invoked through `npx`, so it lands in the npm cache and never in
+`package.json`, never in the lockfile, and never in a version-pinned plugin cache.
+
+Two behavioural differences found while migrating, neither of which changes anything here because
+`tsconfig.json` was already explicit about both:
+
+- **`strict` is on by default in 7.** The explicit `"strict": true` is now redundant and stays
+  anyway: it states the intent, and it does not silently follow a future change of default.
+- **`"types"` is load-bearing where it used to be optional.** Without `"types": ["node"]`, 7 does
+  not pick up `@types/node` from `node_modules/@types` the way 5 did, and reports
+  `TS2591: Cannot find name 'process'` on nearly every file. Ours sets it, and the case this repo
+  actually cares about — `@types/node` ceasing to arrive transitively — still fails loudly:
+  `TS2688: Cannot find type definition file for 'node'`, exit 1, verified rather than assumed.
+
+The table above was measured with 5.9.2 and is left as it was taken. Under 7.0.2 the same tree gives
+33 rather than 34 with strict off, 100 rather than 91 for strict-minus-`noImplicitAny`, and 89 for
+`strictNullChecks` on top of an otherwise non-strict config. The decision rests on the shape — bare
+`checkJs` finds no bugs, a staged path exists and was declined — and that shape holds on both
+compilers.
