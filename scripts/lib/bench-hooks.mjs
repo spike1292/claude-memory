@@ -275,14 +275,20 @@ export function sample(node, args, opts, n) {
 }
 
 /**
+ * One timed row: the name shown in the table plus everything stats() reports for it.
+ *
+ * @typedef {{name: string, n: number, min: number, median: number, p90: number, max: number,
+ *   failures: number}} Row
+ */
+
+/**
  * Run the whole bench. Returns rows; printing is the entry's job.
  *
  * `onRow` exists so a 20-iteration run over twelve rows reports as it goes rather than after
  * twenty seconds of silence.
  *
  * @param {{root: string, pluginRoot: string, cwd: string, slug: string, n?: number,
- *   notes?: number, node?: string, onRow?: (row: {name: string, n: number, min: number,
- *   median: number, p90: number, max: number, failures: number}) => void}} opts
+ *   notes?: number, node?: string, onRow?: (row: Row) => void}} opts
  */
 export function bench({
   root,
@@ -298,9 +304,9 @@ export function bench({
   const env = benchEnv(root);
   assertIsolated(env, root);
 
-  /** @type {any[]} */
+  /** @type {Row[]} */
   const rows = [];
-  const push = (/** @type {any} */ r) => {
+  const push = (/** @type {Row} */ r) => {
     rows.push(r);
     onRow(r);
   };
