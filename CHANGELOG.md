@@ -377,9 +377,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   its CPU and RAM on them (#34). `hooks/lib/hook-io.mjs` gains a lock whose owner is a **live pid**
   rather than a release call: a detached child that is killed, or a machine that sleeps, frees the
   lock by dying, and an hour-old lock is stale even when its pid is alive (a recycled pid, or a
-  wedged run). The claim is an atomic `wx` create in `check()`, not the advisory read in `plan()` —
-  that read only avoids the work, the create is what picks one winner out of two sessions starting
-  in the same second. A session that loses says so instead of going quiet. `/memory:doctor` reports
+  wedged run). The claim is a single atomic `wx` create in `check()`; an advisory
+  read in `plan()` was tried and removed, because it decided nothing the create does not and it
+  masked the mutation that deletes the create. A session that loses says so instead of going quiet. `/memory:doctor` reports
   a held lock with its pid and age, and names a stale one as harmless. The wiring is covered by an
   integration test, not only by its constants: a scratch `$CLAUDE_MEMORY_HOME`, two real git repos
   stale against a scratch vault, and a stand-in `claude` that sleeps, so the lock left behind is

@@ -114,10 +114,6 @@ export const which = (cmd) => {
  * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
  * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
  */
-export function lockPath(name) {
-  return path.join(stateDir('run'), `${name}.lock`);
-}
-
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -141,11 +137,22 @@ export function lockHolder(file, maxSeconds, now = nowSeconds()) {
   }
 }
 
-export function writeLock(file, pid, seconds) {
+/** `wx` claims a lock that must not already exist; the default `w` hands an existing one over. */
+export function writeLock(file, pid, seconds, flag = 'w') {
   try {
-    fs.writeFileSync(file, `${pid} ${seconds}\n`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${pid} ${seconds}\n`, { flag });
+    return true;
   } catch {
-    /* a lock we cannot write degrades to the old behaviour: another run may start */
+    return false; // a lock we cannot write degrades to the old behaviour: another run may start
+  }
+}
+
+export function releaseLock(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* already gone, or never ours */
   }
 }
 
@@ -156,31 +163,11 @@ export function writeLock(file, pid, seconds) {
  * unlinks first and then races on `wx` again, so a stale lock also has exactly one taker.
  */
 export function takeLock(file, pid, seconds, maxSeconds, now = nowSeconds()) {
-  const claim = () => {
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `${pid} ${seconds}\n`, { flag: 'wx' });
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const claim = () => writeLock(file, pid, seconds, 'wx');
   if (claim()) return true;
   if (lockHolder(file, maxSeconds, now)) return false;
-  try {
-    fs.unlinkSync(file);
-  } catch {
-    /* someone else got there first — claim() below decides */
-  }
+  releaseLock(file); // stale: drop it, then race on `wx` again so it still has one taker
   return claim();
-}
-
-export function releaseLock(file) {
-  try {
-    fs.unlinkSync(file);
-  } catch {
-    /* already gone, or never ours */
-  }
 }
 
 /**

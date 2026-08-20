@@ -7,8 +7,8 @@
 //   - not a git work tree    -> nothing to compare against
 //   - report >= HEAD         -> fresh
 //   - debounced (24h/repo)   -> nudge, don't respawn while stale
-//   - another run in flight  -> nudge; the lock is machine-wide, the debounce is only per-repo
 //   - claude CLI missing     -> nudge
+// then check() claims the machine-wide lock, or nudges: the debounce above is only per-repo.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,8 +21,6 @@ import {
   readMarker,
   writeMarker,
   withinDebounce,
-  lockPath,
-  lockHolder,
   takeLock,
   writeLock,
   releaseLock,
@@ -35,7 +33,6 @@ export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise
 // The debounce is keyed by repo, so N stale repos opened together were N legal parallel runs, each
 // a headless `claude` plus an MCP server plus a full index (#34). One machine-wide lock, because a
 // full index is already CPU-bound: a second concurrent run buys nothing and costs everything.
-export const LOCK_NAME = 'graphgen';
 export const LOCK_MAX_SECONDS = 3600; // a full index is minutes; an hour means gone or wedged
 
 export const STALE_MESSAGE =
@@ -126,17 +123,13 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   const claude = findClaude();
   if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'no claude CLI', slug };
 
-  const lock = lockPath(LOCK_NAME);
-  if (lockHolder(lock, LOCK_MAX_SECONDS, now))
-    return { action: 'nudge', message: BUSY_MESSAGE, reason: 'another run in flight', slug };
-
   return {
     action: 'regen',
     message: STALE_MESSAGE,
     slug,
     claude,
     marker,
-    lock,
+    lock: path.join(stateDir('run'), 'graphgen.lock'),
     now,
     logFile: path.join(stateDir('logs'), 'graphgen.log'),
   };
@@ -149,10 +142,10 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * `CBM_GRAPHGEN_CHILD=1`: the background run fires SessionStart too, and without this it would
  * schedule another one of itself.
  *
- * The lock is claimed HERE and not in plan(): plan()'s check is advisory and racy, and the atomic
- * create is the only thing that picks one winner out of two sessions starting in the same second.
- * It is then rewritten to hold the CHILD's pid, since the child is what the next session must wait
- * on — this process is about to exit.
+ * The lock is claimed HERE and not in plan(): an advisory read there would decide nothing the
+ * atomic create does not, and the create is the only thing that picks one winner out of two
+ * sessions starting in the same second. It is then rewritten to hold the CHILD's pid, since the
+ * child is what the next session must wait on — this process is about to exit.
  *
  * `opts` is passed straight through to plan(); the entry never sets it. It exists so a test can
  * point this at a scratch vault instead of the real one — a check() that could only read the live

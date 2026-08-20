@@ -13,11 +13,10 @@ import {
   plan,
   check,
   DEBOUNCE_SECONDS,
-  LOCK_MAX_SECONDS,
   BUSY_MESSAGE,
   STALE_MESSAGE,
 } from './graph-staleness-check.mjs';
-import { readMarker, nowSeconds } from './hook-io.mjs';
+import { readMarker } from './hook-io.mjs';
 
 const emptyVault = () => fs.mkdtempSync(path.join(os.tmpdir(), 'graph-vault-'));
 
@@ -70,13 +69,6 @@ test('the debounce window is 24h', () => {
   assert.strictEqual(DEBOUNCE_SECONDS, 86_400);
 });
 
-// The debounce is per repo; the lock is per machine. Both bounds exist and neither replaces the
-// other — see #34.
-test('the regen lock is bounded at an hour and has its own message', () => {
-  assert.strictEqual(LOCK_MAX_SECONDS, 3600);
-  assert.notStrictEqual(BUSY_MESSAGE, '', 'a busy session says why it is not regenerating');
-});
-
 // The constants above prove nothing about the wiring. What follows drives plan() and check()
 // against a real stale repo, a real vault and a real lock file: the two branches this feature IS.
 //
@@ -98,11 +90,10 @@ const staleRepo = () => {
 
 /** A vault holding a report for `cwd` that records a commit this repo has never had. */
 const staleReport = (cwd, vaultRoot = emptyVault()) => {
-  const { slug } = reportFor(cwd, vaultRoot);
-  const dir = path.join(vaultRoot, 'Graph', slug);
+  const dir = path.join(vaultRoot, 'Graph', reportFor(cwd, vaultRoot).slug);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'GRAPH_REPORT.md'), '---\ncommit: 0000000\n---\n');
-  return { vaultRoot, slug };
+  return vaultRoot;
 };
 
 /** Run `fn` with a scratch state dir and a `claude` that sleeps instead of indexing. */
@@ -117,7 +108,7 @@ const isolated = (fn) => {
   process.env.CLAUDE_MEMORY_HOME = state;
   process.env.PATH = `${bin}${path.delimiter}${prev.p}`;
   try {
-    return fn({ state });
+    return fn();
   } finally {
     if (prev.home === undefined) delete process.env.CLAUDE_MEMORY_HOME;
     else process.env.CLAUDE_MEMORY_HOME = prev.home;
@@ -125,30 +116,9 @@ const isolated = (fn) => {
   }
 };
 
-test('plan REGENERATES a stale repo, and stands down while another run holds the lock', () => {
-  const cwd = staleRepo();
-  const { vaultRoot } = staleReport(cwd);
-  isolated(() => {
-    const go = plan(cwd, { vaultRoot });
-    assert.strictEqual(go.action, 'regen', 'precondition: this repo is stale and regenerable');
-    assert.ok(go.lock, 'the lock path travels with the decision');
-
-    // Another repo's session, already running: a live pid in the machine-wide lock.
-    fs.writeFileSync(go.lock, `${process.pid} ${nowSeconds()}\n`);
-    const busy = plan(cwd, { vaultRoot });
-    assert.strictEqual(busy.action, 'nudge');
-    assert.strictEqual(busy.reason, 'another run in flight');
-    assert.strictEqual(busy.message, BUSY_MESSAGE);
-
-    // A dead owner is not an owner. This is what stops one killed run wedging every repo.
-    fs.writeFileSync(go.lock, `2147483647 ${nowSeconds()}\n`);
-    assert.strictEqual(plan(cwd, { vaultRoot }).action, 'regen');
-  });
-});
-
 test('check takes the lock, hands it to the child, and the next session stands down', () => {
   const cwd = staleRepo();
-  const { vaultRoot } = staleReport(cwd);
+  const vaultRoot = staleReport(cwd);
   isolated(() => {
     const { lock, marker } = plan(cwd, { vaultRoot });
     assert.strictEqual(readMarker(marker), 0, 'precondition: this repo has never been regenerated');
@@ -161,13 +131,12 @@ test('check takes the lock, hands it to the child, and the next session stands d
     assert.notStrictEqual(pid, process.pid, 'the lock is handed to the CHILD — this process exits');
     assert.doesNotThrow(() => process.kill(pid, 0), 'and that child is alive');
 
+    // The whole point: ANOTHER repo's SessionStart. Its own 24h marker is unset, so the per-repo
+    // debounce has nothing to say here — only the machine-wide lock stops it.
+    const other = staleRepo();
+    staleReport(other, vaultRoot);
     try {
-      // The whole point: ANOTHER repo's SessionStart. Its own 24h marker is unset, so the
-      // per-repo debounce has nothing to say here — only the machine-wide lock stops it.
-      const other = staleRepo();
-      staleReport(other, vaultRoot);
-      const second = check(other, { vaultRoot });
-      assert.ok(second.includes(BUSY_MESSAGE), 'no second full re-index starts');
+      assert.ok(check(other, { vaultRoot }).includes(BUSY_MESSAGE), 'no second re-index starts');
     } finally {
       try {
         process.kill(pid, 'SIGKILL');
@@ -175,5 +144,10 @@ test('check takes the lock, hands it to the child, and the next session stands d
         /* already gone */
       }
     }
+
+    // Reclaiming a DEAD owner's lock is not asserted through this path: the killed child stays a
+    // zombie while this test process lives, so it still answers kill(pid, 0). Only the real hook,
+    // which exits immediately and lets init reap, sees it disappear. That branch is covered
+    // directly in hook-io.test.mjs ('a lock whose owner died is reclaimed').
   });
 });
