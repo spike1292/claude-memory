@@ -21,6 +21,7 @@ import {
   readMarker,
   writeMarker,
   withinDebounce,
+  logBanner,
   takeLock,
   writeLock,
   releaseLock,
@@ -171,6 +172,17 @@ export function check(cwd, opts) {
     return systemMessage(NUDGE_MESSAGE);
   }
   writeMarker(p.marker, p.now);
-  writeLock(p.lock, pid, p.now);
+  // The handover is the one write whose failure is WORSE than not locking at all: the file would
+  // keep this process's pid, this process exits a line later, and the next session would then see
+  // a dead owner and start a second re-index while the child is still indexing. Nothing better can
+  // be done about it here — a filesystem that refused this write will refuse the next one too — so
+  // it is made loud instead of silent. This repo's own list of past defects has "silent fail-open
+  // from missing logging" on it.
+  if (!writeLock(p.lock, pid, p.now))
+    logBanner(
+      p.logFile,
+      `LOCK HANDOVER FAILED (child ${pid}) — another session may start a second re-index`,
+      new Date().toISOString(),
+    );
   return systemMessage(p.message);
 }
