@@ -245,6 +245,9 @@ if [ -f "$lock" ]; then
   age=$(( $(date +%s) - ${lock_at:-0} ))
   # The staleness window is ASKED FOR, not copied: a second 3600 here would drift the moment
   # LOCK_MAX_SECONDS moves, and doctor would then call a held lock stale (or the reverse).
+  # Deliberately NOT guarded by `command -v node`, unlike the perf block: a missing node leaves
+  # lock_max empty and the branch below already reports that, where the perf block has no output
+  # to fall back to. Do not "fix" this into a guard that silently skips the check.
   # pathToFileURL, not a bare path: import() of an absolute path is read as a package specifier.
   lock_max=$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.LOCK_MAX_SECONDS))' \
     "$ROOT/hooks/lib/graph-staleness-check.mjs" 2>/dev/null)

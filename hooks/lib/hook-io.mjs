@@ -192,7 +192,11 @@ export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
 
   const stale = inode(file);
   if (lockHolder(file, maxSeconds, now)) return false;
-  if (stale === null || inode(file) !== stale) return false; // reclaimed by someone else already
+  // Vanished between the failed claim and here — released by its owner, not reclaimed by a rival.
+  // `wx` settles it atomically, so retry rather than reporting busy while nothing is running. It
+  // must NOT unlink first: the file it would remove could be a lock created since.
+  if (stale === null) return claim();
+  if (inode(file) !== stale) return false; // replaced: the lock we judged is somebody else's now
 
   releaseLock(file);
   return claim();
