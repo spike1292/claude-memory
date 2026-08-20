@@ -239,6 +239,9 @@ lock="$STATE/run/graphgen.lock"
 if [ -f "$lock" ]; then
   lock_pid=$(awk '{print $1}' "$lock" 2>/dev/null)
   lock_at=$(awk '{print $2}' "$lock" 2>/dev/null)
+  # Both fields validated before any arithmetic: a malformed lock must read as a stale lock, not as
+  # a bash error. Mirrors Number.isFinite() in lockHolder().
+  case "${lock_pid:-}${lock_at:-}" in (*[!0-9]*|'') lock_pid=''; lock_at=0 ;; esac
   age=$(( $(date +%s) - ${lock_at:-0} ))
   if [ -n "${lock_pid:-}" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$age" -lt 3600 ]; then
     ok "graph re-index running (pid $lock_pid, ${age}s) — other sessions will not start a second one"

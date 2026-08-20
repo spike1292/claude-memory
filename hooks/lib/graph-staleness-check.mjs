@@ -161,16 +161,19 @@ export function check(cwd) {
   if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
     return systemMessage(BUSY_MESSAGE);
 
-  writeMarker(p.marker, p.now);
   const pid = detach(
     p.claude,
     ['-p', REGEN_PROMPT, '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions'],
     { cwd, logFile: p.logFile, env: { CBM_GRAPHGEN_CHILD: '1' } },
   );
+  // The marker is written only for a run that actually started. It used to be written first, to
+  // stop a second session piling in while the spawn was still in flight; the lock does that now,
+  // and writing it first meant a failed spawn muted this repo for 24h as if a regen had happened.
   if (!pid) {
     releaseLock(p.lock);
     return systemMessage(NUDGE_MESSAGE);
   }
+  writeMarker(p.marker, p.now);
   writeLock(p.lock, pid, p.now);
   return systemMessage(p.message);
 }
