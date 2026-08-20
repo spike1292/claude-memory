@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import {
   formatBytes,
   table,
@@ -16,6 +15,7 @@ import {
   parseIndexName,
   indexStats,
   probeSocket,
+  report,
 } from './doctor-perf.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'perf-'));
@@ -122,16 +122,15 @@ test('dirUsage counts a socket', async () => {
   }
 });
 
-test('indexStats reads a real db, and reports an unreadable one instead of hiding it', () => {
+// No `node:sqlite` here on purpose: the entry owns the handle, so this drives the injected reader.
+// CI fails the build if any lib/ file — tests included — imports it.
+test('indexStats reports what the reader returns, and names what it cannot read', () => {
   const d = tmp();
-
-  const db = new DatabaseSync(path.join(d, 'semantic-proj-bge-m3.db'));
-  db.exec('create table chunks (id integer primary key, note text, file text)');
-  db.exec("insert into chunks (note,file) values ('a','one.md'),('b','one.md'),('c','two.md')");
-  db.close();
+  fs.writeFileSync(path.join(d, 'semantic-proj-bge-m3.db'), 'x'.repeat(64));
   fs.writeFileSync(path.join(d, 'semantic-broken-bge-m3.db'), 'not a database');
+  const counts = (f) => (f.includes('broken') ? null : { chunks: 3, notes: 2 });
 
-  const rows = indexStats(d, MODELS);
+  const rows = indexStats(d, MODELS, counts);
   const ok = rows.find((r) => r.slug === 'proj');
   assert.strictEqual(ok.chunks, 3);
   assert.strictEqual(ok.notes, 2, 'notes are distinct files, not chunks');
@@ -143,6 +142,16 @@ test('indexStats reads a real db, and reports an unreadable one instead of hidin
 
 test('indexStats on a missing db dir is empty, not a throw', () => {
   assert.deepStrictEqual(indexStats(path.join(tmp(), 'nope'), MODELS), []);
+});
+
+// The default reader returns null for everything, so a caller that forgets to inject one gets
+// "unreadable" rows rather than a crash on an undefined call.
+test('indexStats without a reader still lists the files', () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'semantic-proj-bge-m3.db'), 'x');
+  const [row] = indexStats(d, MODELS);
+  assert.strictEqual(row.slug, 'proj');
+  assert.strictEqual(row.chunks, null);
 });
 
 test('probeSocket never spawns: a missing socket is an answer', async () => {
@@ -191,4 +200,19 @@ test('probeSocket gives up rather than hanging the report', async () => {
     for (const c of open) c.destroy();
     await new Promise((r) => server.close(r));
   }
+});
+
+// The probe is a real query: the server embeds it, which reloads the ~1.3 GB model if modelIdleMs
+// had unloaded it. Measuring the unloaded state must not create the loaded one.
+test('report does not probe a server that has unloaded its model', async () => {
+  const state = tmp();
+  const idle = '  501  15360  02:00:00 node /x/scripts/memory-semantic.mjs --serve';
+  const out = await report({ state, activeModel: 'bge-m3', activeSlug: 'x', ps: idle });
+  assert.match(out, /model is unloaded — probing would reload it/);
+  assert.match(out, /starts a server or reloads a model/);
+});
+
+test('report says so when there is no server at all', async () => {
+  const out = await report({ state: tmp(), activeModel: 'bge-m3', activeSlug: 'x', ps: '' });
+  assert.match(out, /no server running/);
 });

@@ -16,7 +16,6 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
 
 /** Bytes as a human reads them. Two significant-ish digits: 1.3 GB, not 1.29 GB or 1 GB. */
 export function formatBytes(n) {
@@ -78,8 +77,11 @@ export const modelState = (rss) => (rss >= MODEL_RSS_THRESHOLD ? 'model loaded' 
  * Total bytes and file count under `dir`. A missing directory is zeroes, not a throw.
  *
  * `recursive: true` walks it; the entries come back with a `parentPath`, so no recursion here.
- * Symlinks are NOT followed — `models/` is symlinked into a shared `node_modules` on a machine that
- * has run share-modules.mjs, and following it would bill one copy of the weights to every version.
+ *
+ * Symlinks are skipped rather than followed. Not for a reason specific to these directories — none
+ * of the six scanned here is a link today — but because every past size check in this repo that
+ * dereferenced one measured something other than what it claimed to (risk R8 in
+ * docs/architecture.md), and `$CLAUDE_MEMORY_HOME` is exactly where links get added.
  */
 export function dirUsage(dir) {
   let entries;
@@ -125,10 +127,12 @@ export function parseIndexName(file, modelKeys) {
 /**
  * One row per index on this machine: size, chunks, notes, and when it was last written.
  *
- * Opened read-only. A db that cannot be read is reported as such rather than skipped — an
- * unreadable index is precisely the state that makes recall go quiet.
+ * `counts(file)` is injected: `node:sqlite` belongs to the entry point, which owns the handle, so
+ * this module takes the numbers as values and stays testable without a database. Enforced by CI.
+ * A db it cannot read comes back null and is REPORTED as unreadable rather than skipped — that is
+ * precisely the state that makes recall go quiet.
  */
-export function indexStats(dbDir, modelKeys = []) {
+export function indexStats(dbDir, modelKeys = [], counts = () => null) {
   let files;
   try {
     files = fs.readdirSync(dbDir).filter((f) => f.endsWith('.db'));
@@ -147,13 +151,10 @@ export function indexStats(dbDir, modelKeys = []) {
       } catch {
         /* reported as zeroes */
       }
-      try {
-        const db = new DatabaseSync(full, { readOnly: true });
-        row.chunks = db.prepare('select count(*) c from chunks').get().c;
-        row.notes = db.prepare('select count(distinct file) c from chunks').get().c;
-        db.close();
-      } catch {
-        /* chunks stay null -> rendered as "unreadable" */
+      const c = counts(full);
+      if (c) {
+        row.chunks = c.chunks;
+        row.notes = c.notes;
       }
       return row;
     })
@@ -220,6 +221,7 @@ export async function report({
   activeModel,
   activeSlug,
   modelKeys = [],
+  counts,
   ps = readPs(),
 } = {}) {
   const out = [];
@@ -243,8 +245,20 @@ export async function report({
     );
   }
 
+  // A probe is a REAL query: the server embeds it, which reloads the ~1.3 GB model if modelIdleMs
+  // had unloaded it, and every connection resets the idle timers. So it is only sent to a server
+  // that is already holding the model — measuring the unloaded state would destroy the state being
+  // measured, and hand back a first-query time that is really a model load.
   const sock = path.join(state, 'run', `search-${activeModel}.sock`);
-  const first = await probeSocket(sock, { slug: activeSlug });
+  const holding = servers.some((s) => s.rss >= MODEL_RSS_THRESHOLD);
+  const first = holding
+    ? await probeSocket(sock, { slug: activeSlug })
+    : {
+        ok: false,
+        reason: servers.length
+          ? 'model is unloaded — probing would reload it'
+          : 'no server running',
+      };
   const second = first.ok ? await probeSocket(sock, { slug: activeSlug }) : null;
   out.push(
     section(
@@ -254,11 +268,12 @@ export async function report({
             `(${first.hits ?? '?'} hits, slug ${activeSlug})\n` +
             'A first query far above the second means the index for this slug was loaded on demand.'
         : `not measured: ${first.reason}\n` +
-            'Nothing here starts a server. Run a prompt with recall armed, then re-run.',
+            'Nothing here starts a server or reloads a model. Run a prompt with recall armed to ' +
+            'warm one, then re-run.',
     ),
   );
 
-  const rows = indexStats(path.join(state, 'db'), modelKeys);
+  const rows = indexStats(path.join(state, 'db'), modelKeys, counts);
   out.push(
     section(
       'indexes',
