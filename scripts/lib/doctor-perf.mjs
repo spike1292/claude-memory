@@ -59,7 +59,7 @@ export function parseServers(psOutput) {
     if (!m) continue;
     const [, pid, rssKb, elapsed, cmd] = m;
     if (!/memory-semantic\.mjs/.test(cmd) || !/--serve/.test(cmd)) continue;
-    out.push({ pid: Number(pid), rss: Number(rssKb) * 1024, elapsed, cmd });
+    out.push({ pid: Number(pid), rss: Number(rssKb) * 1024, elapsed });
   }
   return out;
 }
@@ -74,33 +74,30 @@ export const MODEL_RSS_THRESHOLD = 100 * 1024 * 1024;
 
 export const modelState = (rss) => (rss >= MODEL_RSS_THRESHOLD ? 'model loaded' : 'model unloaded');
 
-/** Recursive size of a directory: total bytes and file count. Missing directory is zeroes. */
+/**
+ * Total bytes and file count under `dir`. A missing directory is zeroes, not a throw.
+ *
+ * `recursive: true` walks it; the entries come back with a `parentPath`, so no recursion here.
+ * Symlinks are NOT followed — `models/` is symlinked into a shared `node_modules` on a machine that
+ * has run share-modules.mjs, and following it would bill one copy of the weights to every version.
+ */
 export function dirUsage(dir) {
-  let bytes = 0;
-  let files = 0;
   let entries;
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { recursive: true, withFileTypes: true });
   } catch {
     return { bytes: 0, files: 0, missing: true };
   }
+  let bytes = 0;
+  let files = 0;
   for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      const sub = dirUsage(p);
-      bytes += sub.bytes;
-      files += sub.files;
-    } else {
-      try {
-        // Symlinks are NOT followed: models/ is symlinked into a shared node_modules on a machine
-        // that has run share-modules.mjs, and following it would bill one copy to every version.
-        const st = fs.lstatSync(p);
-        if (st.isSymbolicLink()) continue;
-        bytes += st.size;
-        files++;
-      } catch {
-        /* raced with a delete */
-      }
+    // Not `isFile()`: run/ holds unix SOCKETS, and reporting it as empty would hide the servers.
+    if (e.isDirectory() || e.isSymbolicLink()) continue;
+    try {
+      bytes += fs.lstatSync(path.join(e.parentPath, e.name)).size;
+      files++;
+    } catch {
+      /* raced with a delete */
     }
   }
   return { bytes, files, missing: false };
@@ -115,11 +112,12 @@ export function dirUsage(dir) {
  * here would drift and silently mislabel every row.
  */
 export function parseIndexName(file, modelKeys) {
+  if (!file.startsWith('semantic-')) return null;
   for (const model of [...modelKeys].sort((a, b) => b.length - a.length)) {
-    const m = new RegExp(
-      `^semantic-(.+)-${model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.db$`,
-    ).exec(file);
-    if (m) return { slug: m[1], model };
+    const tail = `-${model}.db`;
+    if (!file.endsWith(tail)) continue;
+    const slug = file.slice('semantic-'.length, -tail.length);
+    if (slug) return { slug, model };
   }
   return null;
 }
@@ -305,7 +303,7 @@ export async function report({
 }
 
 /** `ps` for every process on the machine. Failure is an empty listing, never a throw. */
-export function readPs() {
+function readPs() {
   try {
     return execFileSync('ps', ['-Ao', 'pid=,rss=,etime=,command='], {
       encoding: 'utf8',

@@ -66,8 +66,7 @@ test('parseServers survives an empty or failed ps', () => {
 // The command column is last precisely so a path with spaces cannot eat the columns before it.
 test('parseServers reads a command containing spaces', () => {
   const [s] = parseServers('  7  100  00:01 node /My Dir/scripts/memory-semantic.mjs --serve');
-  assert.strictEqual(s.pid, 7);
-  assert.ok(s.cmd.includes('My Dir'));
+  assert.deepStrictEqual(s, { pid: 7, rss: 100 * 1024, elapsed: '00:01' });
 });
 
 test('modelState splits the two states well clear of the threshold', () => {
@@ -108,6 +107,19 @@ test('dirUsage sums a tree, skips symlinks, and reports a missing directory', ()
 
   assert.deepStrictEqual(dirUsage(d), { bytes: 150, files: 2, missing: false });
   assert.deepStrictEqual(dirUsage(path.join(d, 'nope')), { bytes: 0, files: 0, missing: true });
+});
+
+// run/ holds unix sockets and almost nothing else, so counting only regular files reports the
+// directory the servers live in as empty. Caught exactly that way once.
+test('dirUsage counts a socket', async () => {
+  const d = tmp();
+  const server = net.createServer(() => {});
+  await new Promise((r) => server.listen(path.join(d, 'search.sock'), r));
+  try {
+    assert.strictEqual(dirUsage(d).files, 1);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('indexStats reads a real db, and reports an unreadable one instead of hiding it', () => {

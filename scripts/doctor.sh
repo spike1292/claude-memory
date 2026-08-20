@@ -19,8 +19,7 @@ perf=0
 for arg in "$@"; do
   case "$arg" in
     --perf) perf=1 ;;
-    -h|--help) echo "usage: doctor.sh [--perf]"; exit 0 ;;
-    *) echo "unknown option: $arg (try --help)"; exit 0 ;;
+    *) echo "unknown option: $arg — usage: doctor.sh [--perf]"; exit 0 ;;
   esac
 done
 
