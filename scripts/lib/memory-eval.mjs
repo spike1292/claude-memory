@@ -25,8 +25,13 @@ import { bm25, lexTokens } from './lexical.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
+/** @typedef {{ note: string, text: string }} EvalDoc */
+/** @typedef {{ note: string, score: number }} RankedNote */
+/** @typedef {{ q: string, results: RankedNote[] }} RankedQuery */
+
 // ---------------------------------------------------------------- pure helpers (self-tested)
 
+/** @param {string} stem @returns {Set<string>} */
 export function titleTokens(stem) {
   return new Set(
     stem
@@ -40,6 +45,7 @@ export function titleTokens(stem) {
 // Strip everything that would leak the answer's own vocabulary or isn't prose: frontmatter,
 // headings, code fences, wikilinks — and critically the `_Also asked as:` line, which is a list of
 // queries the note was written to match. Generating a question from it would score our own aliases.
+/** @param {string} raw @returns {string} */
 export function evalBody(raw) {
   let t = raw.replace(/^---\n[\s\S]*?\n---\n?/, '');
   t = t.replace(/```[\s\S]*?```/g, ' ');
@@ -52,6 +58,12 @@ export function evalBody(raw) {
 
 // A paraphrase question must not reuse the note's title words — that is the whole point of the
 // semantic style; otherwise it degenerates into a keyword lookup and every channel scores well.
+/**
+ * @param {string} body
+ * @param {string} stem
+ * @param {string} style
+ * @returns {string|null}
+ */
 export function pickSentence(body, stem, style) {
   const tt = titleTokens(stem);
   const sents = body
@@ -59,6 +71,7 @@ export function pickSentence(body, stem, style) {
     .map((s) => s.replace(/\s+/g, ' ').trim())
     .filter((s) => s.length >= 40 && s.length <= 220 && /[a-z]/.test(s));
   if (!sents.length) return null;
+  /** @param {string} s @returns {number} */
   const score = (s) => {
     const toks = new Set(
       s
@@ -87,6 +100,12 @@ export function pickSentence(body, stem, style) {
 // lexical.mjs are the only implementation. k1/b are passed explicitly for the same reason
 // hooks/lib/memory-recall.mjs passes them — the inlined arithmetic was 1.2/0.75 and a change to
 // bm25()'s defaults must not move this silently.
+/**
+ * @param {readonly EvalDoc[]} docs
+ * @param {readonly string[]} queries
+ * @param {number} k
+ * @returns {RankedQuery[]}
+ */
 export function lexicalRank(docs, queries, k) {
   const scored = docs.map((d) => ({ note: d.note, toks: lexTokens(d.text) }));
   return queries.map((q) => {
@@ -101,8 +120,13 @@ export function lexicalRank(docs, queries, k) {
   });
 }
 
+/**
+ * @param {readonly { rank: number }[]} perCase
+ * @returns {{ recall: Record<number, number>, mrr: number }}
+ */
 export function metrics(perCase) {
   const n = perCase.length || 1;
+  /** @type {Record<number, number>} */
   const recall = {};
   for (const k of RECALL_KS)
     recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;

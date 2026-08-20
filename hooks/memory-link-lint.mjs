@@ -7,6 +7,7 @@ import { lint } from './lib/memory-link-lint.mjs';
 
 let cwd = process.cwd();
 try {
+  // @ts-expect-error Node's Response accepts a Readable; the DOM BodyInit type does not.
   const j = JSON.parse(await new Response(process.stdin).text());
   if (j?.cwd) cwd = j.cwd;
 } catch {

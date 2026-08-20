@@ -191,7 +191,8 @@ test('distill-session', async (t) => {
         env,
       });
     } catch (e) {
-      viaLink = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+      const err = /** @type {NodeJS.ErrnoException & { stdout?: string, stderr?: string }} */ (e);
+      viaLink = `${err.stdout ?? ''}${err.stderr ?? ''}`;
     }
     assert.match(
       viaLink,
@@ -270,7 +271,7 @@ test('distill-session', async (t) => {
 
 // ---------------------------------------------------------------- the gate
 
-const transcriptWith = (lines) => {
+const transcriptWith = (/** @type {number} */ lines) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-gate-'));
   const f = path.join(d, 'transcript.jsonl');
   fs.writeFileSync(f, '{}\n'.repeat(lines));
@@ -293,19 +294,28 @@ test('gatePlan refuses to distil its own extractor run', () => {
 });
 
 test('gatePlan honours Claude Code stop_hook_active', () => {
-  const p = gatePlan({
-    hook_event_name: 'Stop',
-    stop_hook_active: true,
-    transcript_path: transcriptWith(500),
-  });
+  const p = /** @type {import('./distill-session.mjs').SkipGate} */ (
+    gatePlan({
+      hook_event_name: 'Stop',
+      stop_hook_active: true,
+      transcript_path: transcriptWith(500),
+    })
+  );
   assert.strictEqual(p.run, false);
   assert.strictEqual(p.reason, 'stop_hook_active');
 });
 
 test('gatePlan needs a transcript that exists', () => {
-  assert.strictEqual(gatePlan({ hook_event_name: 'SessionEnd' }).reason, 'no transcript path');
   assert.strictEqual(
-    gatePlan({ hook_event_name: 'SessionEnd', transcript_path: '/nope/nope.jsonl' }).reason,
+    /** @type {import('./distill-session.mjs').SkipGate} */ (
+      gatePlan({ hook_event_name: 'SessionEnd' })
+    ).reason,
+    'no transcript path',
+  );
+  assert.strictEqual(
+    /** @type {import('./distill-session.mjs').SkipGate} */ (
+      gatePlan({ hook_event_name: 'SessionEnd', transcript_path: '/nope/nope.jsonl' })
+    ).reason,
     'transcript missing',
   );
 });
@@ -399,7 +409,8 @@ test('the ctx source label carries the same key as the directory it indexes', (t
   // test resolves project_key from `git remote get-url origin`, so a developer with a global
   // `[url] insteadOf` rewrite would see a different remote here than the assertion expects and the
   // test would fail on a machine setting rather than on the code (2026-08-19, review of #31).
-  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
   const slug = 'github.com-spike1292-claude-memory';

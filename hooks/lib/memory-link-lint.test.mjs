@@ -19,6 +19,10 @@ test('linkTargets parses aliases and headings', () => {
 });
 
 const M = '/v/Memory/p';
+/**
+ * @param {readonly (readonly [string, string])[]} pairs
+ * @returns {[string, string][]}
+ */
 const corpus = (pairs) => pairs.map(([f, t]) => [path.join(M, f), t]);
 
 test('findOrphans counts sibling links but not the MOC or self', () => {
@@ -54,8 +58,9 @@ test('findOrphans counts sibling links but not the MOC or self', () => {
 });
 
 test('findDrift only flags bolded multi-digit figures a note contradicts', () => {
+  /** @type {Record<string, string>} */
   const notes = { a: 'the count is 1172 today', b: 'no figures here' };
-  const read = (tgt) => (tgt in notes ? notes[tgt] : null);
+  const read = (/** @type {string} */ tgt) => (tgt in notes ? notes[tgt] : null);
   assert.deepStrictEqual(
     findDrift('- [[a]] holds **1,172** notes', read),
     [],

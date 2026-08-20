@@ -35,6 +35,7 @@ if (process.argv.includes('--check-file')) {
 
 const repo = process.argv.slice(2).find((a) => !a.startsWith('--')) || process.cwd();
 // maxBuffer: `git ls-files` in this monorepo is ~2 MB; the 1 MB default fails with ENOBUFS.
+/** @param {string} c @param {string} [cwd] @returns {string} */
 const sh = (c, cwd = repo) =>
   execSync(c, {
     cwd,
@@ -53,6 +54,7 @@ if (!fs.existsSync(MEM)) {
   process.exit(0);
 }
 
+/** @param {string} f @returns {string} */
 const read = (f) => fs.readFileSync(f, 'utf8');
 
 // --deferred: the carry-forward list alone, no repo scan. /memory:prune calls this first.
@@ -77,7 +79,9 @@ if (process.argv.includes('--deferred')) {
   }
   process.exit(0);
 }
+/** @param {string} d @returns {string[]} */
 const mds = (d) => (fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.md')) : []);
+/** @param {string} title @param {readonly string[]} lines */
 const section = (title, lines) => {
   if (!lines.length) return;
   console.log(`\n## ${title}`);
@@ -85,6 +89,8 @@ const section = (title, lines) => {
 };
 
 // ---------------------------------------------------------------- load
+/** @typedef {{ file: string, layer: string, body: string }} Note */
+/** @type {Map<string, Note>} */
 const notes = new Map(); // name -> { file, layer, body }
 for (const f of mds(MEM)) {
   if (f === 'MEMORY.md') continue;
@@ -123,7 +129,9 @@ const permanent = new Set();
   }
 })(path.join(VAULT, 'permanent'));
 
+/** @param {string} t @returns {string[]} */
 const linksIn = (t) => [...t.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim());
+/** @param {string} n @returns {boolean} */
 const resolves = (n) => notes.has(n) || permanent.has(n);
 
 // ---------------------------------------------------------------- MOC + graph
@@ -141,11 +149,11 @@ section(
     .map((n) => `[[${n}]] — no such note in Memory, Insights or permanent/`),
 );
 
-const inbound = new Map([...notes.keys()].map((k) => [k, 0]));
+const inbound = new Map([...notes.keys()].map((k) => /** @type {[string, number]} */ ([k, 0])));
 for (const [k, v] of notes)
   for (const l of new Set(linksIn(v.body)))
     if (inbound.has(l) && l !== k && path.basename(v.file) !== 'MEMORY.md')
-      inbound.set(l, inbound.get(l) + 1);
+      inbound.set(l, /** @type {number} */ (inbound.get(l)) + 1);
 section(
   'MOC-only (no inbound sibling link)',
   memNames
@@ -155,10 +163,13 @@ section(
 
 // ---------------------------------------------------------------- frontmatter
 // confidence: lives under metadata:, so it is indented. A ^-anchored grep reports 46 false hits.
+/** @type {string[]} */
 const noConfidence = [];
+/** @type {string[]} */
 const nameMismatch = [];
 for (const n of memNames) {
-  const fm = (notes.get(n).body.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
+  const body = /** @type {Note} */ (notes.get(n)).body;
+  const fm = (body.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
   if (!hasConfidence(fm)) noConfidence.push(n);
   const declared = (fm.match(/^name:\s*(.+)$/m) || [])[1];
   if (declared && declared.trim().replace(/^["']|["']$/g, '') !== n)
@@ -173,11 +184,14 @@ const tracked = new Set(sh('git ls-files').split('\n').filter(Boolean));
 const bySuffix = buildSuffixIndex(tracked);
 const TOP = '(?:apps|libs|tools|scripts|docs|styles|assets|e2e|\\.claude|\\.agents|\\.gitlab)';
 const claimRe = new RegExp(`(?:^|[\\s\`'"(\\[])(${TOP}/[A-Za-z0-9._/-]*[A-Za-z0-9._-])`, 'g');
+/** @type {string[]} */
 const abbreviated = [];
+/** @type {string[]} */
 const suffixOnly = [];
+/** @type {string[]} */
 const absent = [];
 for (const n of memNames) {
-  const body = notes.get(n).body;
+  const body = /** @type {Note} */ (notes.get(n)).body;
   for (const line of body.split('\n')) {
     for (const m of line.matchAll(claimRe)) {
       const c = m[1].replace(/[.,;:]+$/, '');
@@ -210,14 +224,14 @@ if (abbreviated.length)
 // silently reverses — see REFLECTIONS 2026-08-14, where the prod cutover killed exactly such a
 // claim in two notes and nothing pointed at it. No lint can know which event kills which claim;
 // this only narrows where to look.
+/** @type {string[]} */
 const timeBombs = [];
-for (const n of memNames)
-  notes
-    .get(n)
-    .body.split('\n')
-    .forEach((l, i) => {
-      if (isStandingNegative(l)) timeBombs.push(`${n}:${i + 1} ${l.trim().slice(0, 120)}`);
-    });
+for (const n of memNames) {
+  const body = /** @type {Note} */ (notes.get(n)).body;
+  body.split('\n').forEach((l, i) => {
+    if (isStandingNegative(l)) timeBombs.push(`${n}:${i + 1} ${l.trim().slice(0, 120)}`);
+  });
+}
 section(
   `Standing-negative claims (${timeBombs.length}) — re-verify against anything that happened since`,
   timeBombs.slice(0, 25).concat(timeBombs.length > 25 ? [`… +${timeBombs.length - 25} more`] : []),
@@ -229,6 +243,7 @@ const STOP = new Set(
     ' ',
   ),
 );
+/** @param {string} t @returns {Set<string>} */
 const toks = (t) =>
   new Set(
     t
@@ -237,6 +252,7 @@ const toks = (t) =>
       .split(/\s+/)
       .filter((w) => w.length > 3 && !STOP.has(w)),
   );
+/** @type {{ jac: number, fo: string, a: string, b: string }[]} */
 const dups = [];
 for (const fo of FOLDERS) {
   const docs = mds(path.join(INS, fo)).map((f) => ({
@@ -264,8 +280,11 @@ if (dups.length)
   );
 
 // ---------------------------------------------------------------- supersession (bi-temporal)
+/** @type {string[]} */
 const proseOnly = [];
+/** @type {string[]} */
 const supersededOk = [];
+/** @type {string[]} */
 const danglingSupersede = [];
 for (const [n, v] of notes) {
   const s = supersessionState(v.body);
@@ -283,12 +302,14 @@ section('Supersession not machine-readable', proseOnly);
 
 // FRESH-1: unstamped volatile claims. Reported for Memory only — Insights notes are lessons, and a
 // dated Insight filename already makes the whole note a snapshot.
+/** @type {string[]} */
 const unstamped = [];
 for (const n of memNames)
-  for (const f of freshnessFindings(notes.get(n).body))
+  for (const f of freshnessFindings(/** @type {Note} */ (notes.get(n)).body))
     unstamped.push(`${n}:${f.line} ${f.text.slice(0, 110)}`);
 // CLAIM-1 runs over BOTH layers: the inflated recall figure reached L1 notes, L3 Decision notes and
 // a public README, so restricting it to Memory would have missed most of the damage.
+/** @type {string[]} */
 const unprovenanced = [];
 for (const [n, v] of notes) {
   const lines = v.body.split('\n');

@@ -52,8 +52,10 @@ const hasJq = (() => {
  * The slug is derived from a path string, so an unresolved one would make bash's $PWD fallback and
  * the payload cwd disagree and the slug would differ between them.
  */
+/** @type {string[]} */
 const worlds = [];
 
+/** @param {string} label */
 function scratch(label) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `vms-${label}-`)));
   worlds.push(tmp);
@@ -74,6 +76,11 @@ function scratch(label) {
   return { tmp, home, vault, memHome, env };
 }
 
+/**
+ * @param {ReturnType<typeof scratch>} world
+ * @param {string} name
+ * @param {string | null} [remote]
+ */
 function makeRepo(world, name, remote) {
   const repo = path.join(world.tmp, name);
   fs.mkdirSync(repo, { recursive: true });
@@ -87,6 +94,10 @@ function makeRepo(world, name, remote) {
  * Run the hook exactly as SessionStart does: payload on stdin, cwd set, built env.
  * `pwd` defaults to the payload cwd — they agree in every subtest but the jq one, which is
  * the only place the two sources of truth can be told apart.
+ *
+ * @param {ReturnType<typeof scratch>} world
+ * @param {string} repo
+ * @param {string} [pwd]
  */
 function runSync(world, repo, pwd = repo) {
   return execFileSync('bash', [SCRIPT], {
@@ -98,17 +109,24 @@ function runSync(world, repo, pwd = repo) {
   });
 }
 
-const slugOf = (dir) => dir.replaceAll('/', '-');
-const write = (p, s) => {
+const slugOf = (/** @type {string} */ dir) => dir.replaceAll('/', '-');
+const write = (/** @type {string} */ p, /** @type {string} */ s) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, s);
 };
-const sha = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const sha = (/** @type {string} */ p) =>
+  crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 
-/** Every path under root as `type\trelpath\tpayload`, sorted. Symlink targets, file hashes. */
+/**
+ * Every path under root as `type\trelpath\tpayload`, sorted. Symlink targets, file hashes.
+ *
+ * @param {string} root
+ * @returns {string[]}
+ */
 function manifest(root) {
+  /** @type {string[]} */
   const out = [];
-  const walk = (dir) => {
+  const walk = (/** @type {string} */ dir) => {
     for (const e of fs
       .readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => (a.name < b.name ? -1 : 1))) {
@@ -125,7 +143,11 @@ function manifest(root) {
   return out;
 }
 
-/** Content hashes of every regular file under root — the "nothing was deleted" oracle. */
+/**
+ * Content hashes of every regular file under root — the "nothing was deleted" oracle.
+ *
+ * @param {string} root
+ */
 function contents(root) {
   return new Set(
     manifest(root)
@@ -535,7 +557,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     // cry-wolf this oracle dropped mtimes to avoid, arriving from the other direction
     // (2026-08-19). An ADDED entry cannot be a leak from here; a CHANGED or VANISHED one can,
     // and those still fail.
-    const key = (line) => line.split('\t')[0];
+    const key = (/** @type {string} */ line) => line.split('\t')[0];
     const now = new Map(realHomeFingerprint().map((l) => [key(l), l]));
     for (const line of realBefore) {
       assert.strictEqual(

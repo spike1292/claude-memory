@@ -35,6 +35,10 @@ export const STOP = new Set(
   ),
 );
 
+/**
+ * @param {string} s
+ * @returns {string[]}
+ */
 export const lexTokens = (s) =>
   s
     .toLowerCase()
@@ -46,6 +50,16 @@ export const lexTokens = (s) =>
 // k1/b are DEFAULTS here and callers that gate on an absolute score must pass them explicitly:
 // recall's MIN_SCORE = 6.0 and its MIN_SCORE/2 trailing floor are calibrated against 1.2/0.75, and
 // a tune made for the CLI's fusion arm would silently rescale both. See hooks/lib/memory-recall.mjs.
+
+/** @typedef {{ toks: string[] }} Bm25Doc */
+
+/**
+ * @param {readonly Bm25Doc[]} docs
+ * @param {readonly string[]} qTokens
+ * @param {number} [k1]
+ * @param {number} [b]
+ * @returns {number[]}
+ */
 export function bm25(docs, qTokens, k1 = 1.2, b = 0.75) {
   const N = docs.length || 1;
   const df = new Map();

@@ -9,6 +9,7 @@ import path from 'node:path';
 const OSES = new Set(['darwin', 'linux', 'win32']);
 const ARCHES = new Set(['arm64', 'x64', 'ia32']);
 
+/** @type {(p: string) => string[]} */
 const dirs = (p) => {
   try {
     return fs
@@ -24,8 +25,14 @@ const dirs = (p) => {
  * Directories under binDir that cannot load on this platform.
  * Anything whose name is not a known os/arch is left alone: an upstream layout change must
  * make this prune nothing rather than guess. Never returns binDir or a napi-v* dir itself.
+ *
+ * @param {string} binDir
+ * @param {string} [platform]
+ * @param {string} [arch]
+ * @returns {string[]}
  */
 export function pruneTargets(binDir, platform = process.platform, arch = process.arch) {
+  /** @type {string[]} */
   const out = [];
   // Unknown host: every directory would look foreign and the whole runtime would go. Do nothing.
   if (!OSES.has(platform)) return out;
@@ -57,9 +64,16 @@ export function pruneTargets(binDir, platform = process.platform, arch = process
  */
 const GPU_BLOB = /_providers_(cuda|tensorrt|rocm|migraphx)/;
 
+/**
+ * @param {string} binDir
+ * @returns {string[]}
+ */
 export function providerBlobs(binDir) {
+  /** @type {string[]} */
   const out = [];
+  /** @type {(dir: string) => void} */
   const walk = (dir) => {
+    /** @type {import('node:fs').Dirent[]} */
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -91,9 +105,17 @@ export const DELETED = ['@img'];
 
 const STUB_VERSION = '0.0.0-stub';
 
-/** Every directory named `name` that sits directly inside some node_modules/, at any depth. */
+/**
+ * Every directory named `name` that sits directly inside some node_modules/, at any depth.
+ *
+ * @param {string} root
+ * @param {string[]} names
+ * @returns {string[]}
+ */
 export function findPackages(root, names) {
+  /** @type {string[]} */
   const found = [];
+  /** @type {(dir: string) => void} */
   const walk = (dir) => {
     for (const e of dirs(dir)) {
       const p = path.join(dir, e);
@@ -115,7 +137,12 @@ export function findPackages(root, names) {
   return found;
 }
 
-/** True once the stub is in place — keeps a repeated postinstall from re-copying. */
+/**
+ * True once the stub is in place — keeps a repeated postinstall from re-copying.
+ *
+ * @param {string} dir
+ * @returns {boolean}
+ */
 export function isStub(dir) {
   try {
     return (
@@ -126,7 +153,12 @@ export function isStub(dir) {
   }
 }
 
-/** Recursive byte count — only used to report what was freed. */
+/**
+ * Recursive byte count — only used to report what was freed.
+ *
+ * @param {string} p
+ * @returns {number}
+ */
 export function bytes(p) {
   const st = fs.statSync(p);
   if (!st.isDirectory()) return st.size;

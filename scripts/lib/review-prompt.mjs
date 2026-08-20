@@ -19,7 +19,12 @@
  * by one either — a `key` argument with a single argument ever passed was deleted 2026-08-19.
  */
 
-/** Indentation width of a line, or null for a blank one (blanks never close a block scalar). */
+/**
+ * Indentation width of a line, or null for a blank one (blanks never close a block scalar).
+ *
+ * @param {string} line
+ * @returns {number | null}
+ */
 function indentOf(line) {
   if (line.trim() === '') return null;
   return line.length - line.trimStart().length;
@@ -30,13 +35,17 @@ function indentOf(line) {
  *
  * Returns null when the key is absent — null rather than a throw, because the caller wants to say
  * something better than a stack trace about a workflow it could not read.
+ *
+ * @param {string} yaml
+ * @returns {string | null}
  */
 export function reviewPrompt(yaml) {
   const lines = yaml.split('\n');
-  const start = lines.findIndex((l) => /^\s*prompt:\s*\|/.test(l));
+  const start = lines.findIndex((/** @type {string} */ l) => /^\s*prompt:\s*\|/.test(l));
   if (start === -1) return null;
 
-  const keyIndent = indentOf(lines[start]);
+  const keyIndent = /** @type {number} */ (indentOf(lines[start]));
+  /** @type {string[]} */
   const body = [];
   for (const line of lines.slice(start + 1)) {
     const ind = indentOf(line);
@@ -50,6 +59,8 @@ export function reviewPrompt(yaml) {
   while (body.length && body[body.length - 1].trim() === '') body.pop();
   if (!body.length) return null;
 
-  const margin = Math.min(...body.filter((l) => l.trim() !== '').map(indentOf));
+  const margin = Math.min(
+    ...body.filter((l) => l.trim() !== '').map((l) => /** @type {number} */ (indentOf(l))),
+  );
   return body.map((l) => l.slice(margin)).join('\n');
 }

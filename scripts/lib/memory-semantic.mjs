@@ -42,7 +42,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 // The profiles moved out on 2026-08-20 so a caller wanting only the key list is not taken down by
 // this module's exit-on-unknown-model. Their comments went with them — the batch-size-is-1 finding
@@ -52,8 +51,22 @@ import { MODELS } from './models.mjs';
 // its fail-open try, and this module's scope exits the process on an unknown model. Consumers
 // import it from there directly — the re-export that used to sit here was deleted 2026-08-19: a
 // second import path for one implementation is a second thing to keep in step.
-import { CARD, STOP, lexTokens, bm25 } from './lexical.mjs';
-import * as paths from '../../hooks/lib/paths.mjs';
+import { CARD, lexTokens, bm25 } from './lexical.mjs';
+
+/** @typedef {{ note: string, layer: string, heading: string, text: string }} ResultRow */
+/** @typedef {ResultRow & { vec: Uint8Array }} ChunkRow */
+/** @typedef {ResultRow & { toks: string[] }} LexDoc */
+/** @typedef {{ r: ResultRow, s: number }} Scored */
+/**
+ * @template {ResultRow} [T=ChunkRow]
+ * @typedef {object} Bundle
+ * @property {string} slug
+ * @property {string} dbPath
+ * @property {readonly T[]} rowsUsed
+ * @property {LexDoc[]} lexDocs
+ * @property {Map<string, string>} cardByNote
+ * @property {number} loadedAt
+ */
 
 // Which sibling servers should this one evict?
 //
@@ -69,6 +82,11 @@ import * as paths from '../../hooks/lib/paths.mjs';
 // ponytail: last-writer-wins, no coordination. Two servers starting in the same instant can evict
 // each other and both die; the next prompt respawns one, so it self-heals at the cost of one
 // keyword-only recall. Needs a lock only if that is ever observed.
+/**
+ * @param {readonly string[]} names
+ * @param {string} ownName
+ * @returns {string[]}
+ */
 export function evictableSockets(names, ownName) {
   return names.filter((n) => n !== ownName && n.startsWith('search-') && n.endsWith('.sock'));
 }
@@ -90,9 +108,14 @@ export const QUIT = { quit: 1 };
  * - `take()` removes and returns the value for the caller to release; a `take()` while a load is
  *   still in flight returns null and lets that load land. Bounded: the value then waits for the
  *   next `take()`, and for the server that is the following idle tick.
+ *
+ * @template T
+ * @param {() => Promise<T>} load
  */
 export function singleFlight(load) {
+  /** @type {T | null} */
   let value = null;
+  /** @type {Promise<T> | null} */
   let inFlight = null;
   let borrowed = 0;
   return {
@@ -120,6 +143,10 @@ export function singleFlight(load) {
      * that same session frees it underneath native code. Rare — it needs an inference outlasting
      * the idle timer — but it is the same class of bug, and the failure is a native crash rather
      * than a wrong answer.
+     *
+     * @template R
+     * @param {(v: T) => R | Promise<R>} use
+     * @returns {Promise<R>}
      */
     async borrow(use) {
       const v = await this.get();
@@ -156,10 +183,19 @@ export function singleFlight(load) {
  *
  * Entries are never evicted: an index is ~15MB of vectors against the ~1.3GB model, so the process
  * idle timer is a good enough upper bound on how long they live.
+ *
+ * @template {{ loadedAt: number }} T
+ * @param {(key: string) => T} load
  */
 export function mtimeCache(load) {
+  /** @type {Map<string, T>} */
   const entries = new Map();
   return {
+    /**
+     * @param {string} key
+     * @param {number} mtimeMs
+     * @returns {T}
+     */
     get(key, mtimeMs) {
       const have = entries.get(key);
       if (have && mtimeMs <= have.loadedAt) return have;
@@ -182,6 +218,10 @@ export function mtimeCache(load) {
  *
  * Tokenising here rather than per query matters: df/idf does not change per question, so doing it
  * inside the loop would re-tokenise thousands of chunks for every question asked.
+ *
+ * @param {readonly ResultRow[]} rowsUsed
+ * @param {string} [mode]
+ * @returns {LexDoc[]}
  */
 export function buildLexDocs(rowsUsed, mode) {
   if (mode !== 'note')
@@ -192,6 +232,7 @@ export function buildLexDocs(rowsUsed, mode) {
       text: r.text,
       toks: lexTokens(r.text),
     }));
+  /** @type {Map<string, LexDoc>} */
   const byNote = new Map();
   for (const r of rowsUsed) {
     const cur = byNote.get(r.note) ?? {
@@ -225,12 +266,17 @@ export function buildLexDocs(rowsUsed, mode) {
 // A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
 // might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
 // Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
+/**
+ * @param {string} sockPath
+ * @param {number} [timeoutMs]
+ * @returns {Promise<boolean>}
+ */
 export function socketIsLive(sockPath, timeoutMs = 1000) {
   if (!fs.existsSync(sockPath)) return Promise.resolve(false);
   return new Promise((resolve) => {
     const c = net.createConnection(sockPath);
     let settled = false;
-    const done = (v) => {
+    const done = (/** @type {boolean} */ v) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -277,6 +323,10 @@ export const DOC_PREFIX = PROFILE.d;
 
 // ---------------------------------------------------------------- pure helpers (self-tested)
 
+/**
+ * @param {string} raw
+ * @returns {{ meta: string, body: string }}
+ */
 export function stripFrontmatter(raw) {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!m) return { meta: '', body: raw };
@@ -307,6 +357,10 @@ export function stripFrontmatter(raw) {
 // 4 KB strings (32 MB, several times this vault): sha256 36 ms, sha1 24 ms. Twelve milliseconds
 // across a whole vault, against ~1.5 s to embed ONE chunk. sha256 is hardware-accelerated
 // everywhere this runs and is not the digest a FIPS build disables, so it is the boring choice.
+/**
+ * @param {import('node:crypto').BinaryLike} raw
+ * @returns {string}
+ */
 export function contentHash(raw) {
   return crypto.hash('sha256', raw, 'hex');
 }
@@ -316,6 +370,11 @@ export function contentHash(raw) {
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose
 // and a whole-note question cannot reach it — the vector equivalent of the "### Untitled" chunks
 // FTS5 was returning for L1 notes.
+/**
+ * @param {string} name
+ * @param {string} raw
+ * @returns {{ heading: string, text: string }[]}
+ */
 export function chunkNote(name, raw) {
   const { meta, body } = stripFrontmatter(raw);
   const head = meta ? `${name}: ${meta}` : name;
@@ -362,6 +421,14 @@ export function chunkNote(name, raw) {
 // 67.9% -> 53.6%, because plenty of gold answers ARE Insights notes. Reserving slots instead lets
 // the ~47 L1 notes surface without evicting the ~990 Insights ones.
 // `sorted` is descending by `.s`; returns at most K, still score-ordered.
+/**
+ * @template {{ s: number }} T
+ * @param {readonly T[]} sorted
+ * @param {number} K
+ * @param {number} reserve
+ * @param {(x: T) => boolean} isReserved
+ * @returns {T[]}
+ */
 export function fuseReserved(sorted, K, reserve, isReserved) {
   const top = sorted.slice(0, K);
   const need = reserve - top.filter(isReserved).length;
@@ -384,6 +451,11 @@ export function fuseReserved(sorted, K, reserve, isReserved) {
   return [...kept, ...promote].sort((a, b) => b.s - a.s);
 }
 
+/**
+ * @param {ArrayLike<number>} a
+ * @param {ArrayLike<number>} b
+ * @returns {number}
+ */
 export function cosine(a, b) {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
@@ -394,11 +466,18 @@ export function cosine(a, b) {
 // model. Reading it as `new Float32Array(buf, offset, DIM)` does not throw — it silently reinterprets
 // the bytes and returns a plausible-looking score. That is how a mixed-dimension index (384 + 1024 in
 // one table, 2026-08-15) can serve nonsense with no error anywhere.
+/**
+ * @param {readonly Partial<ChunkRow>[]} rows
+ * @param {number} dim
+ * @param {string} [label]
+ */
 export function assertVectorWidth(rows, dim, label = 'index') {
   const want = dim * 4;
-  const bad = rows.filter((r) => r.vec.byteLength !== want);
-  if (!bad.length) return rows;
-  const widths = [...new Set(bad.map((r) => r.vec.byteLength))].join(', ');
+  // `?.`, not `.`: a row reaching here without a vector at all is the same corruption this
+  // exists to catch, and it must produce the message below rather than a TypeError one line up.
+  const bad = rows.filter((r) => r.vec?.byteLength !== want);
+  if (!bad.length) return;
+  const widths = [...new Set(bad.map((r) => r.vec?.byteLength ?? 'missing'))].join(', ');
   console.log(
     `⚠ ${label}: ${bad.length}/${rows.length} vectors are ${widths} bytes, expected ${want} (${dim}-dim).`,
   );
@@ -421,16 +500,22 @@ export function assertVectorWidth(rows, dim, label = 'index') {
 // Cache-Control family both sat unnoticed for weeks because nothing measured this.
 // Union-find over the similarity graph: single-linkage, so a chain of related notes forms one topic
 // rather than requiring every pair to be similar.
+/**
+ * @template {{ vec: ArrayLike<number> }} T
+ * @param {readonly T[]} items
+ * @param {number} minScore
+ * @returns {T[][]}
+ */
 export function clusterNotes(items, minScore) {
   const parent = items.map((_, i) => i);
-  const find = (i) => {
+  const find = (/** @type {number} */ i) => {
     while (parent[i] !== i) {
       parent[i] = parent[parent[i]];
       i = parent[i];
     }
     return i;
   };
-  const union = (a, b) => {
+  const union = (/** @type {number} */ a, /** @type {number} */ b) => {
     const ra = find(a),
       rb = find(b);
     if (ra !== rb) parent[ra] = rb;
@@ -438,17 +523,22 @@ export function clusterNotes(items, minScore) {
   for (let i = 0; i < items.length; i++)
     for (let j = i + 1; j < items.length; j++)
       if (cosine(items[i].vec, items[j].vec) >= minScore) union(i, j);
+  /** @type {Map<number, T[]>} */
   const groups = new Map();
   items.forEach((it, i) => {
     const r = find(i);
     if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(it);
+    /** @type {T[]} */ (groups.get(r)).push(it);
   });
   return [...groups.values()].filter((g) => g.length > 1).sort((a, b) => b.length - a.length);
 }
 
 // Mean of L2-normalised vectors, re-normalised — the cluster's "average meaning", used to ask
 // whether any permanent/ note already covers it.
+/**
+ * @param {readonly ArrayLike<number>[]} vecs
+ * @returns {Float32Array}
+ */
 export function centroid(vecs) {
   const out = new Float32Array(vecs[0].length);
   for (const v of vecs) for (let i = 0; i < v.length; i++) out[i] += v[i];
@@ -459,7 +549,14 @@ export function centroid(vecs) {
   return out;
 }
 
+/**
+ * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
+ * @param {readonly T[]} items
+ * @param {number} minScore
+ * @returns {{ s: number, layer: string, a: string, b: string }[]}
+ */
 export function samefolderPairs(items, minScore) {
+  /** @type {{ s: number, layer: string, a: string, b: string }[]} */
   const out = [];
   for (let i = 0; i < items.length; i++)
     for (let j = i + 1; j < items.length; j++) {
@@ -514,9 +611,17 @@ export const DEFAULT_FUSE_W = 2;
 // rescue cra2-ecs-runtime-facts, the note the hypothesis was built around. Kept as an option so
 // the negative result stays reproducible: MEMORY_FUSE_LEX=note.
 export const DEFAULT_FUSE_LEX = 'chunk';
+/**
+ * @param {readonly string[]} semRanked
+ * @param {readonly string[]} lexRanked
+ * @param {number} w
+ * @param {number} k
+ * @returns {string[]}
+ */
 export function fuseRRF(semRanked, lexRanked, w, k) {
+  /** @type {Map<string, number>} */
   const score = new Map();
-  const add = (list, weight) =>
+  const add = (/** @type {readonly string[]} */ list, /** @type {number} */ weight) =>
     list.forEach((note, i) => score.set(note, (score.get(note) || 0) + weight / (RRF_K + i + 1)));
   add(semRanked, w);
   add(lexRanked, 1);
@@ -534,6 +639,13 @@ export function fuseRRF(semRanked, lexRanked, w, k) {
  * Split out for the reason singleFlight and mtimeCache were: the alias ablation and the card map
  * are both silent when wrong. Dropping alias chunks changes retrieval without erroring, and a
  * missing card map degrades every brief to raw chunk text that still looks like a result.
+ *
+ * @template {ResultRow} T
+ * @param {string} slug
+ * @param {string} dbPath
+ * @param {readonly T[]} rows
+ * @param {{ dropAliases?: boolean, lexMode?: string, dim?: number }} [opts]
+ * @returns {Bundle<T>}
  */
 export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, dim } = {}) {
   // Ablation switch, so the alias-chunk change can be scored against its own absence on ONE index.
@@ -565,26 +677,38 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
 //
 // Everything else is byte-for-byte what ran in the entry (moved 2026-08-19); the arms and their
 // weights are measured numbers and this move is not the place to touch them.
+/**
+ * @param {Bundle<ChunkRow>} index
+ * @param {string} q
+ * @param {Float32Array} qvec
+ * @param {number} k
+ * @returns {Scored[]}
+ */
 export function searchIn(index, q, qvec, k) {
   const { rowsUsed, lexDocs } = index;
   // best chunk per note, so one long note cannot fill the whole result list
+  /** @type {Map<string, Scored>} */
   const best = new Map();
   for (const r of rowsUsed) {
     const s = cosine(qvec, new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM));
-    if (!best.has(r.note) || best.get(r.note).s < s) best.set(r.note, { r, s });
+    if (!best.has(r.note) || /** @type {Scored} */ (best.get(r.note)).s < s)
+      best.set(r.note, { r, s });
   }
   const sorted = [...best.values()].sort((a, b) => b.s - a.s);
 
   // Keyword arm over the SAME units, then rank-fuse.
   const FUSE_W = Number(process.env.MEMORY_FUSE_W ?? DEFAULT_FUSE_W);
+  /** @type {Scored[] | null} */
   let fused = null;
   if (FUSE_W > 0 && FUSE_W < Infinity) {
     const qt = lexTokens(q);
     if (qt.length) {
       const scores = bm25(lexDocs, qt);
+      /** @type {Map<string, number>} */
       const bestLex = new Map();
       lexDocs.forEach((d, i) => {
-        if (!bestLex.has(d.note) || bestLex.get(d.note) < scores[i]) bestLex.set(d.note, scores[i]);
+        if (!bestLex.has(d.note) || /** @type {number} */ (bestLex.get(d.note)) < scores[i])
+          bestLex.set(d.note, scores[i]);
       });
       const lexRanked = [...bestLex.entries()]
         .filter(([, v]) => v > 0)
@@ -599,7 +723,10 @@ export function searchIn(index, q, qvec, k) {
       const byNote = new Map(sorted.map((x) => [x.r.note, x]));
       // A note the keyword arm found but the vector arm ranked below the window still needs a row
       // to display; pull it from the chunk table rather than dropping it.
-      fused = order.map((n) => byNote.get(n) ?? { r: lexDocs.find((d) => d.note === n), s: 0 });
+      fused = order.map(
+        (n) =>
+          byNote.get(n) ?? { r: /** @type {LexDoc} */ (lexDocs.find((d) => d.note === n)), s: 0 },
+      );
     }
   }
   // Layer quota — OFF by default, refuted at k=5 on both case sets (see fuseReserved).

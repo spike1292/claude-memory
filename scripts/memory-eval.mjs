@@ -21,7 +21,9 @@ import { evalBody, pickSentence, metrics, lexicalRank, RECALL_KS } from './lib/m
 // ---------------------------------------------------------------- setup
 
 const argv = process.argv.slice(2);
+/** @param {string} n @returns {boolean} */
 const flag = (n) => argv.includes(n);
+/** @param {string} n @returns {string|null} */
 const val = (n) => {
   const i = argv.indexOf(n);
   return i >= 0 ? argv[i + 1] : null;
@@ -46,8 +48,13 @@ const DATA = paths.stateDir('eval');
 const CASES =
   val('--cases') || val('--out') || path.join(DATA, `eval-cases-${SLUG}-${STYLE}.jsonl`);
 
+/** @typedef {{ note: string, layer: string, file: string }} EvalNote */
+
+/** @returns {EvalNote[]} */
 function allNotes() {
+  /** @type {EvalNote[]} */
   const out = [];
+  /** @param {string} dir @param {string} layer */
   const add = (dir, layer) => {
     if (!fs.existsSync(dir)) return;
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
@@ -75,7 +82,7 @@ if (flag('--author')) {
   const cases = [],
     bad = [];
   for (const l of lines) {
-    const c = JSON.parse(l);
+    const c = /** @type {{ q: string, gold: string[], style?: string }} */ (JSON.parse(l));
     const missing = c.gold.filter((g) => !known.has(g));
     if (missing.length) {
       bad.push(`${missing.join(', ')}  (Q: ${c.q.slice(0, 60)})`);
@@ -146,7 +153,10 @@ const cases = fs
   .trim()
   .split('\n')
   .filter(Boolean)
-  .map((l) => JSON.parse(l));
+  .map(
+    (l) =>
+      /** @type {{ q: string, gold: string[], layer?: string, style?: string }} */ (JSON.parse(l)),
+  );
 const mode = val('--mode') || 'semantic';
 // A rank-window intervention (reserved slots, re-ranking) is invisible when the harness fetches a
 // wider window than a session does: promoted items sort to the bottom by score, so scoring @5 from
@@ -155,13 +165,14 @@ const mode = val('--mode') || 'semantic';
 const K = Number(val('--fetch-k') || Math.max(...RECALL_KS));
 const KS = RECALL_KS.filter((k) => k <= K);
 
+/** @type {{ q: string, results: { note: string }[] }[]} */
 let ranked; // [{q, results:[{note}]}]
 if (mode === 'semantic') {
   const args = ['--json', '-k', String(K), repo];
   // Forward the vault override, or the child searches the REAL vault while this process scores
   // against the benchmark one — two different note sets, one silent mismatch.
-  if (val('--vault')) args.push('--vault', val('--vault'));
-  if (val('--slug')) args.push('--slug', val('--slug'));
+  if (val('--vault')) args.push('--vault', /** @type {string} */ (val('--vault')));
+  if (val('--slug')) args.push('--slug', /** @type {string} */ (val('--slug')));
   for (const c of cases) args.push('--query', c.q);
   const out = execFileSync('node', [path.join(paths.scriptsDir, 'memory-semantic.mjs'), ...args], {
     encoding: 'utf8',

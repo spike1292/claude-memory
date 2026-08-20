@@ -12,13 +12,10 @@
 //   node --test scripts/lib/memory-semantic.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
-import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../hooks/lib/paths.mjs';
 import { CARD } from './lib/lexical.mjs';
 import {
-  MODELS,
   MODEL_KEY,
   PROFILE,
   MODEL,
@@ -43,11 +40,16 @@ import {
   QUIT,
 } from './lib/memory-semantic.mjs';
 
+/** @typedef {import('./lib/memory-semantic.mjs').ChunkRow} ChunkRow */
+/** @typedef {{ note: string, layer: string, text: string, vec: Uint8Array }} CardRow */
+/** @typedef {{ note: string, layer: string, text: string, vec: Float32Array }} Card */
+/** @typedef {{ file: string, mtime: number, hash: string | null }} IndexedFile */
+
 // ---------------------------------------------------------------- setup
 
 const argv = process.argv.slice(2);
-const flag = (n) => argv.includes(n);
-const val = (n) => {
+const flag = (/** @type {string} */ n) => argv.includes(n);
+const val = (/** @type {string} */ n) => {
   const i = argv.indexOf(n);
   return i >= 0 ? argv[i + 1] : null;
 };
@@ -127,7 +129,9 @@ if (db) {
 // like a score. Record which model built the index; --index rebuilds on a change, everything else
 // refuses to run against a stale one rather than returning quiet nonsense.
 const storedModel = db?.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
-const hasChunks = db ? db.prepare('SELECT COUNT(*) c FROM chunks').get().c > 0 : false;
+const hasChunks = db
+  ? /** @type {{ c: number }} */ (db.prepare('SELECT COUNT(*) c FROM chunks').get()).c > 0
+  : false;
 // An index written before this table existed records no model. Treat unknown as MISMATCHED, not as
 // "probably fine" — the first version of this guard did the latter and quietly kept serving stale
 // vectors from the previous model while reporting the index as current.
@@ -190,6 +194,10 @@ async function loadEmbedder() {
 // is silent: it costs a leaked ~1.3GB session, not a wrong answer, so nothing here would fail.
 const embedderCell = singleFlight(loadEmbedder);
 
+/**
+ * @param {readonly string[]} texts
+ * @returns {Promise<Float32Array[]>}
+ */
 async function embed(texts) {
   // borrow(), not get(): holds the session for the whole inference so the idle timer cannot
   // dispose() it out from under native code. See singleFlight().
@@ -282,7 +290,7 @@ if (flag('--coverage')) {
       onDisk.set(f.slice(0, -3), [...(onDisk.get(f.slice(0, -3)) ?? []), path.join(dir, f)]);
   }
   const indexed = new Set(
-    db
+    /** @type {DatabaseSync} */ (db)
       .prepare('SELECT DISTINCT note n FROM chunks')
       .all()
       .map((r) => r.n),
@@ -336,6 +344,7 @@ if (flag('--check-embedding')) {
 // ---------------------------------------------------------------- index
 
 if (flag('--index')) {
+  const indexDb = /** @type {DatabaseSync} */ (db);
   // Cross-process write lock, PER MODEL — same scope as the DB it guards. A long background
   // bge-m3 build must not stall the default profile's incremental refresh. (The cross-model
   // corruption this lock was born from — a table holding 384-dim and 1024-dim vectors at once —
@@ -391,7 +400,7 @@ if (flag('--index')) {
   // recorded the model without re-embedding leaves the DB claiming one model while holding another
   // model's vectors, and no automatic check can see that.
   if (schemaStale) {
-    db.exec('ALTER TABLE chunks ADD COLUMN hash TEXT');
+    indexDb.exec('ALTER TABLE chunks ADD COLUMN hash TEXT');
     console.log('index predates the content-hash column; hashing existing notes in place');
   }
   if (modelChanged || flag('--rebuild')) {
@@ -400,26 +409,29 @@ if (flag('--index')) {
         ? `model changed ${storedModel ?? '(unrecorded)'} → ${MODEL}; rebuilding the whole index (vectors are not comparable across models)`
         : 'rebuilding the whole index',
     );
-    db.exec('DELETE FROM chunks');
+    indexDb.exec('DELETE FROM chunks');
   }
-  db.prepare(
-    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-  ).run('model', MODEL);
+  indexDb
+    .prepare(
+      'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    )
+    .run('model', MODEL);
 
   // Incremental, in two levels; drop rows for deleted notes.
   // MAX(mtime)/MIN(hash) can in principle come from different rows — they cannot here, since every
   // row of a file is written in one pass with the same pair.
   const known = new Map(
-    db
-      .prepare('SELECT file, MAX(mtime) AS mtime, MIN(hash) AS hash FROM chunks GROUP BY file')
-      .all()
-      .map((r) => [r.file, r]),
+    /** @type {IndexedFile[]} */ (
+      indexDb
+        .prepare('SELECT file, MAX(mtime) AS mtime, MIN(hash) AS hash FROM chunks GROUP BY file')
+        .all()
+    ).map((r) => /** @type {[string, IndexedFile]} */ ([r.file, r])),
   );
   const live = new Set(files.map((f) => f.full));
   let dropped = 0;
   for (const f of known.keys())
     if (!live.has(f)) {
-      db.prepare('DELETE FROM chunks WHERE file = ?').run(f);
+      indexDb.prepare('DELETE FROM chunks WHERE file = ?').run(f);
       dropped++;
     }
   // Level 1 — mtime matches: skip WITHOUT reading the file. Unchanged, and it must stay that way;
@@ -457,13 +469,13 @@ if (flag('--index')) {
   // 2026-08-19, 1000 files x 4 chunks: 667 ms un-transactioned against 31 ms wrapped. It is also
   // all-or-nothing rather than a half-written mtime set.
   if (touched.length || backfill.length) {
-    const bump = db.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
-    db.exec('BEGIN');
+    const bump = indexDb.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
+    indexDb.exec('BEGIN');
     try {
       for (const f of [...touched, ...backfill]) bump.run(f.mtime, f.hash, f.full);
-      db.exec('COMMIT');
+      indexDb.exec('COMMIT');
     } catch (e) {
-      db.exec('ROLLBACK');
+      indexDb.exec('ROLLBACK');
       throw e;
     }
   }
@@ -476,8 +488,8 @@ if (flag('--index')) {
     process.exit(0);
   }
 
-  const del = db.prepare('DELETE FROM chunks WHERE file = ?');
-  const ins = db.prepare(
+  const del = indexDb.prepare('DELETE FROM chunks WHERE file = ?');
+  const ins = indexDb.prepare(
     'INSERT INTO chunks (note, layer, file, mtime, heading, text, vec, hash) VALUES (?,?,?,?,?,?,?,?)',
   );
   const pending = [];
@@ -517,13 +529,13 @@ if (flag('--index')) {
   }
   // Commit the identity of every file whose chunks all landed. One transaction: this is what makes
   // the run's result visible as a whole rather than as a half-finished state that looks finished.
-  const seal = db.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
-  db.exec('BEGIN');
+  const seal = indexDb.prepare('UPDATE chunks SET mtime = ?, hash = ? WHERE file = ?');
+  indexDb.exec('BEGIN');
   try {
     for (const f of stale) seal.run(f.mtime, f.hash, f.full);
-    db.exec('COMMIT');
+    indexDb.exec('COMMIT');
   } catch (e) {
-    db.exec('ROLLBACK');
+    indexDb.exec('ROLLBACK');
     throw e;
   }
 
@@ -538,15 +550,16 @@ if (flag('--index')) {
 if (flag('--clusters')) {
   const min = Number(val('--min') || PROFILE.clusterMin);
   const minSize = 4; // no caller ever set this; --size deleted 2026-08-19
-  const cards = db
-    .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
-    .all(CARD)
-    .map((r) => ({
-      note: r.note,
-      layer: r.layer,
-      text: r.text,
-      vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
-    }));
+  const cards = /** @type {CardRow[]} */ (
+    /** @type {DatabaseSync} */ (db)
+      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .all(CARD)
+  ).map((r) => ({
+    note: r.note,
+    layer: r.layer,
+    text: r.text,
+    vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+  }));
   if (!cards.length) {
     console.log('empty index — run --index first');
     process.exit(1);
@@ -563,6 +576,7 @@ if (flag('--clusters')) {
   for (const g of clusters) {
     const c = centroid(g.map((x) => x.vec));
     // Is this topic already consolidated? Compare the cluster's average meaning to permanent/.
+    /** @type {{ note: string | null, s: number }} */
     let best = { note: null, s: 0 };
     for (const p of permanent) {
       const s = cosine(c, p.vec);
@@ -582,7 +596,10 @@ if (flag('--clusters')) {
     if (best.s >= typical) continue; // a permanent/ note sits inside the topic's own spread
     gaps++;
     if (gaps > Number(val('--top') || 8)) continue;
-    const mix = g.reduce((m, x) => ((m[x.layer] = (m[x.layer] || 0) + 1), m), {});
+    const mix = g.reduce(
+      (m, x) => ((m[x.layer] = (m[x.layer] || 0) + 1), m),
+      /** @type {Record<string, number>} */ ({}),
+    );
     console.log(
       `${g.length} notes — ${Object.entries(mix)
         .map(([k, v]) => `${v} ${k}`)
@@ -616,9 +633,11 @@ if (flag('--dupes')) {
   // One vector per note: the '(card)' chunk carries title + description + the opening body, which
   // for a short Insight note is effectively the whole note. Comparing cards keeps this O(notes²)
   // (~165k pairs, well under a second) instead of O(chunks²).
-  const rawCards = db
-    .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
-    .all(CARD);
+  const rawCards = /** @type {CardRow[]} */ (
+    /** @type {DatabaseSync} */ (db)
+      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .all(CARD)
+  );
   assertVectorWidth(rawCards, DIM, 'dupes');
   const cards = rawCards.map((r) => ({
     note: r.note,
@@ -637,7 +656,9 @@ if (flag('--dupes')) {
   for (const p of pairs.slice(0, Number(val('--top') || 30))) {
     console.log(`${p.s.toFixed(3)} [${p.layer}]`);
     for (const n of [p.a, p.b])
-      console.log(`   ${n}\n      ${byNote.get(n).text.replace(/\s+/g, ' ').slice(0, 130)}…`);
+      console.log(
+        `   ${n}\n      ${/** @type {Card} */ (byNote.get(n)).text.replace(/\s+/g, ' ').slice(0, 130)}…`,
+      );
   }
   console.log('\nJudge each pair: merge when it adds coverage, keep when it only removes a file.');
   process.exit(0);
@@ -645,7 +666,7 @@ if (flag('--dupes')) {
 
 // ---------------------------------------------------------------- query
 
-const queries = argv.filter((a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
+const queries = argv.filter((_a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
 if (!queries.length && !flag('--serve')) {
   console.log(
     'usage: --index | --query "question" [--query "..."] [-k 5] | --serve | --coverage | --dupes | --clusters',
@@ -666,6 +687,9 @@ const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
  * Throws rather than exiting: for the CLI a bad index is fatal, but for the server it is one bad
  * request among many, and a server that called process.exit() on a stale slug would take every other
  * project down with it.
+ *
+ * @param {string} slug
+ * @returns {import('./lib/memory-semantic.mjs').Bundle}
  */
 function loadIndex(slug) {
   const dbPath = path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`);
@@ -681,10 +705,13 @@ function loadIndex(slug) {
     // score, and in a multi-project server one stale index must not be answered from.
     //
     const stored = idb.prepare("SELECT value FROM meta WHERE key = 'model'").get()?.value;
-    const total = idb.prepare('SELECT COUNT(*) c FROM chunks').get().c;
+    const total = /** @type {{ c: number }} */ (idb.prepare('SELECT COUNT(*) c FROM chunks').get())
+      .c;
     if (total && stored !== MODEL)
       throw new Error(`index for ${slug} was built with ${stored}, not ${MODEL} — run --index`);
-    const rows = idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all();
+    const rows = /** @type {ChunkRow[]} */ (
+      idb.prepare('SELECT note, layer, heading, text, vec FROM chunks').all()
+    );
     if (!rows.length) throw new Error('empty index — run --index first');
     return buildBundle(slug, dbPath, rows, {
       dropAliases: process.env.MEMORY_NO_ALIAS_CHUNKS === '1',
@@ -722,9 +749,10 @@ if (flag('--serve')) {
   // Two timers, because the process and the model are two very different costs. The model is ~1.3G
   // and goes first; the process is ~150M once it has, and can afford to linger holding its indexes.
   let idle = setTimeout(quit, IDLE_MS);
+  /** @type {NodeJS.Timeout | null} */
   let modelIdle = null;
   const armModelIdle = () => {
-    clearTimeout(modelIdle);
+    if (modelIdle) clearTimeout(modelIdle);
     modelIdle = setTimeout(async () => {
       // A request still holding the session (see singleFlight.borrow) means the unload declines.
       // Re-arm rather than give up: only a new connection calls bump(), so without this the model
@@ -752,7 +780,7 @@ if (flag('--serve')) {
     console.log(`loaded index ${slug} (${fresh.rowsUsed.length} chunks)`);
     return fresh;
   });
-  function indexFor(slug) {
+  function indexFor(/** @type {string} */ slug) {
     let mtime = NaN; // a failed stat must RELOAD, not serve a cached index forever
     try {
       mtime = fs.statSync(path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`)).mtimeMs;
@@ -803,7 +831,7 @@ if (flag('--serve')) {
           }) + '\n',
         );
       } catch (e) {
-        sock.end(JSON.stringify({ error: String(e.message ?? e) }) + '\n');
+        sock.end(JSON.stringify({ error: String(/** @type {Error} */ (e).message ?? e) }) + '\n');
       }
     });
     sock.on('error', () => {});
@@ -812,7 +840,7 @@ if (flag('--serve')) {
   // two hooks firing in that gap both get past it. Losing the bind race is not an error — the other
   // server is serving. Without this the loser died on an unhandled 'error' event, and since it is
   // spawned detached with stdio ignored, the stack trace went nowhere.
-  server.on('error', (e) => {
+  server.on('error', (/** @type {NodeJS.ErrnoException} */ e) => {
     if (e.code === 'EADDRINUSE') {
       console.log(`already serving ${MODEL_KEY} (lost bind race)`);
       process.exit(0);
@@ -840,7 +868,7 @@ if (flag('--serve')) {
     for (const name of evictableSockets(fs.readdirSync(runDir), own)) {
       const done = await new Promise((resolve) => {
         const c = net.createConnection(path.join(runDir, name));
-        const fin = (v) => {
+        const fin = (/** @type {boolean} */ v) => {
           try {
             c.destroy();
           } catch {}
@@ -875,7 +903,7 @@ if (flag('--serve')) {
   try {
     selfIndex = loadIndex(SLUG);
   } catch (e) {
-    console.log(e.message);
+    console.log(/** @type {Error} */ (e).message);
     process.exit(1);
   }
   const qvecs = await embed(queries.map((q) => QUERY_PREFIX + q));

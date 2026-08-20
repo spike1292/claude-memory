@@ -11,6 +11,23 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Type checking, as JSDoc rather than a build step.** `npm run typecheck` runs `tsc --noEmit` with
+  `checkJs` and `strict` over every `.mjs` in the repo, tests included, and CI fails on any
+  diagnostic. Source stays plain `.mjs` and stays directly runnable: nothing resolves an absolute
+  install path and `hooks/hooks.json` names entry paths as a contract, so a `dist/` would have put a
+  compiled file where both of those expect a source file. `tsc` is pinned and invoked through `npx`,
+  never a devDependency, for the same reason Prettier is — and pinned to TypeScript 7, the native
+  compiler, whose platform-specific binaries stay in the npm cache rather than any user's plugin
+  cache precisely because `npx` runs it. A second step asserts that every tracked
+  `.mjs` is actually in what `tsc` checked, because a check that passes by checking nothing has
+  shipped here twice. The numbers behind the choice, all measured with 5.9.2 before the
+  pin moved — 34 diagnostics under bare `checkJs` and none of them a real bug, 499 under `strict`,
+  and 80 from `strictNullChecks` alone, so the staged path existed and was declined rather than
+  ruled out — are in
+  [docs/decisions/2026-08-20-types-and-linting.md](docs/decisions/2026-08-20-types-and-linting.md),
+  which also records why no linter was added: of the three rules that were candidates, `tsc` gives
+  one for free and a CI check already covers another.
+
 - **`/memory:doctor --perf` — where the RAM, the disk and the milliseconds actually went.**
   `doctor.sh` could say whether a thing was wired up; it could not answer the question this plugin
   generates, since one `--serve` process holds a ~1.3 GB model, six of them once ran at once on a
@@ -401,6 +418,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
   that indexed nothing looked identical to one that had nothing to index.
 
 ### Fixed
+
+- **`/memory:doctor --perf` no longer dies mid-report when the second recall probe fails.** It
+  times the round trip twice, and the second probe can fail on its own — the server may exit or
+  evict its socket between the two — where `undefined.toFixed()` ended the whole report with a
+  stack trace, in the one command someone runs when things are already wrong. It now says what
+  went wrong with the second probe and prints the rest. The same path could also report
+  `not measured: undefined` when the socket error carried no `code`.
 
 - **The graph re-index can no longer run several times at once.** The debounce that guards it is
   keyed by repo (`graphgen-<slug>`, 24h), so three stale repos opened together were three legal

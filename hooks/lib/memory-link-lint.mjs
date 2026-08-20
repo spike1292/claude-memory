@@ -29,17 +29,27 @@ import { vault, projectKey, legacyKey } from './paths.mjs';
  * The shell matched the literal strings `[[n]]`, `[[n|` and `[[n#`, so a target ends at the first
  * `]`, `|` or `#` — and `[[foo bar]]` is a link to `foo bar`, not to `foo`. Extracting the target
  * and comparing it whole reproduces that exactly.
+ *
+ * @param {string} text
+ * @returns {Set<string>}
  */
 export function linkTargets(text) {
+  /** @type {Set<string>} */
   const out = new Set();
   for (const m of text.matchAll(/\[\[([^\]|#]*)/g)) out.add(m[1]);
   return out;
 }
 
-/** `.md` files under `dir`, recursively. Missing directories are simply empty. */
+/**
+ * `.md` files under `dir`, recursively. Missing directories are simply empty.
+ *
+ * @param {string} dir
+ * @returns {string[]}
+ */
 export function mdFiles(dir) {
+  /** @type {string[]} */
   const out = [];
-  const walk = (d) => {
+  const walk = (/** @type {string} */ d) => {
     let entries;
     try {
       entries = fs.readdirSync(d, { withFileTypes: true });
@@ -59,15 +69,21 @@ export function mdFiles(dir) {
 /**
  * L1 notes with no inbound wikilink from anywhere except the MOC and themselves.
  * `corpus` is [absolutePath, text] pairs across Memory/ and Insights/.
+ *
+ * @param {string} memDir
+ * @param {readonly string[]} noteNames
+ * @param {readonly (readonly [string, string])[]} corpus
+ * @returns {string[]}
  */
 export function findOrphans(memDir, noteNames, corpus) {
   const moc = path.join(memDir, 'MEMORY.md');
+  /** @type {Map<string, Set<string>>} */
   const inbound = new Map(); // target -> Set(linking file)
   for (const [file, text] of corpus) {
     if (file === moc) continue; // the MOC does not count as a sibling
     for (const t of linkTargets(text)) {
       if (!inbound.has(t)) inbound.set(t, new Set());
-      inbound.get(t).add(file);
+      /** @type {Set<string>} */ (inbound.get(t)).add(file);
     }
   }
   return noteNames.filter((n) => {
@@ -86,14 +102,20 @@ export function findOrphans(memDir, noteNames, corpus) {
  * MOC hooks restate figures, then the note body moves and the hook does not. /memory:health caught
  * this in four consecutive audits. ponytail: bolded numbers only — unbolded prose numbers are too
  * noisy to gate on. Commas are stripped on both sides so "1,172" matches "1172".
+ *
+ * @param {string} mocText
+ * @param {(target: string) => string | null} readNote
+ * @returns {{ target: string, n: string }[]}
  */
 export function findDrift(mocText, readNote) {
+  /** @type {{ target: string, n: string }[]} */
   const drift = [];
   for (const line of mocText.split('\n')) {
     if (!line.startsWith('- [[')) continue;
     const target = line.slice(4).split(']]')[0];
     const body = readNote(target);
     if (body === null) continue;
+    /** @type {Set<string>} */
     const nums = new Set();
     for (const b of line.matchAll(/\*\*([^*]*)\*\*/g)) {
       for (const d of b[1].replace(/,/g, '').matchAll(/[0-9]{2,}/g)) nums.add(d[0]);
@@ -112,6 +134,9 @@ export function findDrift(mocText, readNote) {
  * Returns text instead of printing it, so the whole check is testable without a subprocess.
  * One pass over the corpus — the shell version read it once per note, which is the O(N x (N+M))
  * that took 10.9 s on a 49-note project and was being killed by the 10 s hook timeout.
+ *
+ * @param {string} cwd
+ * @returns {string}
  */
 export function lint(cwd) {
   let slug;
@@ -120,7 +145,7 @@ export function lint(cwd) {
   } catch {
     slug = legacyKey(cwd);
   }
-  const isDir = (p) => {
+  const isDir = (/** @type {string} */ p) => {
     try {
       return fs.statSync(p).isDirectory();
     } catch {
@@ -135,6 +160,7 @@ export function lint(cwd) {
   if (!isDir(mem)) return '';
   const ins = path.join(vault(), 'Insights', slug);
 
+  /** @type {[string, string][]} */
   const corpus = [];
   for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
     try {
@@ -155,6 +181,7 @@ export function lint(cwd) {
     return '';
   }
 
+  /** @type {string[]} */
   const out = [];
   const orphans = findOrphans(mem, names, corpus);
   if (orphans.length) {
@@ -170,9 +197,9 @@ export function lint(cwd) {
   const moc = path.join(mem, 'MEMORY.md');
   const byName = new Map(corpus.map(([f, t]) => [f, t]));
   if (!byName.has(moc)) return out.join('\n');
-  const drift = findDrift(byName.get(moc), (t) => {
+  const drift = findDrift(/** @type {string} */ (byName.get(moc)), (t) => {
     const p = path.join(mem, `${t}.md`);
-    return byName.has(p) ? byName.get(p) : null;
+    return byName.has(p) ? /** @type {string} */ (byName.get(p)) : null;
   });
   if (drift.length) {
     out.push('');

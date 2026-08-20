@@ -22,7 +22,7 @@ test('paths', async (t) => {
 
   // A fresh process per call — short-lived hooks are the whole reason the disk cache exists,
   // and an in-process Map would hide every bug this is meant to catch.
-  const fresh = (d) =>
+  const fresh = (/** @type {string} */ d) =>
     run(
       process.execPath,
       [
@@ -115,7 +115,11 @@ test('paths', async (t) => {
   await t.test('a corrupt cache recomputes instead of throwing', () => {
     // This runs inside hooks, so it must never throw.
     const repo = path.join(tmp, 'repo');
-    const cf = path.join(process.env.CLAUDE_MEMORY_HOME, 'cache', 'project-keys.json');
+    const cf = path.join(
+      /** @type {string} */ (process.env.CLAUDE_MEMORY_HOME),
+      'cache',
+      'project-keys.json',
+    );
     fs.mkdirSync(path.dirname(cf), { recursive: true });
     fs.writeFileSync(cf, '{ not json');
     assert.strictEqual(

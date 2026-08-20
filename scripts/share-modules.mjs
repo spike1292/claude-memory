@@ -28,6 +28,7 @@ if (!isPluginInstall(versionDir)) {
   process.exit(1);
 }
 
+/** @type {(p: string) => number} */
 const remove = (p) => {
   if (!isRemovable(p)) throw new Error(`refusing to remove ${p}`);
   const size = bytes(p);

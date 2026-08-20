@@ -308,3 +308,32 @@ jobs:
       # a real embedding: that would pull 722 MB of weights into CI for a check this covers.
       - name: transformers still loads against the stubs
         run: node --input-type=module -e "await import('@huggingface/transformers'); console.log('loaded')"
+
+      # Lives in this job, not `test`, because it is the only one that runs a real `npm ci`:
+      # @types/node arrives transitively with @huggingface/transformers and is what makes
+      # `import fs from 'node:fs'` check at all. If that dependency ever stops carrying it, every
+      # file fails here at once rather than silently checking against nothing.
+      #
+      # tsc is pinned and run through npx for the same reason Prettier is: `npm ci` on plugin
+      # install would ship a devDependency into every user's version-pinned cache. The version lives
+      # in package.json's scripts and nowhere else — unlike prettier, which this file also names.
+      - name: Types check
+        run: npm run typecheck
+
+      # A check that passes by checking nothing has shipped here twice, which is why the steps
+      # above count what they found. tsconfig.json's include globs are the same hazard: a .mjs
+      # added at the root, or under a new top-level directory, would be checked by nobody and CI
+      # would stay green. Compare against git rather than a hardcoded number, so adding a file is
+      # not a CI edit.
+      - name: The type check covers every tracked .mjs
+        run: |
+          npm run typecheck --silent -- --listFiles > /tmp/listed.txt
+          grep -v '/node_modules/' /tmp/listed.txt | sed "s#^$PWD/##" | grep -E '[.]mjs$' | sort -u > /tmp/checked.txt
+          git ls-files '*.mjs' | sort -u > /tmp/tracked.txt
+          missing=$(comm -13 /tmp/checked.txt /tmp/tracked.txt)
+          if [ -n "$missing" ]; then
+            echo "::error::tracked .mjs files that tsconfig.json does not check:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "$(wc -l < /tmp/tracked.txt) tracked .mjs files, all type-checked"

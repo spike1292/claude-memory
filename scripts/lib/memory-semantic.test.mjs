@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import * as paths from '../../hooks/lib/paths.mjs';
 import {
   MAX_CHARS,
@@ -37,6 +38,8 @@ import {
   stripFrontmatter,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
+
+/** @typedef {import('./memory-semantic.mjs').LexDoc} LexDoc */
 
 test('scoring, chunking and fusion', () => {
   const fm = stripFrontmatter('---\nname: x\ndescription: "A thing"\n---\nbody here\n');
@@ -117,8 +120,11 @@ test('scoring, chunking and fusion', () => {
   assert.ok(Math.abs(cosine(centroid([c1, c1]), c1) - 1) < 1e-6);
   assert.ok(Math.abs(cosine(centroid([c1, c2, c3]), c1) - 1) < 0.05);
   // fuseReserved: promotion must respect K, never evict a reserved item, and stay score-ordered
-  const mk = (n, s, layer) => ({ r: { note: n, layer }, s });
-  const isMem = (x) => x.r.layer === 'Memory';
+  const mk = (/** @type {string} */ n, /** @type {number} */ s, /** @type {string} */ layer) => ({
+    r: { note: n, layer },
+    s,
+  });
+  const isMem = (/** @type {{ r: { layer: string } }} */ x) => x.r.layer === 'Memory';
   const feed = [
     mk('i1', 0.9, 'Patterns'),
     mk('i2', 0.8, 'Patterns'),
@@ -180,7 +186,9 @@ test('scoring, chunking and fusion', () => {
     'n',
     '---\nname: x\n---\n## B\nbody prose here to fill the section out.\n\n_Also asked as: first question here,\nsecond question here,\nthird question about alarm thresholds._\n',
   );
-  const wali = wrapped.find((c) => c.heading === '(aliases)');
+  const wali = /** @type {{ heading: string, text: string }} */ (
+    wrapped.find((c) => c.heading === '(aliases)')
+  );
   assert.ok(
     wali.text.includes('first question') &&
       wali.text.includes('third question about alarm thresholds'),
@@ -284,7 +292,7 @@ test('real notes chunk cleanly — and the check names the project it got', (t) 
           .split(/\s+/)
           .pop();
         assert.ok(
-          ali.text.includes(lastWord),
+          ali.text.includes(/** @type {string} */ (lastWord)),
           `${f}: alias chunk lost its tail ("${lastWord}") — a wrapped block was truncated`,
         );
         checked++;
@@ -292,7 +300,7 @@ test('real notes chunk cleanly — and the check names the project it got', (t) 
     }
   } catch (e) {
     if (e instanceof assert.AssertionError) throw e; // a real finding must never look like a skip
-    skipReason = `${e.constructor.name}: ${e.message.split('\n')[0]}`;
+    skipReason = `${/** @type {Error} */ (e).constructor.name}: ${/** @type {Error} */ (e).message.split('\n')[0]}`;
   }
   // A check that quietly verifies nothing is worse than no check: it reads as a passing test.
   assert.ok(
@@ -347,7 +355,7 @@ test('socketIsLive: live socket, stale file, and absent path', async () => {
   assert.equal(await socketIsLive(path.join(dir, 'nope')), false, 'absent path is not live');
 
   const server = net.createServer(() => {});
-  await new Promise((r) => server.listen(sock, r));
+  await new Promise((r) => server.listen(sock, /** @type {() => void} */ (r)));
   assert.equal(await socketIsLive(sock), true, 'a listening socket must read as live');
 
   // Close the server but leave the file: exactly what a SIGKILLed serve leaves behind, and the
@@ -453,11 +461,15 @@ test('buildLexDocs: chunk mode keeps rows, note mode concatenates', () => {
 
   const note = buildLexDocs(rows, 'note');
   assert.equal(note.length, 2, 'note mode is one doc per note');
-  const a = note.find((d) => d.note === 'a');
+  const a = /** @type {LexDoc} */ (note.find((d) => d.note === 'a'));
   assert.equal(a.heading, '(note)');
   for (const w of ['cutover', 'rollback', 'canary', 'deployment'])
     assert.ok(a.toks.includes(w), `note doc must carry "${w}" from both of its chunks`);
-  assert.equal(note.find((d) => d.note === 'b').layer, 'Patterns', 'layer survives the merge');
+  assert.equal(
+    /** @type {LexDoc} */ (note.find((d) => d.note === 'b')).layer,
+    'Patterns',
+    'layer survives the merge',
+  );
 
   // Anything that is not exactly 'note' means chunk — the env var is free text.
   assert.equal(buildLexDocs(rows, undefined).length, 3);
@@ -477,7 +489,7 @@ test('singleFlight: N concurrent callers cause exactly one load', async () => {
 
   const all = [cell.get(), cell.get(), cell.get(), cell.get()];
   assert.equal(loads, 1, 'four concurrent get()s must share ONE in-flight load');
-  release();
+  /** @type {() => void} */ (/** @type {unknown} */ (release))();
   const got = await Promise.all(all);
   assert.equal(loads, 1, 'still one after they resolve');
   for (const g of got) assert.equal(g.id, 1, 'every caller gets the same instance');
@@ -525,7 +537,7 @@ test('singleFlight: take() during an in-flight load lets that load land', async 
 
   const pending = cell.get();
   assert.equal(cell.take(), null, 'nothing is loaded yet, so there is nothing to release');
-  release();
+  /** @type {() => void} */ (/** @type {unknown} */ (release))();
   const v = await pending;
   assert.equal(v.id, 1, 'the caller still gets its value');
   assert.equal(await cell.get(), v, 'and the arrived value is now the cached one');
@@ -547,7 +559,7 @@ test('singleFlight: take() refuses while the value is borrowed', async () => {
     return v.id;
   });
 
-  releaseWork();
+  /** @type {() => void} */ (/** @type {unknown} */ (releaseWork))();
   assert.equal(await inFlight, 1);
   assert.equal(cell.busy(), false, 'no longer in use once the borrow returns');
   assert.ok(cell.take(), 'and now it may be taken and disposed');
@@ -676,7 +688,7 @@ test('buildBundle: card map, alias ablation, and the lex mode it is given', () =
 test('searchIn: RRF fuses both arms, and neither arm alone gives the answer', () => {
   // vec is read as `new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM)`, so these must be real
   // DIM-wide buffers; cosine() is a bare dot product, so component 0 IS the score.
-  const vec = (x) => {
+  const vec = (/** @type {number} */ x) => {
     const f = new Float32Array(DIM);
     f[0] = x;
     return new Uint8Array(f.buffer);
@@ -753,7 +765,7 @@ test('searchIn: RRF fuses both arms, and neither arm alone gives the answer', ()
 // MEMORY_FUSE_RESERVE is the only thing that promotes a Memory row into the window. It is 0 by
 // default and refuted at k=5; this pins what it does when someone turns it on.
 test('searchIn: the reserve promotes an L1 note into the window', () => {
-  const vec = (x) => {
+  const vec = (/** @type {number} */ x) => {
     const f = new Float32Array(DIM);
     f[0] = x;
     return new Uint8Array(f.buffer);
@@ -788,4 +800,36 @@ test('searchIn: the reserve promotes an L1 note into the window', () => {
     if (reserve === undefined) delete process.env.MEMORY_FUSE_RESERVE;
     else process.env.MEMORY_FUSE_RESERVE = reserve;
   }
+});
+
+// assertVectorWidth exits the process, so it is checked from a child. A row arriving with NO vector
+// used to reach `r.vec.byteLength` behind a double cast through `unknown` and die with a TypeError
+// one line before the message that explains what to do about it.
+test('assertVectorWidth reports a missing vector instead of throwing', () => {
+  const mod = fileURLToPath(new URL('./memory-semantic.mjs', import.meta.url));
+  /** @param {string} rows */
+  const run = (rows) => {
+    try {
+      return execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { assertVectorWidth } = await import(${JSON.stringify(mod)});` +
+            `assertVectorWidth(${rows}, 4, 'probe');`,
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+      );
+    } catch (err) {
+      const e = /** @type {{ stdout?: string, stderr?: string }} */ (err);
+      return (e.stdout ?? '') + (e.stderr ?? '');
+    }
+  };
+
+  const missing = run('[{ note: "a" }]');
+  assert.match(missing, /1\/1 vectors are missing bytes/);
+  assert.doesNotMatch(missing, /TypeError/);
+
+  assert.match(run('[{ vec: new Uint8Array(8) }]'), /1\/1 vectors are 8 bytes, expected 16/);
+  assert.equal(run('[{ vec: new Uint8Array(16) }]').trim(), '');
 });

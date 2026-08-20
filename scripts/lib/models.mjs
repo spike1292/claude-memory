@@ -19,6 +19,20 @@
 // noise floor under every future A/B. Batching also loses on speed with real notes (0.14 s/chunk
 // unpadded vs 0.28), because padding makes short chunks cost as much as the longest one beside them;
 // the benchmark that said otherwise used equal-length strings, which never occur in a vault.
+/**
+ * @typedef {object} ModelProfile
+ * @property {string} id
+ * @property {number} dim
+ * @property {number} maxChars
+ * @property {'mean'|'cls'} pool
+ * @property {string} q
+ * @property {string} d
+ * @property {number} dupeMin
+ * @property {number} clusterMin
+ * @property {number} [batch]
+ */
+
+/** @type {Record<string, ModelProfile>} */
 export const MODELS = {
   // `dupeMin` is model-specific and NOT transferable: E5 packs everything into a high, narrow band,
   // so bge-small-en's 0.86 reports 29,560 pairs under e5-multi — noise that looks like a backlog.

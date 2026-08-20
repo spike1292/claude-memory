@@ -25,7 +25,12 @@ import {
   semanticArm,
 } from './memory-recall.mjs';
 
-const hit = (note, score, text, layer = 'Memory') => ({ note, layer, score, text });
+const hit = (
+  /** @type {string} */ note,
+  /** @type {number} */ score,
+  /** @type {string | null} */ text,
+  layer = 'Memory',
+) => ({ note, layer, score, text });
 
 // --- constants -------------------------------------------------------------------------------
 // Not restating the literals for their own sake: each of these is a wire value the entry file or
@@ -64,7 +69,7 @@ test('renderLines: a card with no body renders an empty body, not a crash', () =
 test('renderLines: the MAX_CHARS budget is strict >, so a brief of exactly 900 fits', () => {
   // Each rendered line is exactly 300 chars: `- [[` + a 133-char note name + `]] (Memory): ` + the
   // 150-char body cap. Three of them are the budget to the byte.
-  const wide = (c) => hit(c.repeat(133), 1, `# t\n${'w'.repeat(200)}`);
+  const wide = (/** @type {string} */ c) => hit(c.repeat(133), 1, `# t\n${'w'.repeat(200)}`);
   const three = [wide('a'), wide('b'), wide('c')];
   const { lines, used } = renderLines(three);
   assert.deepEqual(
@@ -103,14 +108,18 @@ test('semanticArm: null means fall through to the keyword arm, and it is not onl
 });
 
 test('semanticArm: MIN_COS is >=, so 0.55 injects and 0.5499 abstains', () => {
-  const at = semanticArm([hit('at-gate', MIN_COS, '# t\nbody at gate')]);
+  const at = /** @type {import('./memory-recall.mjs').Decision} */ (
+    semanticArm([hit('at-gate', MIN_COS, '# t\nbody at gate')])
+  );
   assert.equal(at.entry.abstained, false);
   assert.equal(at.output, `${HEADER}\n- [[at-gate]] (Memory): body at gate`);
   assert.equal(at.entry.top, 'at-gate');
   assert.equal(at.entry.score, MIN_COS);
   assert.equal(at.entry.via, 'server');
 
-  const under = semanticArm([hit('under', 0.5499, '# t\nbody')]);
+  const under = /** @type {import('./memory-recall.mjs').Decision} */ (
+    semanticArm([hit('under', 0.5499, '# t\nbody')])
+  );
   assert.equal(under.output, null);
   assert.equal(under.entry.reason, 'low confidence (semantic)');
   assert.equal(under.entry.top, 'under');
@@ -118,7 +127,9 @@ test('semanticArm: MIN_COS is >=, so 0.55 injects and 0.5499 abstains', () => {
 });
 
 test('semanticArm: a hit with no score is filtered out, and the log omits the key entirely', () => {
-  const d = semanticArm([{ note: 'no-score', layer: 'Memory', text: '# t\nb' }]);
+  const d = /** @type {import('./memory-recall.mjs').Decision} */ (
+    semanticArm([{ note: 'no-score', layer: 'Memory', text: '# t\nb' }])
+  );
   assert.equal(d.output, null, 'undefined >= MIN_COS is false');
   assert.equal(
     JSON.stringify(d.entry),
@@ -129,15 +140,15 @@ test('semanticArm: a hit with no score is filtered out, and the log omits the ke
 
 test('semanticArm: caps at MAX_NOTES and keeps the server order', () => {
   const six = Array.from({ length: 6 }, (_, i) => hit(`n${i}`, 0.9 - i / 100, `# t\nbody ${i}`));
-  const d = semanticArm(six);
+  const d = /** @type {import('./memory-recall.mjs').Decision} */ (semanticArm(six));
   assert.equal(d.entry.injected, MAX_NOTES);
   assert.deepEqual(
-    d.output.split('\n').slice(1),
+    /** @type {string} */ (d.output).split('\n').slice(1),
     ['n0', 'n1', 'n2', 'n3'].map((n, i) => `- [[${n}]] (Memory): body ${i}`),
   );
   assert.equal(
     d.entry.chars,
-    d.output
+    /** @type {string} */ (d.output)
       .split('\n')
       .slice(1)
       .reduce((a, l) => a + l.length, 0),
@@ -146,7 +157,11 @@ test('semanticArm: caps at MAX_NOTES and keeps the server order', () => {
 });
 
 // --- keywordArm ------------------------------------------------------------------------------
-const card = (note, layer, text) => ({ note, layer, text });
+const card = (
+  /** @type {string} */ note,
+  /** @type {string} */ layer,
+  /** @type {string | null} */ text,
+) => ({ note, layer, text });
 
 // One distinctive corpus, used by every keyword test below, so that "it abstained" and "it found
 // the right note" are answers to the SAME question.
@@ -169,17 +184,18 @@ test('keywordArm: finds the right note and prints the exact brief', () => {
     'one note, because the other 11 cards share no query term',
   );
   assert.equal(d.entry.injected, 1);
-  assert.equal(d.entry.chars, d.output.length - HEADER.length - 1);
-  assert.equal(d.entry.score, +d.entry.score.toFixed(2), 'score is rounded to 2dp for the log');
+  assert.equal(d.entry.chars, /** @type {string} */ (d.output).length - HEADER.length - 1);
+  const score = /** @type {number} */ (d.entry.score);
+  assert.equal(score, +score.toFixed(2), 'score is rounded to 2dp for the log');
   assert.ok(!('via' in d.entry), 'no `via` field is how the log tells the keyword arm apart');
 });
 
 test('keywordArm: ranks by BM25, so on-topic notes beat the fillers and each other', () => {
   const d = keywordArm(CORPUS, 'the latency percentile budget and also the firewall ruleset');
   assert.equal(d.entry.top, 'latency-budget', 'three matched terms outrank two');
-  const notes = d.output.split('\n').slice(1);
+  const notes = /** @type {string} */ (d.output).split('\n').slice(1);
   assert.deepEqual(
-    notes.map((l) => l.match(/\[\[(.+?)\]\]/)[1]),
+    notes.map((l) => /** @type {RegExpMatchArray} */ (l.match(/\[\[(.+?)\]\]/))[1]),
     ['latency-budget', 'waf-rules'],
     'the nine fillers share no query term and must not appear at all',
   );
@@ -197,7 +213,8 @@ test('keywordArm: a real but weak match is below MIN_SCORE and abstains', () => 
   const d = keywordArm(CORPUS, 'were there any meeting notes worth reading from last quarter');
   assert.equal(d.output, null, 'a term the fillers all share carries almost no IDF');
   assert.equal(d.entry.reason, 'low confidence');
-  assert.ok(d.entry.score > 0 && d.entry.score < MIN_SCORE, `weak-but-real score ${d.entry.score}`);
+  const weak = /** @type {number} */ (d.entry.score);
+  assert.ok(weak > 0 && weak < MIN_SCORE, `weak-but-real score ${weak}`);
 });
 
 test('keywordArm: tokenisation drops stopwords, short words and every non-[a-z0-9] character', () => {

@@ -23,7 +23,12 @@ import path from 'node:path';
 import { vault } from './paths.mjs';
 import { checkFile } from '../../scripts/lib/memory-audit-checks.mjs';
 
-/** Frontmatter block: the lines between the opening fence on line 1 and the next `---`. */
+/**
+ * Frontmatter block: the lines between the opening fence on line 1 and the next `---`.
+ *
+ * @param {string} raw
+ * @returns {string | null}
+ */
 export function frontmatter(raw) {
   const lines = raw.split('\n');
   if (lines[0] !== '---') return null; // no fence on line 1
@@ -35,8 +40,12 @@ export function frontmatter(raw) {
  * Everything after the closing frontmatter fence — and the WHOLE file when there is no
  * frontmatter, which is what makes the body checks still fire on an unfenced note.
  * Mirrors the awk in the shell version: lines before the first fence are kept too.
+ *
+ * @param {string} raw
+ * @returns {string}
  */
 export function noteBody(raw) {
+  /** @type {string[]} */
   const out = [];
   let fences = 0,
     past = false;
@@ -55,7 +64,13 @@ export function noteBody(raw) {
   return out.join('\n').replace(/\n+$/, ''); // $(...) strips trailing newlines
 }
 
-/** Is this path a note we check at all? Operating surfaces are not notes. */
+/**
+ * Is this path a note we check at all? Operating surfaces are not notes.
+ *
+ * @param {string} file
+ * @param {string} vaultRoot
+ * @returns {boolean}
+ */
 export function isCheckable(file, vaultRoot) {
   if (!file || !file.startsWith(`${vaultRoot}/`)) return false;
   if (!file.endsWith('.md')) return false;
@@ -67,9 +82,17 @@ export function isCheckable(file, vaultRoot) {
   );
 }
 
-/** The convention warnings for one note. Pure: takes content, returns strings, touches nothing. */
+/**
+ * The convention warnings for one note. Pure: takes content, returns strings, touches nothing.
+ *
+ * @param {string} file
+ * @param {string} raw
+ * @param {string} vaultRoot
+ * @returns {string[]}
+ */
 export function warnings(file, raw, vaultRoot) {
   const name = path.basename(file, '.md');
+  /** @type {string[]} */
   const warn = [];
   const fm = frontmatter(raw);
 
@@ -123,6 +146,9 @@ export function warnings(file, raw, vaultRoot) {
  * The convention report for one written file, or '' when it is clean or not a checkable note.
  *
  * Returns text rather than printing, so it is testable without stdin or a subprocess.
+ *
+ * @param {string} file
+ * @returns {string}
  */
 export function report(file) {
   const vaultRoot = vault();
@@ -140,6 +166,7 @@ export function report(file) {
   // Claim-level checks (CLAIM-1 metric provenance, FRESH-1 staleness, prose-only supersession) run
   // from the tested predicates rather than being re-implemented here. This is the write-time half:
   // an inflated recall figure once reached a public README *between* two audits.
+  /** @type {string[]} */
   let claims = [];
   try {
     claims = checkFile(file);
