@@ -68,7 +68,17 @@ try {
     try {
       fs.appendFileSync(
         path.join(logDir, `recall-${new Date().toISOString().slice(0, 10)}.jsonl`),
-        JSON.stringify({ t: new Date().toISOString(), slug, ...entry }) + '\n',
+        JSON.stringify({
+          t: new Date().toISOString(),
+          slug,
+          ...entry,
+          // `performance.now()` is measured from process start, NOT from here, and that is the
+          // point: a prompt waits for the whole process, so node's own startup and this file's
+          // static import graph — ~40 ms of the budget — are inside the number. A clock started
+          // at the top of this try would have excluded exactly the part nobody can see. Read it
+          // against the 700 ms socket timeout, which it contains rather than sits beside.
+          ms: +performance.now().toFixed(1),
+        }) + '\n',
       );
     } catch {
       /* logging must never break the prompt either */

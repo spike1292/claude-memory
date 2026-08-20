@@ -289,3 +289,48 @@ test('keywordArm: a NULL text row is inert, not fatal', () => {
   assert.ok(!withNull.entry.abstained, 'a NULL row must not take the arm down');
   assert.equal(withNull.output, clean.output, 'and must not change what the arm returns');
 });
+
+// --- k / notes -------------------------------------------------------------------------------
+// The candidate list is what makes "which notes never surface" answerable: `top` alone names one
+// note per decision, so a note ranked second forever would look identical to one never retrieved.
+test('semanticArm: logs the candidates it considered, in render order', () => {
+  const six = Array.from({ length: 6 }, (_, i) => hit(`n${i}`, 0.9 - i / 100, `# t\nbody ${i}`));
+  const d = /** @type {import('./memory-recall.mjs').Decision} */ (semanticArm(six));
+  assert.equal(d.entry.k, MAX_NOTES, 'candidates are counted AFTER the MAX_NOTES cut');
+  assert.deepEqual(d.entry.notes, ['n0', 'n1', 'n2', 'n3']);
+  assert.equal(d.entry.injected, d.entry.k, 'nothing was cut by the character budget here');
+});
+
+test('keywordArm: logs the candidates it considered', () => {
+  const d = keywordArm(CORPUS, 'what did we decide about the cutover and the rollback plan');
+  const notes = /** @type {string[]} */ (d.entry.notes);
+  assert.equal(d.entry.k, notes.length);
+  assert.ok(notes.length > 0 && notes.length <= MAX_NOTES);
+  assert.equal(notes[0], d.entry.top, 'the first candidate is the top hit');
+  assert.deepEqual(
+    /** @type {string} */ (d.output)
+      .split('\n')
+      .slice(1)
+      .map((l) => /\[\[(.+?)\]\]/.exec(l)?.[1]),
+    notes.slice(0, d.entry.injected),
+    'the injected notes are a PREFIX of the candidates — what the reader half of this relies on',
+  );
+});
+
+// Same discipline as `score`: an arm with no candidates omits the keys rather than logging 0 and
+// [], which would read as "considered nothing" instead of "there was nothing to consider".
+test('both arms omit k and notes where there were no candidates', () => {
+  const weak = /** @type {import('./memory-recall.mjs').Decision} */ (
+    semanticArm([hit('under', 0.5499, '# t\nbody')])
+  );
+  assert.equal('k' in weak.entry, false);
+  assert.equal('notes' in weak.entry, false);
+
+  const off = keywordArm(CORPUS, 'how long should neapolitan pizza dough prove before baking');
+  assert.equal(off.entry.abstained, true);
+  assert.equal('k' in off.entry, false);
+  assert.equal('notes' in off.entry, false);
+
+  const empty = keywordArm([], 'what did we decide about the cutover and the rollback plan');
+  assert.equal(JSON.stringify(empty.entry), '{"abstained":true,"reason":"empty index"}');
+});

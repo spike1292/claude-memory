@@ -195,9 +195,12 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
                                         gate MIN_SCORE 6.0   (the lib's bm25() since
                                                               2026-08-19 — H6)
 
-  Every decision is logged, abstentions included. A prompt must NEVER wait on this.
-  The entry owns stdin, the socket, node:sqlite and stdout; every gate, score and log
-  record above is hooks/lib/memory-recall.mjs, which takes rows as values.
+  Every decision is logged, abstentions included, to logs/recall-<date>.jsonl. A prompt
+  must NEVER wait on this. The entry owns stdin, the socket, node:sqlite, the CLOCK and
+  stdout; every gate, score and log record above is hooks/lib/memory-recall.mjs, which
+  takes rows as values. The record carries the candidate list and elapsed ms as well as
+  the top hit, and `/memory:doctor --stats` (scripts/lib/recall-stats.mjs) aggregates
+  those files read-only.
 ```
 
 ### Flow 3 — the search daemon
@@ -364,10 +367,13 @@ In the three below it is still reversed:
 | [`scripts/memory-audit-checks.mjs`](../scripts/memory-audit-checks.mjs) | **321** | 241 | no |
 | [`scripts/memory-eval.mjs`](../scripts/memory-eval.mjs) | **230** | 111 | no |
 
-`hooks/memory-recall.mjs` was the fourth row — 253 lines over no lib at all. It is now 153 lines of
-stdin, socket, `node:sqlite` and stdout over a 189-line
+`hooks/memory-recall.mjs` was the fourth row — 253 lines over no lib at all. It is now 166 lines of
+stdin, socket, the clock, `node:sqlite` and stdout over a 245-line
 [`hooks/lib/memory-recall.mjs`](../hooks/lib/memory-recall.mjs) with the gates, the ranking, the
-formatting and the log-record shapes, and a test file where the prompt path had none.
+formatting and the log-record shapes, and a test file where the prompt path had none. The entry
+itself gained one on 2026-08-20 — `hooks/memory-recall.test.mjs` runs it as a real subprocess
+against an isolated `$CLAUDE_MEMORY_HOME` — because the `ms` stamp lives in the entry by design:
+only the process that owns the socket can time what a prompt waited for.
 
 **This is not cosmetic.** The four *structural* CI invariants key off the `lib/` boundary, so code left in an
 entry is **exempt by construction** — and the `node:sqlite`-only-in-entries rule actively pushes
@@ -403,6 +409,7 @@ deleted on 2026-08-19, and the `preFiltered` parameter it had become went with i
 ```
   hooks/lib/validate-note.mjs ──────────▶ scripts/lib/memory-audit-checks.mjs
   hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
+  scripts/lib/recall-stats.mjs ─────────▶ hooks/lib/memory-recall.mjs (MAX_CHARS)
   scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │
   scripts/lib/memory-semantic.mjs ──┐                    │

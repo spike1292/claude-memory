@@ -89,9 +89,25 @@ export { CARD };
  *   injected?: number,
  *   chars?: number,
  *   via?: string,
+ *   ms?: number,
+ *   k?: number,
+ *   notes?: string[],
  * }} LogEntry
  * @typedef {{ entry: LogEntry, output: string | null }} Decision
  */
+
+// `k` and `notes` are the arm's CANDIDATES — the top MAX_NOTES by score, in render order, BEFORE
+// renderLines applied anything of its own. `injected` is what actually reached the prompt, so the
+// injected notes are `notes.slice(0, injected)`.
+//
+// `k > injected` therefore means renderLines stopped early, and WHICH of its two stops is
+// arm-dependent: the semantic arm renders floorless over already-gated hits, so there it is the
+// character budget; the keyword arm passes a trailing weak-hit floor (MIN_SCORE / 2) that
+// renderLines checks BEFORE the budget, and its candidates are the top 4 of the whole corpus with
+// only `scored[0]` gated — so there it is usually the floor. Do not read it as "the budget".
+// Both keys follow `score`'s discipline: an arm with no candidates omits them rather than logging
+// `0` and `[]`, which would read like a measurement of nothing instead of the absence of one.
+// `ms` is stamped by the entry, which owns the clock; the arms stay pure and untimed.
 
 export const HEADER =
   'Possibly relevant vault notes (retrieved, not verified — open one before relying on it):';
@@ -161,6 +177,8 @@ export function semanticArm(results) {
       top: hits[0].note,
       score: hits[0].score,
       via: 'server',
+      k: hits.length,
+      notes: hits.map((h) => h.note),
     },
     output: brief(lines),
   };
@@ -207,8 +225,11 @@ export function keywordArm(cards, prompt) {
     };
   }
 
-  const { lines, used } = renderLines(scored.slice(0, MAX_NOTES), MIN_SCORE / 2);
-  if (!lines.length) return { entry: { abstained: true, reason: 'budget' }, output: null };
+  const cand = scored.slice(0, MAX_NOTES);
+  const { lines, used } = renderLines(cand, MIN_SCORE / 2);
+  const considered = { k: cand.length, notes: cand.map((c) => c.note) };
+  if (!lines.length)
+    return { entry: { abstained: true, reason: 'budget', ...considered }, output: null };
 
   return {
     entry: {
@@ -217,6 +238,7 @@ export function keywordArm(cards, prompt) {
       chars: used,
       top: scored[0].note,
       score: +scored[0].score.toFixed(2),
+      ...considered,
     },
     output: brief(lines),
   };

@@ -10,16 +10,33 @@
 # command itself being broken.
 #
 # `--perf` appends the performance report — server RSS, index sizes, disk split, recall round trip.
-# One entry point rather than a second command: the perf numbers are only readable next to the
-# wiring checks, and a paste of the whole thing is what an issue wants. It is Node
-# (scripts/doctor-perf.mjs), because every line of it loops.
+# `--stats[=DAYS]` appends the recall analytics report — inject/abstain rates, the reasons, score
+# and latency distributions, and which notes never surface. Unlike every other section here it
+# prints NOTE NAMES from the vault, so it is the one part of this report that is not safe to paste
+# into a public issue. Both are Node (scripts/doctor-perf.mjs),
+# because every line of them loops, and both are read-only.
+#
+# One entry point rather than a second command: the numbers are only readable next to the wiring
+# checks, and a paste of the whole thing is what an issue wants. Two FLAGS rather than one because
+# they answer different questions — "why is this slow" and "is this helping" — and combining them
+# would make the common case print a page nobody asked for.
 set -uo pipefail
 
 perf=0
+stats=0
+stats_arg=--stats
 for arg in "$@"; do
   case "$arg" in
     --perf) perf=1 ;;
-    *) echo "unknown option: $arg — usage: doctor.sh [--perf]"; exit 0 ;;
+    # `--stats=30` widens the window to 30 daily log files. Passed through verbatim rather than
+    # parsed here: doctor-perf.mjs already validates it, and a second parser would be a second
+    # place for the default to drift.
+    --stats) stats=1 ;;
+    --stats=*)
+      stats=1
+      stats_arg="$arg"
+      ;;
+    *) echo "unknown option: $arg — usage: doctor.sh [--perf] [--stats[=DAYS]]"; exit 0 ;;
   esac
 done
 
@@ -311,6 +328,19 @@ if [ "$perf" -eq 1 ]; then
   else
     echo
     warn "cannot report performance without node" "see the runtime section above."
+  fi
+fi
+
+if [ "$stats" -eq 1 ]; then
+  # Reads the recall logs and this project's index. Writes nothing, starts nothing: with no logs
+  # it reports "not measured" rather than arming recall to produce some.
+  if command -v node >/dev/null 2>&1; then
+    echo
+    node --disable-warning=ExperimentalWarning "$ROOT/scripts/doctor-perf.mjs" "$PWD" "$stats_arg" 2>&1 |
+      sed 's/^./  &/'
+  else
+    echo
+    warn "cannot report recall stats without node" "see the runtime section above."
   fi
 fi
 
