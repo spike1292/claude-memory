@@ -3,16 +3,12 @@
 //
 // Thin on purpose: stdin, cwd, stdout. Logic and tests live in lib/memory-link-lint.mjs.
 // hooks.json points at this path, so it is a contract — keep it.
+import { readStdin, payload, hookCwd } from './lib/hook-io.mjs';
 import { lint } from './lib/memory-link-lint.mjs';
 
-let cwd = process.cwd();
-try {
-  // @ts-expect-error Node's Response accepts a Readable; the DOM BodyInit type does not.
-  const j = JSON.parse(await new Response(process.stdin).text());
-  if (j?.cwd) cwd = j.cwd;
-} catch {
-  /* no payload — fall back to cwd */
-}
+// readStdin() and not `new Response(process.stdin)` — the web-streams path costs ~18 ms of runtime
+// bootstrap per hook. See docs/decisions/2026-08-20-hook-startup-cost.md.
+const cwd = hookCwd(payload(readStdin()));
 
 // A SessionStart hook must never break a session.
 try {

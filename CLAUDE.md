@@ -25,6 +25,7 @@ scripts/release.sh --selftest                  # still bash, 13 cases; node --te
 scripts/doctor.sh                              # the /memory:doctor body; always exits 0
 npm run format                                 # prettier --write .   (CI runs format:check)
 npm run typecheck                              # tsc --noEmit, checkJs + strict; CI fails on any diagnostic
+node scripts/bench-hooks.mjs -n 20 --notes 50  # what every hook costs at startup; safe, never the real vault
 ```
 
 **Prettier is pinned and invoked via `npx`, never a devDependency.** Claude Code auto-runs `npm ci`
@@ -245,6 +246,14 @@ timing without saying whether the vault was cloud-backed or pinned offline**, wh
 hook 166 ms vs 131 ms; and **measure against a vault with real note counts** — the shell link lint
 looked like a 74 ms hook in this repo, which has no L1 notes, while taking 10.9 s on a 49-note
 project.
+
+**Do not hand-time a hook — run `node scripts/bench-hooks.mjs`**, which builds the synthetic vault,
+isolates `HOME` and `CLAUDE_MEMORY_HOME`, and prints the floor and the import costs as rows beside
+the hooks. That is what found the last cut: three entries read stdin with
+`await new Response(process.stdin).text()` and paid ~18 ms of web-streams bootstrap for a 100-byte
+payload, where `hook-io.mjs`'s `readStdin()` costs ~0.5 ms. **Read a hook payload with `readStdin()`
++ `payload()`, never with `Response`.** No hook is import-bound —
+[docs/decisions/2026-08-20-hook-startup-cost.md](docs/decisions/2026-08-20-hook-startup-cost.md).
 
 The project-key cache (`cache/project-keys.json`) is now Node's alone; shell reads it only by
 asking Node. Its stamp is `<whole seconds>:<size>:<inode>` and all three fields are load-bearing —

@@ -9,6 +9,31 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/bench-hooks.mjs` — a repeatable measurement of what a hook costs at startup.**
+  One line (`node scripts/bench-hooks.mjs -n 20 --notes 50`) times every hook against a synthetic
+  vault in a scratch `HOME`/`CLAUDE_MEMORY_HOME` — it refuses to run if any of the three resolves
+  outside the temp root, so it can never touch the real vault — and prints a markdown table ready
+  to paste into a decision record. It measures the floor (`node -e ''`) and the imports as rows of
+  their own, not just the hooks, which is what identified the change below.
+  ([#37](https://github.com/spike1292/claude-memory/issues/37))
+
+### Changed
+
+- **SessionStart is ~35 ms cheaper, and every Write/Edit ~16 ms.** `insights-surface`,
+  `memory-link-lint` and `validate-note` read their stdin payload with
+  `await new Response(process.stdin).text()`, which boots Node's web-streams machinery to read a
+  100-byte JSON object: 52.8 ms against a 34.6 ms floor, where `fs.readFileSync(0)` costs 35.1 ms.
+  They now use `readStdin()`/`payload()` from `hooks/lib/hook-io.mjs`, which the gate hooks already
+  did. Medians (n=20, synthetic 50-note vault on local disk): `insights-surface` 55.6 → 40.8 ms,
+  `memory-link-lint` 60.2 → 42.0 ms, `validate-note` — the hottest hook in the system, it runs on
+  every edit — 57.5 → 41.8 ms. No hook is import-bound: `paths.mjs` costs 5.2 ms and `node:sqlite`
+  0.7 ms over the floor, so nothing was made lazy and nothing was bundled. Numbers, conditions and
+  what was deliberately *not* cut:
+  [docs/decisions/2026-08-20-hook-startup-cost.md](docs/decisions/2026-08-20-hook-startup-cost.md).
+  ([#37](https://github.com/spike1292/claude-memory/issues/37))
+
 ## [0.4.0] - 2026-08-20
 
 ### Added
