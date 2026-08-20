@@ -239,9 +239,12 @@ lock="$STATE/run/graphgen.lock"
 if [ -f "$lock" ]; then
   lock_pid=$(awk '{print $1}' "$lock" 2>/dev/null)
   lock_at=$(awk '{print $2}' "$lock" 2>/dev/null)
-  # Both fields validated before any arithmetic: a malformed lock must read as a stale lock, not as
-  # a bash error. Mirrors Number.isFinite() in lockHolder().
-  case "${lock_pid:-}${lock_at:-}" in (*[!0-9]*|'') lock_pid=''; lock_at=0 ;; esac
+  # Each field validated SEPARATELY before any arithmetic, because a lock truncated mid-write to
+  # just "123" leaves a digit-only pid and an empty age — concatenating them hid that, and the age
+  # then defaulted to 0 and reported a 56-year-old lock instead of a gone owner. An unusable age
+  # zeroes the pid too, so both land on the same verdict lockHolder() reaches via Number.isFinite.
+  case "${lock_pid:-}" in (*[!0-9]*|'') lock_pid=0 ;; esac
+  case "${lock_at:-}" in (*[!0-9]*|'') lock_pid=0; lock_at=0 ;; esac
   age=$(( $(date +%s) - ${lock_at:-0} ))
   # The staleness window is ASKED FOR, not copied: a second 3600 here would drift the moment
   # LOCK_MAX_SECONDS moves, and doctor would then call a held lock stale (or the reverse).
