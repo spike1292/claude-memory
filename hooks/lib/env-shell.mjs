@@ -26,6 +26,9 @@ import {
  * a bare $ or backtick would be expanded, and an unescaped quote would end the string and run
  * whatever followed. Single quotes suppress every expansion there is, and the four-character
  * escape is the only thing they cannot contain.
+ *
+ * @param {unknown} value
+ * @returns {string}
  */
 export function shellQuote(value) {
   return `'${String(value ?? '').replace(/'/g, "'\\''")}'`;
@@ -43,7 +46,12 @@ export const VARS = [
   'MEMORY_ENV_MODEL',
 ];
 
-/** Render a resolved environment as `NAME='value'` lines, safe to `eval`. */
+/**
+ * Render a resolved environment as `NAME='value'` lines, safe to `eval`.
+ *
+ * @param {Record<string, string>} values
+ * @returns {string}
+ */
 export function render(values) {
   return VARS.map((k) => `${k}=${shellQuote(values[k] ?? '')}`).join('\n') + '\n';
 }
@@ -55,6 +63,9 @@ export function render(values) {
  * repo, or a git that is missing, must degrade to the legacy cwd-slug rather than fail the caller.
  * That is what the shell version did, and vault-memory-sync.sh depends on it: the legacy name is
  * also the pre-migration folder name, so a fallback lands on a folder the migration already knows.
+ *
+ * @param {string} dir
+ * @returns {Record<string, string>}
  */
 export function resolve(dir) {
   let key;
@@ -76,4 +87,5 @@ export function resolve(dir) {
   };
 }
 
+/** @param {string} dir */
 export const shellEnv = (dir) => render(resolve(dir));

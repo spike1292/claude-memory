@@ -28,7 +28,19 @@ export function configFile() {
   return path.join(memoryHome(), 'config.json');
 }
 
+/**
+ * @typedef {object} MemoryConfig
+ * @property {string} [vault]
+ * @property {boolean} [recall]
+ * @property {string} [model]
+ * @property {number} [modelIdleMs]
+ * @property {number} [serveIdleMs]
+ */
+
+/** @type {MemoryConfig|undefined} */
 let _config;
+
+/** @returns {MemoryConfig} */
 export function config() {
   if (_config) return _config;
   try {
@@ -36,7 +48,7 @@ export function config() {
   } catch {
     _config = {};
   }
-  return _config;
+  return /** @type {MemoryConfig} */ (_config);
 }
 
 /** Vault root. Mirrors resolve_vault(): env var, then config.json, then the default. */
@@ -66,6 +78,12 @@ export function recallEnabled() {
 // env -> config.json -> default, the order every setting resolves in. Anything unparseable or
 // non-positive falls through to the default rather than disabling a timer: a typo'd env var must
 // not leave a 1.3GB model resident forever.
+/**
+ * @param {string} envName
+ * @param {keyof MemoryConfig} configKey
+ * @param {number} fallback
+ * @returns {number}
+ */
 const positiveMs = (envName, configKey, fallback) => {
   const n = Number(process.env[envName] ?? config()[configKey]);
   return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -108,13 +126,19 @@ export function memoryHome() {
   return process.env.CLAUDE_MEMORY_HOME || path.join(os.homedir(), '.claude-memory');
 }
 
-/** memoryHome()/<name>, created if absent. */
+/**
+ * memoryHome()/<name>, created if absent.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
 export function stateDir(name) {
   const d = path.join(memoryHome(), name);
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
 
+/** @type {Map<string, string>} */
 const keyCache = new Map();
 
 /**
@@ -128,6 +152,9 @@ const keyCache = new Map();
  * This is NOT a second implementation of project_key: it never derives a key, only answers
  * "has anything that could change the key been touched?". Getting it wrong costs a cache miss,
  * never a wrong answer, because computeProjectKey() below is the only thing that derives one.
+ *
+ * @param {string} dir
+ * @returns {string|null|undefined}
  */
 function gitConfigFor(dir) {
   let d = path.resolve(dir);
@@ -146,6 +173,9 @@ function gitConfigFor(dir) {
 
 const KEY_CACHE_FILE = () => path.join(memoryHome(), 'cache', 'project-keys.json');
 
+/** @typedef {{ key: string, stamp: string|null }} KeyCacheEntry */
+
+/** @returns {Record<string, KeyCacheEntry>} */
 function readKeyCache() {
   try {
     return JSON.parse(fs.readFileSync(KEY_CACHE_FILE(), 'utf8'));
@@ -154,6 +184,7 @@ function readKeyCache() {
   }
 }
 
+/** @param {Record<string, KeyCacheEntry>} all */
 function writeKeyCache(all) {
   // Atomic: several hooks can fire at once, and a half-written cache must not become a parse
   // error every session afterwards. A failed write is fine — it just costs the next lookup.
@@ -182,8 +213,13 @@ function writeKeyCache(all) {
  * opposite direction — a host name with a non-ASCII capital would key differently and silently
  * split one project's vault folder in two.
  */
+/** @param {string} t */
 const asciiLower = (t) => t.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
 
+/**
+ * @param {string} url
+ * @returns {string}
+ */
 export function normaliseRemote(url) {
   return asciiLower(
     String(url)
@@ -195,6 +231,11 @@ export function normaliseRemote(url) {
   ).replace(/\//g, '-'); // s#/#-#g
 }
 
+/**
+ * @param {string} dir
+ * @param {string[]} args
+ * @returns {string}
+ */
 const gitOut = (dir, args) => {
   try {
     return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: 'pipe' }).trim();
@@ -208,6 +249,9 @@ const gitOut = (dir, args) => {
  *
  * Identifies the PROJECT, not the checkout path, so one repo maps to one vault folder on every
  * machine. Falls back to the repo directory name, then to the legacy cwd-slug for non-git dirs.
+ *
+ * @param {string} dir
+ * @returns {string}
  */
 export function computeProjectKey(dir) {
   const url = gitOut(dir, ['remote', 'get-url', 'origin']);
@@ -238,11 +282,15 @@ export function computeProjectKey(dir) {
  * Validated against a stamp taken from the git config that determines the key: `git remote set-url`
  * rewrites that file, so a changed remote is a miss on the next call rather than a stale key
  * forever. See the stamp construction below for why all three fields are needed.
+ *
+ * @param {string} [dir]
+ * @returns {string}
  */
 export function projectKey(dir = process.cwd()) {
-  if (keyCache.has(dir)) return keyCache.get(dir);
+  if (keyCache.has(dir)) return /** @type {string} */ (keyCache.get(dir));
 
   const cfg = gitConfigFor(dir);
+  /** @type {string|null} */
   let stamp = null; // null => do not cache (worktree/submodule)
   if (cfg === undefined) {
     stamp = '0'; // no repo: key is a pure function of the path
@@ -278,7 +326,12 @@ export function projectKey(dir = process.cwd()) {
   return out;
 }
 
-/** Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after. */
+/**
+ * Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after.
+ *
+ * @param {string} [dir]
+ * @returns {string}
+ */
 export function legacyKey(dir = process.cwd()) {
   return dir.replace(/\//g, '-');
 }
@@ -291,6 +344,9 @@ export function legacyKey(dir = process.cwd()) {
  * It must be done by mutating the library's own `env`, NOT via HF_HOME/TRANSFORMERS_CACHE:
  * transformers.js v4 ignores both (verified 2026-08-15 — env.cacheDir still resolved to the
  * package dir with them set). Call this with the imported module, before the first pipeline().
+ *
+ * @param {{ env: { cacheDir: string|null } }} transformers
+ * @returns {string}
  */
 export function useModelCache(transformers) {
   const d = stateDir('models');

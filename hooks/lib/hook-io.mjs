@@ -26,7 +26,24 @@ export function readStdin() {
   }
 }
 
-/** Parse a hook payload. Anything unparseable is an empty payload, never a throw. */
+/**
+ * @typedef {{
+ *   cwd?: string,
+ *   prompt?: string,
+ *   session_id?: string,
+ *   transcript_path?: string,
+ *   hook_event_name?: string,
+ *   tool_name?: string,
+ *   tool_input?: Record<string, any>,
+ * } & Record<string, any>} HookPayload
+ */
+
+/**
+ * Parse a hook payload. Anything unparseable is an empty payload, never a throw.
+ *
+ * @param {string} [raw]
+ * @returns {HookPayload}
+ */
 export function payload(raw) {
   try {
     const v = JSON.parse(raw || '{}');
@@ -36,7 +53,12 @@ export function payload(raw) {
   }
 }
 
-/** The cwd a hook should act on. Claude Code always sends it; `process.cwd()` is the safety net. */
+/**
+ * The cwd a hook should act on. Claude Code always sends it; `process.cwd()` is the safety net.
+ *
+ * @param {HookPayload} [p]
+ * @returns {string}
+ */
 export function hookCwd(p) {
   return p?.cwd || process.cwd();
 }
@@ -48,11 +70,18 @@ export function hookCwd(p) {
  * shell versions kept them. Same rule as db/, models/ and logs/: one machine-local root, so there
  * is one directory to inspect, size and clear. The cost of moving them is one missed debounce per
  * marker at upgrade time — a single extra background run, never a wrong one.
+ *
+ * @param {string} name
+ * @returns {string}
  */
 export function markerPath(name) {
   return path.join(stateDir('cache'), `${name}.ts`);
 }
 
+/**
+ * @param {string} file
+ * @returns {number}
+ */
 export function readMarker(file) {
   try {
     const n = Number(fs.readFileSync(file, 'utf8').trim());
@@ -62,6 +91,10 @@ export function readMarker(file) {
   }
 }
 
+/**
+ * @param {string} file
+ * @param {number} seconds
+ */
 export function writeMarker(file, seconds) {
   try {
     fs.writeFileSync(file, `${seconds}\n`);
@@ -75,12 +108,22 @@ export function writeMarker(file, seconds) {
  *
  * `last === 0` means no marker, which must NOT count as recent — the missing-marker case is the
  * first run, and suppressing it would mean the feature never fires at all.
+ *
+ * @param {number} last
+ * @param {number} windowSeconds
+ * @param {number} now
+ * @returns {boolean}
  */
 export function withinDebounce(last, windowSeconds, now) {
   return last > 0 && now - last < windowSeconds;
 }
 
-/** Whole seconds since the epoch — the unit every marker file is written in. */
+/**
+ * Whole seconds since the epoch — the unit every marker file is written in.
+ *
+ * @param {number} [d]
+ * @returns {number}
+ */
 export function nowSeconds(d = Date.now()) {
   return Math.floor(d / 1000);
 }
@@ -92,6 +135,10 @@ export function nowSeconds(d = Date.now()) {
 // which deleted distill-session.mjs's own local copy of `which` without adding an import, and it
 // never shipped: v0.3.1 still defines the local copy (`hooks/lib/distill-session.mjs:299` in that
 // tag), and no release followed it. Unreleased `main` only — not a user-facing regression.
+/**
+ * @param {string} cmd
+ * @returns {string|null}
+ */
 export const which = (cmd) => {
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
@@ -114,6 +161,7 @@ export const which = (cmd) => {
  * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
  * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
  */
+/** @param {number} pid */
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -123,7 +171,14 @@ const alive = (pid) => {
   }
 };
 
-/** The pid holding `file`, or null when the lock is free, stale or unreadable. */
+/**
+ * The pid holding `file`, or null when the lock is free, stale or unreadable.
+ *
+ * @param {string} file
+ * @param {number} maxSeconds
+ * @param {number} [now]
+ * @returns {number|null}
+ */
 export function lockHolder(file, maxSeconds, now = nowSeconds()) {
   try {
     const [pid, at] = fs.readFileSync(file, 'utf8').trim().split(/\s+/).map(Number);
@@ -142,6 +197,12 @@ export function lockHolder(file, maxSeconds, now = nowSeconds()) {
  *
  * `at` is a TIMESTAMP, and is named to match lockHolder's destructured `at` — `maxSeconds` next to
  * it is a duration, and one edit blurring the two would silently change what "stale" means.
+ *
+ * @param {string} file
+ * @param {number} pid
+ * @param {number} at
+ * @param {string} [flag]
+ * @returns {boolean}
  */
 export function writeLock(file, pid, at, flag = 'w') {
   try {
@@ -153,6 +214,7 @@ export function writeLock(file, pid, at, flag = 'w') {
   }
 }
 
+/** @param {string} file */
 export function releaseLock(file) {
   try {
     fs.unlinkSync(file);
@@ -161,6 +223,10 @@ export function releaseLock(file) {
   }
 }
 
+/**
+ * @param {string} file
+ * @returns {number|null}
+ */
 const inode = (file) => {
   try {
     return fs.statSync(file).ino;
@@ -185,6 +251,13 @@ const inode = (file) => {
  * close it. Closing it needs an OS-level lock, which Node's `fs` does not expose — the upgrade is
  * a native `flock` binding, and the residual cost is one extra re-index in an interleaving of
  * microseconds that also requires the previous owner to be dead.
+ *
+ * @param {string} file
+ * @param {number} pid
+ * @param {number} at
+ * @param {number} maxSeconds
+ * @param {number} [now]
+ * @returns {boolean}
  */
 export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
   const claim = () => writeLock(file, pid, at, 'wx');
@@ -229,6 +302,9 @@ export function findClaude() {
  * This is where distill.log and graphgen.log are opened, and each carries a headless `claude`
  * child's whole stdout+stderr, so the cap has to be applied HERE and not only in `logBanner()` —
  * those two logs never go through the banner helper.
+ *
+ * @param {string} file
+ * @returns {number|null}
  */
 function openLog(file) {
   try {
@@ -248,6 +324,18 @@ function openLog(file) {
  * hold the event loop open; one that inherited stderr would print into the session transcript.
  *
  * Returns the child pid, or null. The pid is what a caller writes into its lock file.
+ *
+ * @typedef {object} DetachOptions
+ * @property {Record<string, string|undefined>} [env]
+ * @property {string} [cwd]
+ * @property {string} [logFile]
+ */
+
+/**
+ * @param {string} cmd
+ * @param {readonly string[]} args
+ * @param {DetachOptions} [opts]
+ * @returns {number|null}
  */
 export function detach(cmd, args, { env, cwd, logFile } = {}) {
   const fd = logFile ? openLog(logFile) : null;
@@ -317,6 +405,8 @@ const LOG_KEEP_BYTES = 256 * 1024;
  *
  * Best effort throughout, like everything else here: a log we cannot trim is a log that keeps
  * growing, never a hook that fails.
+ *
+ * @param {string} file
  */
 function trimLog(file) {
   try {
@@ -338,7 +428,13 @@ function trimLog(file) {
   }
 }
 
-/** Timestamped log banner, so one log file can be read as a sequence of runs. */
+/**
+ * Timestamped log banner, so one log file can be read as a sequence of runs.
+ *
+ * @param {string} file
+ * @param {string} label
+ * @param {string} iso
+ */
 export function logBanner(file, label, iso) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -349,7 +445,12 @@ export function logBanner(file, label, iso) {
   }
 }
 
-/** Count lines the way `wc -l` does: newline bytes, no string allocation for a large transcript. */
+/**
+ * Count lines the way `wc -l` does: newline bytes, no string allocation for a large transcript.
+ *
+ * @param {string} file
+ * @returns {number}
+ */
 export function countLines(file) {
   try {
     const buf = fs.readFileSync(file);
@@ -361,7 +462,12 @@ export function countLines(file) {
   }
 }
 
-/** A hook's one line of stdout: Claude Code renders `systemMessage` to the user. */
+/**
+ * A hook's one line of stdout: Claude Code renders `systemMessage` to the user.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
 export function systemMessage(text) {
   return JSON.stringify({ systemMessage: text });
 }
