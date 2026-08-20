@@ -303,7 +303,11 @@ if [ "$perf" -eq 1 ]; then
     echo
     echo "performance"
     # `^.` and not `^`: indenting a blank line would leave trailing whitespace behind.
-    node "$ROOT/scripts/doctor-perf.mjs" "$PWD" 2>&1 | sed 's/^./  &/'
+    # --disable-warning, not `2>/dev/null`: node:sqlite is experimental below 22.22 and its warning
+    # lands MID-REPORT (the handle is opened lazily, while the index table is being built), but
+    # stderr still has to reach the reader — a crash in doctor-perf.mjs must not vanish.
+    node --disable-warning=ExperimentalWarning "$ROOT/scripts/doctor-perf.mjs" "$PWD" 2>&1 |
+      sed 's/^./  &/'
   else
     echo
     warn "cannot report performance without node" "see the runtime section above."
