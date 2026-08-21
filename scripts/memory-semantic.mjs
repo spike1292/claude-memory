@@ -346,10 +346,6 @@ if (flag('--check-embedding')) {
 
 if (flag('--index')) {
   const indexDb = /** @type {DatabaseSync} */ (db);
-  // Cross-process write lock, PER MODEL — same scope as the DB it guards. A long background
-  // bge-m3 build must not stall the default profile's incremental refresh. (The cross-model
-  // corruption this lock was born from — a table holding 384-dim and 1024-dim vectors at once —
-  // is now structurally impossible: the two models no longer share a file.)
   // The hook log's WORKER line, and only when the SessionStart gate started THIS run.
   // MEMORY_INDEX_HOOK is set by that gate alone: a manual `/memory:prune` is not a hook, and the
   // re-index the distiller runs at the end of every distillation is a different hook's work that
@@ -377,6 +373,10 @@ if (flag('--index')) {
       }),
     );
 
+  // Cross-process write lock, PER MODEL — same scope as the DB it guards. A long background
+  // bge-m3 build must not stall the default profile's incremental refresh. (The cross-model
+  // corruption this lock was born from — a table holding 384-dim and 1024-dim vectors at once —
+  // is now structurally impossible: the two models no longer share a file.)
   const lockDir = path.join(DB_DIR, `.index-${MODEL_KEY}.lock`);
   let locked = false;
   try {

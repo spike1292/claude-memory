@@ -75,7 +75,9 @@ invocations ran at or past half their timeout. Read it with three things in mind
 whole process**, node startup included, because that is what the timeout applies to; a `(worker)`
 row is the detached background run and has no timeout, so never read it as a slow hook; and the
 outcome column is the point — `noop-missing-dep` means a hook is doing nothing at all and needs
-`/memory:doctor` proper, while `debounced` and `child-guard` mean it is working as designed. The
+`/memory:doctor` proper. `debounced` and `child-guard` are deliberate skips, but read the SHARE, not
+the label: a hook that is 100% `debounced` has not done its work once in the window, which is a
+timer that never expires or a lock nothing releases, not a hook working as designed. The
 bash hook (`vault-memory-sync`) is not instrumented, and `graph-staleness-check`'s background run
 is timed by nothing; the report names both, so their absence is not a hook that failed to run.
 

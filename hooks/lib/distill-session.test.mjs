@@ -509,11 +509,14 @@ test('gateOutcome tells a guard from a decision from a debounce', () => {
   assert.strictEqual(gateOutcome({ ...ran, spawned: false }), 'error');
 });
 
-test('the distill WORKER really writes its own line, outcome and reason and all', () => {
+test('the distill WORKER really writes its own line, outcome and reason and all', (t) => {
   // The entry's process.on('exit') handler is the only thing that records how long a distillation
   // took, and until now it was covered by nothing but a source grep — which stays green if the
   // handler becomes unreachable, or if the outcome mapping inverts. This runs it.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillworker-'));
+  // Same reason as the test above: #30 added `t.after` after leaked worlds reached 2.7 GB in
+  // $TMPDIR, and this one builds a state dir, a logs dir and a vault on every run of the suite.
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const transcript = path.join(root, 't.jsonl');
   fs.writeFileSync(
     transcript,

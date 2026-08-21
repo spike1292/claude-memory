@@ -247,9 +247,14 @@ export function render(s, limits) {
       ),
     ),
     '',
-    'ran = did its work · spawned = handed it to a detached child · debounced and child-guard =',
-    'deliberately skipped · noop-missing-dep = a dependency is gone, so this hook is doing nothing',
-    'at all · error = it threw. A dead hook and a healthy one are otherwise indistinguishable.',
+    'ran = did its work · spawned = handed it to a detached child · child-guard = it fired inside',
+    'work it had itself started · debounced = it stood down, for its own timer OR for a lock',
+    'somebody else holds · noop-missing-dep = a dependency is gone, so this hook is doing nothing',
+    'at all · error = it threw, or the work it tried to start never did.',
+    '',
+    'A column that is ALL of one skip is not a healthy hook. 100% debounced means this hook has not',
+    'done its work once in the window — a timer that never expires, or a lock nothing ever releases',
+    '— and it says nothing and exits 0 either way. That is the state this table exists to show.',
   ];
 
   if (s.untimed)

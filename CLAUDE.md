@@ -245,8 +245,14 @@ silence.
 
 **A gate logs its DECISION; the work logs itself.** A gate exits in milliseconds, so
 `distill-session`'s worker branch and `scripts/memory-semantic.mjs --index` each write their own
-`event: worker` line, correlated by `MEMORY_HOOK_SESSION` which the gate exports. The indexer's is
-guarded by that variable, so a manual `/memory:prune` never lands in a per-hook report. There is no
+`event: worker` line, correlated by `MEMORY_HOOK_SESSION` which the gate exports.
+
+**The indexer's line is guarded by `MEMORY_INDEX_HOOK`, not by the session id, and that is not
+redundant.** The session id is INHERITED down the process tree, and the distiller runs an indexer of
+its own at the end of every distillation — guarded on the session id alone, that re-index was logged
+as the SessionStart hook's worker, filing SessionEnd work under SessionStart (observed 2026-08-21).
+The marker says "this indexer IS that hook's worker"; the session id only says which run it belongs
+to. It also keeps a manual `/memory:prune` out of a per-hook report. There is no
 supervisor process: one was tried and deleted, because after `graph-staleness-check` had to be
 excluded from it — `graphgen.lock` holds a pid and `lockHolder()` frees a lock whose pid is dead, so
 a supervisor that died would orphan the headless `claude` while freeing the lock under it — it wrapped
