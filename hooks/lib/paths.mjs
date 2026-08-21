@@ -146,10 +146,11 @@ export function logRetentionDays() {
   // so a stray space in a config deletes every log but today's, silently.
   const s = String(raw ?? '').trim();
   if (!/^\d+$/.test(s)) return 30;
-  // Not `Number(s)` alone: past 2^53 the parse is lossy, and `Math.min` on a lossy number is a
-  // lossy number. Length first, so a 20-digit string clamps for the same reason a 12-digit one
-  // does rather than by accident of what `Number()` made of it.
-  return s.length > 8 ? MAX_RETENTION_DAYS : Math.min(Number(s), MAX_RETENTION_DAYS);
+  // `Math.min` is the whole clamp. A digits-only string parses to an exact number, a huge rounded
+  // one, or Infinity, and all three are far above the ceiling — so no length test is needed, and
+  // the one that stood here read `0000000007` as ten characters and gave a century to someone
+  // asking for a week (found in review, 2026-08-21).
+  return Math.min(Number(s), MAX_RETENTION_DAYS);
 }
 
 /**

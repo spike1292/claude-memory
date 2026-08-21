@@ -14,16 +14,27 @@ import { fileURLToPath } from 'node:url';
 
 const DOCTOR = fileURLToPath(new URL('./doctor.sh', import.meta.url));
 
+/** Every temp state dir this file made, removed at the end — mkdtempSync cleans up after nobody. */
+const made = /** @type {string[]} */ ([]);
+test.after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
+
 /** @param {string[]} names @param {Record<string,string>} [env] @returns {string} */
 const retentionLine = (names, env = {}) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-ret-'));
+  made.push(home);
   fs.mkdirSync(path.join(home, 'logs'));
   for (const n of names) fs.writeFileSync(path.join(home, 'logs', n), '{}\n');
   // HOME too, not just CLAUDE_MEMORY_HOME: doctor.sh reads the real vault otherwise, and a report
   // that touches someone's notes is not a test.
+  //
+  // Built from scratch rather than spread from process.env, like hooks/vault-memory-sync.test.mjs:
+  // the person working on retention is exactly the person with MEMORY_LOG_RETENTION_DAYS exported,
+  // and with the spread that one shell variable failed two of these three assertions.
   const out = execFileSync('bash', [DOCTOR], {
     env: {
-      ...process.env,
+      PATH: process.env.PATH,
       CLAUDE_MEMORY_HOME: home,
       HOME: home,
       CLAUDE_VAULT: path.join(home, 'vault'),

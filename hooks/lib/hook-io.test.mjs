@@ -544,11 +544,17 @@ test('the window is UTC, like the filenames — a timezone ahead of it deletes n
   try {
     withState((logs) => {
       withRetention('0', () => {
-        seed(logs, ['recall-2026-08-21.jsonl', 'hooks-2026-08-20.jsonl']);
+        // The claim marker is here for the SECOND use of the clock: the sweep compares it against
+        // today, and a LOCAL today east of Greenwich deletes the claim the pass just made — so
+        // every later append that day runs a full pass, the herd this design exists to prevent.
+        seed(logs, ['recall-2026-08-21.jsonl', 'hooks-2026-08-20.jsonl', '.retention-2026-08-21']);
         assert.deepStrictEqual(pruneDatedLogs(new Date('2026-08-21T23:30:00Z')), [
           'hooks-2026-08-20.jsonl',
         ]);
-        assert.deepStrictEqual(fs.readdirSync(logs), ['recall-2026-08-21.jsonl']);
+        assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+          '.retention-2026-08-21',
+          'recall-2026-08-21.jsonl',
+        ]);
       });
     });
   } finally {
