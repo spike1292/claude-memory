@@ -42,6 +42,20 @@ which is what the rule means by a plan becoming one. The backlog itself outlived
 went the same way; what survived it is in `architecture.md` — Part 2's open markers, and the one
 item that was declined.
 
+## Research notes
+
+Dated like the other two. What was read, what it said, and what — if anything — is worth taking.
+A research note answers "what does the outside world do", where a decision record answers "why is
+ours this way, and what did we measure" and a plan answers "what are we about to do". It cites its
+sources by URL and ours by path, and it is written to stop the same reading being redone.
+
+A research note is **not** a work queue. When it produces work, the work becomes issues and the note
+stays as it was written; it is not updated to track what shipped.
+
+| | |
+| --- | --- |
+| [obsidian-second-brain](research/2026-08-21-obsidian-second-brain.md) | The repo several of our own checks came from. What is already ours, what was deliberately rejected, and the three items left. |
+
 ## Conventions for these documents
 
 - **Every measurement names its conditions.** A hook timing means nothing without saying whether
