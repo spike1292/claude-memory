@@ -226,7 +226,14 @@ export function check(cwd, opts) {
   if (p.action === 'nudge')
     return { line: systemMessage(p.message), outcome: outcomeOf(p), reason: p.reason };
   if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
-    return { line: systemMessage(BUSY_MESSAGE), outcome: 'ran', reason: 'lock held elsewhere' };
+    // `debounced`, not `ran`: this session did nothing. Another one is regenerating, and on a
+    // machine where every session loses that race `ran` would report a permanently idle hook as a
+    // permanently healthy one.
+    return {
+      line: systemMessage(BUSY_MESSAGE),
+      outcome: 'debounced',
+      reason: 'lock held elsewhere',
+    };
 
   const pid = detach(
     p.claude,

@@ -28,7 +28,16 @@ if (argv.length >= 2) {
       reason,
     }),
   );
-  const r = distill(argv[0], argv[1]);
+  let r;
+  try {
+    r = distill(argv[0], argv[1]);
+  } catch (e) {
+    // Caught only to RECORD it, then rethrown: the exit code and the stack in distill.log are
+    // unchanged. Without this an `error` row printed no reason at all, in the same report round
+    // that added the reason column so an error row could be read.
+    reason = String(/** @type {Error} */ (e)?.message ?? e);
+    throw e;
+  }
   outcome = 'ran';
   reason = r ? `wrote ${r.written}, merged ${r.merged}` : 'nothing to distil';
   if (r)

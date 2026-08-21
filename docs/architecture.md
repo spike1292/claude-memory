@@ -413,6 +413,7 @@ deleted on 2026-08-19, and the `preFiltered` parameter it had become went with i
   hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
   scripts/lib/recall-stats.mjs ─────────▶ hooks/lib/memory-recall.mjs (MAX_CHARS)
   scripts/lib/hook-stats.mjs ───────────▶ hooks/hooks.json (the declared timeouts)
+  scripts/memory-semantic.mjs ──────────▶ hooks/lib/hook-io.mjs (logHook, its own worker line)
   scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │
   scripts/lib/memory-semantic.mjs ──┐                    │

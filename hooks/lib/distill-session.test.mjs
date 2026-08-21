@@ -508,3 +508,40 @@ test('gateOutcome tells a guard from a decision from a debounce', () => {
   // with a null pid; treating that as `spawned` is a healthy column over a dead distiller.
   assert.strictEqual(gateOutcome({ ...ran, spawned: false }), 'error');
 });
+
+test('the distill WORKER really writes its own line, outcome and reason and all', () => {
+  // The entry's process.on('exit') handler is the only thing that records how long a distillation
+  // took, and until now it was covered by nothing but a source grep — which stays green if the
+  // handler becomes unreachable, or if the outcome mapping inverts. This runs it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillworker-'));
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i}` } }),
+    ).join('\n') + '\n',
+  );
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  execFileSync(process.execPath, [entry, transcript, process.cwd()], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_DRYRUN: '1',
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-worker',
+    },
+  });
+
+  const logDir = path.join(root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim().split('\n')[0]);
+  assert.strictEqual(rec.hook, 'distill-session');
+  assert.strictEqual(rec.event, 'worker', 'a worker line, not a gate line');
+  assert.strictEqual(rec.outcome, 'ran');
+  assert.strictEqual(rec.session, 'sess-worker', 'correlated to its gate through the environment');
+  assert.match(String(rec.reason), /^wrote \d+, merged \d+$/);
+  // The duration has to be the WORK. A gate decides in ~40 ms; this process did the distillation.
+  assert.ok(rec.ms > 0);
+});

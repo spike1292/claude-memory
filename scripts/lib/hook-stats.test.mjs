@@ -167,16 +167,19 @@ test('every hook name an entry logs is a name the manifest declares', () => {
   // entry AND in the manifest's command path. Rename hooks/memory-link-lint.mjs and update
   // hooks.json, and this report silently prints "-" for the timeout of a hook that still has one.
   const declared = timeouts(MANIFEST);
-  // RECURSIVE: the two `hook:` literals that matter most sit in hooks/lib/, on the worker lines,
-  // and a non-recursive scan walked straight past exactly the names it was written to protect.
-  const dir = path.join(here, '../../hooks');
+  // hooks/ AND scripts/, recursively. The worker line for the re-index is written by
+  // scripts/memory-semantic.mjs — the indexer logs itself, since there is no supervisor — so a
+  // scan of hooks/ alone walks straight past one of the two names this test exists to protect.
   const logged = new Set();
-  for (const f of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
-    if (!f.name.endsWith('.mjs') || f.name.endsWith('.test.mjs')) continue;
-    for (const m of fs
-      .readFileSync(path.join(f.parentPath, f.name), 'utf8')
-      .matchAll(/hook: '([\w.-]+)'/g))
-      logged.add(m[1]);
+  for (const root of ['../../hooks', '../../scripts']) {
+    const dir = path.join(here, root);
+    for (const f of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!f.name.endsWith('.mjs') || f.name.endsWith('.test.mjs')) continue;
+      for (const m of fs
+        .readFileSync(path.join(f.parentPath, f.name), 'utf8')
+        .matchAll(/hook: '([\w.-]+)'/g))
+        logged.add(m[1]);
+    }
   }
   assert.ok(logged.size >= 7, `found only ${logged.size} logged hook names — the scan broke`);
   for (const name of logged)

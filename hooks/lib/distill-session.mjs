@@ -751,8 +751,10 @@ export function gate(p) {
  * @returns {import('./hook-io.mjs').HookOutcome}
  */
 export function gateOutcome(plan) {
-  // `spawned === false` means detach() came back with no pid.
-  if (plan.run) return plan.spawned === false ? 'error' : 'spawned';
+  // `spawned` is set by the acting wrapper from detach()'s pid. Absent means nobody acted, and the
+  // loud reading is the right default: a false `error` is a question, a false `spawned` is the
+  // silent lie this log exists to end.
+  if (plan.run) return plan.spawned ? 'spawned' : 'error';
   if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
     return 'child-guard';
   if (plan.reason === GATE_REASONS.debounced) return 'debounced';

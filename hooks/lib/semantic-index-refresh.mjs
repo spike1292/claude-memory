@@ -180,6 +180,7 @@ const MISSING_DEP = new Set([REASONS.noRuntime, REASONS.noScript]);
  * @returns {import('./hook-io.mjs').HookOutcome}
  */
 export function outcomeOf(p) {
-  if (p.run) return p.spawned === false ? 'error' : 'spawned';
+  // Absent `spawned` means nobody acted; report the loud reading rather than claiming success.
+  if (p.run) return p.spawned ? 'spawned' : 'error';
   return MISSING_DEP.has(p.reason) ? 'noop-missing-dep' : 'ran';
 }

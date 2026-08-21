@@ -51,9 +51,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   per hook** at the median, against a 31.5 ms bare-node floor. A disarmed recall is unchanged
   (36.7 → 35.7 ms) because nothing is logged above the arming gate, and an armed one is flat at the
   median despite writing two lines, since it had already resolved the project key and paid one
-  append. The one new cost worth naming: `validate-note` did not previously resolve a project key,
-  so the first Write in a repo whose key cache is cold forks git once (~40 ms) into a cache every
-  later hook reads.
+  append. The one new cost worth naming: `validate-note` did not previously resolve a project key.
+  In an ordinary clone that is one git fork on the first Write, into a cache every later hook reads.
+  **In a git worktree or a submodule it is not cached at all** — `projectKey()` refuses to cache a
+  checkout whose `.git` is a file, because it cannot cheaply validate the stamp — so every
+  Write/Edit forks git, measured at 14.6 ms in a worktree of this repo on 2026-08-21. The bench
+  numbers above were taken in an ordinary clone and do not include it.
 
 ### Changed
 
