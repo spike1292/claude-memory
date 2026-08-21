@@ -734,7 +734,13 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   // recall family is sparser (it logs only when armed), so its seven newest files can reach back
   // months further than the seven newest hook files. Unbounded, a pass from January was reported
   // as "while this window was being logged" over last week's dates.
-  const from = files.length ? (DATE_IN_NAME.exec(path.basename(files[0]))?.[1] ?? '') : '';
+  // `files[0]` is the OLDEST file in the window — logFiles() sorts and slices off the end — and it
+  // is the whole bound: a pass recorded on any earlier day belongs to a window this report is not
+  // printing. `null` when there are no hook files at all: no window, so nothing to attribute to
+  // one, where an empty string would let every recall line back in and restore the unbounded sum.
+  const from = files.length
+    ? /** @type {RegExpExecArray} */ (DATE_IN_NAME.exec(path.basename(files[0])))[1]
+    : null;
   // readLines() is shared with the recall reader and is typed for ITS record. The cast below is the
   // only thing telling tsc these are hook lines — without it every field type-checks against a
   // shape with no `hook`, `outcome` or `event` in it, and a rename in logHook() would pass.
@@ -742,9 +748,11 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
     files.length,
-    recallLines
-      .filter((r) => (r.t ?? '') >= from)
-      .reduce((a, r) => a + (typeof r.pruned === 'number' ? r.pruned : 0), 0),
+    from === null
+      ? 0
+      : recallLines
+          .filter((r) => (r.t ?? '') >= from)
+          .reduce((a, r) => a + (typeof r.pruned === 'number' ? r.pruned : 0), 0),
   );
   const head = files.length
     ? `${files.length} log file(s), most recent first: ${files

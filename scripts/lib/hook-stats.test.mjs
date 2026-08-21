@@ -552,9 +552,30 @@ test('the pruned sum is bounded by the window the report prints, not by a second
     outcome: 'ran',
   });
   w('recall-2026-01-01.jsonl', { t: '2026-01-01T10:00:00Z', pruned: 500 });
+  // TWO in-window recall days, not one: with a single one, the oldest and the newest file of the
+  // window are the same file, and bounding on the WRONG end of the window passes just as well.
+  w('recall-2026-08-20.jsonl', { t: '2026-08-20T10:00:00Z', pruned: 3 });
   w('recall-2026-08-21.jsonl', { t: '2026-08-21T10:00:00Z', pruned: 7 });
 
+  // days: 3, not 2. `logFiles()` slices per family by COUNT, so at 2 the January file falls out of
+  // the recall slice on its own and the date bound is never what excludes it — the assertion then
+  // passes with the bound deleted. Three lets all three recall files in, so only the bound can
+  // keep January out. (Found by mutation: removing the filter left this test green.)
+  const out = report({ logDir: dir, manifest: MANIFEST, days: 3 });
+  assert.match(out, /retention deleted 10 dated log file\(s\)/);
+  assert.doesNotMatch(out, /5(00|07|10) dated/);
+});
+
+test('with no hook window at all, there is nothing to attribute a pass to', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-nowindow-'));
+  // Only recall files: the bound has no dates to work from, and an empty-string bound would let
+  // every line back in and print a machine's whole history as "while this window was being
+  // logged" over a window that contains nothing.
+  fs.writeFileSync(
+    path.join(dir, 'recall-2026-01-01.jsonl'),
+    JSON.stringify({ t: '2026-01-01T10:00:00Z', pruned: 500 }) + '\n',
+  );
   const out = report({ logDir: dir, manifest: MANIFEST, days: 2 });
-  assert.match(out, /retention deleted 7 dated log file\(s\)/);
-  assert.doesNotMatch(out, /507|500 dated/);
+  assert.match(out, /no hook logs in/);
+  assert.doesNotMatch(out, /retention deleted/);
 });
