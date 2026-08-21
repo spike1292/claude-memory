@@ -82,7 +82,7 @@ token-Jaccard ≥ 0.45 (`README.md`, "Duplicate notes keep reappearing").
 
 **Cost: a paragraph in `skills/protocol/SKILL.md`, and one sentence in `EXTRACT_PROMPT` in
 `hooks/lib/distill-session.mjs:43` fencing the transcript as data.** No new file, no new hook, no
-lint. Ponytail: this is a rule, not a feature.
+lint. [Ponytail](../2026-08-19-ponytail-audit.md): this is a rule, not a feature.
 
 ### 2. FRESH-2 — flag a stamp older than the window
 
