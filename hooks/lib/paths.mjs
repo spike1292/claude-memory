@@ -129,7 +129,11 @@ export function serveIdleMs() {
  * appearing to work.
  */
 export function logRetentionDays() {
-  const raw = process.env.MEMORY_LOG_RETENTION_DAYS ?? config().logRetentionDays;
+  // An EXPORTED-BUT-EMPTY env var is unset, not a value. `??` alone keeps `''`, so a shell that
+  // exports the name without a value — or a `hooks.json` env block with a blank string — shadowed
+  // config.json and silently reinstated the default (found by this function's own test).
+  const env = process.env.MEMORY_LOG_RETENTION_DAYS;
+  const raw = env === undefined || env.trim() === '' ? config().logRetentionDays : env;
   // Digits only, NOT `Number()`. Measured here on 2026-08-21, the same defect the vault pruner
   // records: `MEMORY_LOG_RETENTION_DAYS=" "` casts to 0 and passes an `isInteger && >= 0` guard,
   // so a stray space in a config deletes every log but today's, silently.

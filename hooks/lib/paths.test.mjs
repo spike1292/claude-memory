@@ -162,42 +162,56 @@ test('normaliseRemote lowercases ASCII ONLY, like tr A-Z a-z', () => {
 // logRetentionDays — the knob that decides what gets DELETED, so every failure direction is tested,
 // not just the happy one. It sits beside serveIdleMs/modelIdleMs in kind but not in guard: those
 // use `positiveMs`, which rejects 0, and 0 is a legitimate retention (keep today only).
-test('logRetentionDays: env wins, then config, then a sane default', async (t) => {
-  const prevEnv = process.env.MEMORY_LOG_RETENTION_DAYS;
-  const prevHome = process.env.CLAUDE_MEMORY_HOME;
+//
+// In a SUBPROCESS because `config()` memoises for the life of the process, so the config.json arm
+// cannot be reached twice in one. (`import('./paths.mjs?x=1')` busts that cache but `tsc` cannot
+// resolve a query string, and CI fails on any diagnostic.) The subprocess is also the honest test:
+// a hook is a fresh process, which is the only way this value is ever read.
+/** @param {Record<string, string>} env @returns {string} */
+const retentionIn = (env) =>
+  run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import(${JSON.stringify(MODULE)}).then((m) => console.log(m.logRetentionDays()))`,
+    ],
+    {
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+    },
+  ).trim();
+
+test('logRetentionDays: env wins, then config, then a sane default', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'retention-'));
-  t.after(() => {
-    if (prevEnv === undefined) delete process.env.MEMORY_LOG_RETENTION_DAYS;
-    else process.env.MEMORY_LOG_RETENTION_DAYS = prevEnv;
-    if (prevHome === undefined) delete process.env.CLAUDE_MEMORY_HOME;
-    else process.env.CLAUDE_MEMORY_HOME = prevHome;
+  const withHome = /** @param {Record<string, string>} e */ (e) => ({
+    CLAUDE_MEMORY_HOME: home,
+    ...e,
   });
-  process.env.CLAUDE_MEMORY_HOME = home;
+  const clearEnv = { MEMORY_LOG_RETENTION_DAYS: '' };
 
-  // config() memoises for the life of the process, so the config arm needs a fresh module. This
-  // arm is the one README and CLAUDE.md call the preferred place to set the value, and it had no
-  // test at all until a reviewer noticed the env arm was standing in for both.
-  delete process.env.MEMORY_LOG_RETENTION_DAYS;
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ logRetentionDays: 7 }));
-  const fromConfig = await import(`./paths.mjs?retention=config`);
-  assert.equal(fromConfig.logRetentionDays(), 7, 'config.json is read');
-
-  process.env.MEMORY_LOG_RETENTION_DAYS = '3';
-  assert.equal(fromConfig.logRetentionDays(), 3, 'env beats config');
-
-  const fresh = await import(`./paths.mjs?retention=env`);
-  delete process.env.MEMORY_LOG_RETENTION_DAYS;
   fs.writeFileSync(path.join(home, 'config.json'), '{}');
-  assert.equal(fresh.logRetentionDays(), 30, 'default is 30 days');
+  assert.equal(retentionIn(withHome(clearEnv)), '30', 'default is 30 days');
 
-  process.env.MEMORY_LOG_RETENTION_DAYS = '0';
-  assert.equal(fresh.logRetentionDays(), 0, '0 is a value, not a typo: keep today only');
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ logRetentionDays: 7 }));
+  assert.equal(retentionIn(withHome(clearEnv)), '7', 'config.json is read');
+  assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '3' })), '3', 'env beats config');
 
-  // Anything that is not digits falls back to 30. `Number(' ')` is 0 and `Number('1e9')` is a
-  // billion, and both passed an `isInteger && >= 0` guard in the first draft of this function —
-  // the first deletes every log but today's, the second is the "widen to everything" direction.
-  for (const bad of ['', ' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
-    process.env.MEMORY_LOG_RETENTION_DAYS = bad;
-    assert.equal(fresh.logRetentionDays(), 30, `"${bad}" must fall back to the default`);
+  assert.equal(
+    retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '0' })),
+    '0',
+    '0 is a value, not a typo: keep today only',
+  );
+
+  // Anything that is not digits falls back to the default. `Number(' ')` is 0 and `Number('1e9')`
+  // is a billion, and both passed an `isInteger && >= 0` guard in the first draft of this function
+  // — the first deletes every log but today's, the second is the "widen to everything" direction.
+  fs.writeFileSync(path.join(home, 'config.json'), '{}');
+  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
+    assert.equal(
+      retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: bad })),
+      '30',
+      `"${bad}" must fall back to the default`,
+    );
   }
 });
