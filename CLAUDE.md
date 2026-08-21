@@ -424,3 +424,9 @@ The five canonical roles, unchanged — `needs-triage`, `needs-info`, `ready-for
 
 Single-context. **Decision records live in `docs/decisions/`, not `docs/adr/`**, and are named by
 date rather than number. See [docs/agents/domain.md](docs/agents/domain.md).
+
+There is a third dated category: **`docs/research/` is what the outside world does** — a compared
+system, a paper, a benchmark — cited by URL, written so the reading is not redone. It is neither a
+decision (why ours is this way, and what did we measure) nor a plan (what are we about to do). Index
+a new one in [docs/README.md](docs/README.md); when it produces work, the work becomes issues and
+the note stays as written.
