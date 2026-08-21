@@ -42,10 +42,9 @@ const retentionLine = (names, env = {}) => {
     },
     encoding: 'utf8',
   });
-  return (
-    out.split('\n').find((l) => l.includes('dated files')) ??
-    `NO RETENTION LINE. home=${home} logs=${fs.readdirSync(path.join(home, 'logs')).join(',')} full output:\n${out}`
-  );
+  // The whole report when the line is missing, not '': a missing line is the interesting failure,
+  // and an empty string says nothing about which of doctor's forty lines it printed instead.
+  return out.split('\n').find((l) => l.includes('dated files')) ?? out;
 };
 
 test('doctor reports the window and the oldest file, and only ours count as ours', () => {

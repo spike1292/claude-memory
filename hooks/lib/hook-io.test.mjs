@@ -445,7 +445,7 @@ test('an unparseable retention keeps the default window rather than emptying the
         assert.deepStrictEqual(
           fs.readdirSync(logs),
           ['hooks-2026-08-20.jsonl'],
-          `${JSON.stringify(bad)} -> ${logRetentionDays()}d, dir=${logs}, TZ=${process.env.TZ}, home=${process.env.CLAUDE_MEMORY_HOME}`,
+          `${JSON.stringify(bad)} resolved to ${logRetentionDays()}d`,
         );
       });
     }
@@ -571,7 +571,7 @@ test('a pass sweeps its markers even at the largest retention there is', () => {
       assert.strictEqual(
         fs.existsSync(path.join(logs, '.retention-2000-01-01')),
         false,
-        `and still sweeps its own markers — ${logRetentionDays()}d, dir now ${JSON.stringify(fs.readdirSync(logs))}`,
+        `and still sweeps its own markers — ${logRetentionDays()}d`,
       );
     });
   });
