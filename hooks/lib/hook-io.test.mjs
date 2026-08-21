@@ -441,8 +441,9 @@ test('an unparseable retention keeps the default window rather than emptying the
   withState((logs) => {
     // ' ' casts to 0 through Number() and 1e9 makes an Invalid Date — the two values that once
     // archived a whole directory while printing a success line (scripts/lib/prune-logs.mjs).
-    // '999999999999' is digits and a safe integer, so it reaches cutoffDate() — which makes an
-    // Invalid Date and throws. Keeping everything is the correct direction for that failure.
+    // '999999999999' is digits and a safe integer, so it reaches the cutoff arithmetic — which
+    // makes an Invalid Date whose toISOString() throws. Keeping everything is the right direction
+    // for that failure, and the throw is caught inside pruneDatedLogs, never by the caller.
     for (const bad of [' ', '1e9', '-1', 'thirty', '999999999999']) {
       withRetention(bad, () => {
         seed(logs, ['hooks-2026-08-20.jsonl']);
@@ -457,20 +458,24 @@ test('appendJsonl prunes once a day, and says on the line how many it deleted', 
   withState((logs) => {
     withRetention('30', () => {
       seed(logs, ['hooks-2000-01-01.jsonl', 'recall-2000-01-02.jsonl']);
-      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // no stamp yet: the day rolled
+      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // unclaimed day: this one prunes
       const day = new Date().toISOString().slice(0, 10);
       const [first] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+      // AFTER the caller's fields: their order is a contract (see the first test in this file),
+      // and a count injected into the middle of someone's record breaks a reader that never asked
+      // for it.
+      assert.deepStrictEqual(Object.keys(first), ['t', 'slug', 'hook', 'pruned']);
       assert.strictEqual(
         first.pruned,
         2,
         'the work logs itself, on the line already being written',
       );
-      assert.strictEqual(fs.readFileSync(path.join(logs, '.retention-stamp'), 'utf8').trim(), day);
+      assert.strictEqual(fs.existsSync(path.join(logs, `.retention-${day}`)), true);
 
-      // The stamp is what keeps this off the per-prompt path, and it is shared by every family
-      // and every process: a stale file dropped in afterwards survives until tomorrow. The first
-      // guard was `!existsSync(today's file)`, which is per family and per process — measured,
-      // seven of nine concurrent hooks each ran a full pass.
+      // The claim is per DIRECTORY and per DAY, so it holds across families and across processes:
+      // a stale file dropped in afterwards survives until tomorrow. The first guard asked whether
+      // today's file existed, which is per family and per process — nine of nine concurrent hooks
+      // each ran a full pass.
       seed(logs, ['recall-2000-01-03.jsonl']);
       appendJsonl('recall', process.cwd(), { abstained: true });
       assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-03.jsonl')), true);
@@ -480,21 +485,43 @@ test('appendJsonl prunes once a day, and says on the line how many it deleted', 
   });
 });
 
-test('a stamp from an earlier day prunes again; a stamp we cannot read prunes rather than skips', () => {
+test("yesterday's claim does not hold today, and is swept with the logs it authorised", () => {
   withState((logs) => {
     withRetention('30', () => {
-      seed(logs, ['hooks-2000-01-01.jsonl']);
-      fs.writeFileSync(path.join(logs, '.retention-stamp'), '2000-01-01\n');
+      const day = new Date().toISOString().slice(0, 10);
+      seed(logs, ['hooks-2000-01-01.jsonl', '.retention-2000-01-01']);
       appendJsonl('hooks', process.cwd(), { hook: 'a' });
       assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')), false);
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, '.retention-2000-01-01')),
+        false,
+        'one dotfile per day would be the same unbounded directory under another name',
+      );
+      assert.strictEqual(fs.existsSync(path.join(logs, `.retention-${day}`)), true);
+    });
+  });
+});
 
-      // An unreadable stamp reads as '' — never as today. Failing the other way would leave a
-      // machine pruning nothing, forever, with nothing saying so.
-      seed(logs, ['hooks-2000-01-02.jsonl']);
-      fs.rmSync(path.join(logs, '.retention-stamp'));
-      fs.mkdirSync(path.join(logs, '.retention-stamp'));
-      appendJsonl('hooks', process.cwd(), { hook: 'b' });
-      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-02.jsonl')), false);
+test('a claim that cannot be created means no prune, not a prune on every append', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      const day = new Date().toISOString().slice(0, 10);
+      seed(logs, ['hooks-2000-01-01.jsonl']);
+      // A DIRECTORY where the claim file goes: `openSync(..., 'wx')` fails with EISDIR, the same
+      // shape as a read-only logs/ (EACCES). The read-then-write stamp this replaced inverted
+      // here — it could never read today back, so it pruned on EVERY append, 146 ms apiece.
+      fs.mkdirSync(path.join(logs, `.retention-${day}`));
+      for (let i = 0; i < 3; i++) appendJsonl('hooks', process.cwd(), { hook: `h${i}` });
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')),
+        true,
+        'declining to prune is the honest answer: those unlinks would fail too',
+      );
+      assert.strictEqual(
+        readJsonl(path.join(logs, `hooks-${day}.jsonl`)).length,
+        3,
+        'lines still land',
+      );
     });
   });
 });

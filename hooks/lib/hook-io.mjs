@@ -104,33 +104,32 @@ export function writeMarker(file, seconds) {
   }
 }
 
-/**
- * The day the last retention pass ran, as `YYYY-MM-DD`, or `''` when there has never been one.
- *
- * A second marker format rather than `readMarker()`'s epoch seconds, because the question here is
- * "has the day rolled over?" and a day is what the filenames are keyed on. Comparing seconds would
- * reintroduce the clock arithmetic the UTC cutoff exists to avoid.
- *
- * @param {string} file
- * @returns {string}
- */
-export function readStamp(file) {
-  try {
-    return fs.readFileSync(file, 'utf8').trim();
-  } catch {
-    return '';
-  }
-}
+// The day-claim marker `logs/.retention-<day>`. Declared here because `claimDay()` writes it and
+// `pruneDatedLogs()` sweeps yesterday's.
+const CLAIM_PREFIX = '.retention-';
 
 /**
- * @param {string} file
- * @param {string} day
+ * Claim today's retention pass, machine-wide. True for exactly one caller per day.
+ *
+ * `wx` is the whole mechanism: create-if-absent is one syscall and one atomic decision, where a
+ * read-then-write stamp is two and loses the race between them. EEXIST means someone else has
+ * today; ANY other error means we could not claim it and therefore must not prune — a read-only
+ * `logs/` cannot be pruned either, so declining is the honest answer rather than a pass that
+ * unlinks nothing and repeats on the next append.
+ *
+ * The marker is named by the day, so the sweep it authorises removes yesterday's along with the
+ * logs (`pruneDatedLogs()` below). Nothing else in `logs/` starts with a dot.
+ *
+ * @param {string} dir
+ * @param {string} day  `YYYY-MM-DD`
+ * @returns {boolean}
  */
-export function writeStamp(file, day) {
+function claimDay(dir, day) {
   try {
-    fs.writeFileSync(file, `${day}\n`);
+    fs.closeSync(fs.openSync(path.join(dir, `${CLAIM_PREFIX}${day}`), 'wx'));
+    return true;
   } catch {
-    /* a stamp we cannot write means the next hook prunes again — never a reason to fail */
+    return false;
   }
 }
 
@@ -547,29 +546,39 @@ export function appendJsonl(family, cwd, record) {
     }
     const dir = stateDir('logs');
     const file = path.join(dir, `${family}-${t.slice(0, 10)}.jsonl`);
-    // A DATE STAMP, not "today's file is missing". That first guard was a check-then-act across
-    // PROCESSES: logs/ is machine-wide, five SessionStart hooks fire at once, and each family has
-    // its own file — measured 2026-08-21, seven of nine concurrent hooks each ran a full prune
-    // pass, 1.1 s apiece against a 4686-file backlog. The stamp is written BEFORE the pass, so the
-    // losers of the race skip it instead of repeating it: nine concurrent hooks over a 300-file
-    // backlog went from seven full passes to two. Two processes reading the stale stamp in the
-    // same instant still both prune; that costs a duplicate readdir, not a wrong result, and is
-    // the cheap half of a lock this path must not wait on.
-    const stamp = path.join(dir, '.retention-stamp');
+    // ONE ATOMIC CLAIM PER DAY, not a stamp anyone can read as stale.
+    //
+    // Three guards were tried here and the first two each had a herd. `!existsSync(today's file)`
+    // is check-then-act across PROCESSES — logs/ is machine-wide, five SessionStart hooks fire at
+    // once, and each family has its own file: measured 2026-08-21, NINE of nine concurrent hooks
+    // each ran a full pass. A read-then-write date stamp took the median to one but left a window
+    // (up to eight of nine in 15 trials) and, worse, INVERTED when the stamp could not be written:
+    // read never returned today, so every append pruned — 20 of 20, 146 ms each, forever.
+    //
+    // Measured after the change, 15 trials of nine concurrent hooks over a 300-file backlog:
+    // EXACTLY ONE pass every trial, and zero passes when logs/ is read-only.
+    //
+    // `wx` has neither failure. The create either succeeds for exactly one process or throws
+    // EEXIST, and a claim that cannot be created at all (read-only logs/, EACCES) means we do not
+    // prune — which is right, because the unlinks would fail for the same reason. Fail-closed here
+    // is a directory that keeps growing; fail-open was a full readdir on every prompt.
+    //
+    // The claim is taken BEFORE the pass, so a process killed mid-pass leaves the rest of the
+    // backlog until tomorrow. Bounded, and the alternative is a lock this path must not wait on.
     const day = t.slice(0, 10);
     /** @type {number | undefined} */
     let pruned;
-    if (readStamp(stamp) !== day) {
-      writeStamp(stamp, day);
+    if (claimDay(dir, day)) {
       const n = pruneDatedLogs(new Date(t)).length;
       if (n > 0) pruned = n;
     }
-    // Deleting is work, so it logs itself, on the line the caller was already writing. Omitted
-    // when nothing was deleted, never zero — the same rule the cost fields follow. Without it a
-    // machine that came back after two months silently loses the only evidence --hooks reads.
+    // Deleting is work, so it logs itself — on the line the caller was already writing, AFTER the
+    // caller's own fields, because their order is a contract this must not reach into. Omitted
+    // when nothing was deleted, never zero, like the cost fields. `/memory:doctor --hooks` sums it
+    // over the window, so the deletion is visible where the logs it deleted are read.
     fs.appendFileSync(
       file,
-      JSON.stringify({ t, slug, ...(pruned && { pruned }), ...record }) + '\n',
+      JSON.stringify({ t, slug, ...record, ...(pruned && { pruned }) }) + '\n',
     );
   } catch {
     /* a log that cannot be written must never fail or delay a hook */
@@ -630,11 +639,24 @@ export function pruneDatedLogs(now = new Date()) {
     )
       .toISOString()
       .slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
     for (const name of fs.readdirSync(dir)) {
       // Anchored on the two families BY NAME. An `[a-z-]+` prefix was not the same thing: it
       // matched `backup-2026-01-01.jsonl` and `my-notes-export-2026-01-01.jsonl` and unlinked
       // both without trace (measured 2026-08-21). This directory is machine-local and a human
       // may well have put something in it; only what we write is ours to delete.
+      // Yesterday's day-claim goes with yesterday's logs — the pass that this marker authorised
+      // is the pass that cleans it up, so the directory does not accumulate one dotfile per day
+      // in the name of not accumulating one log file per day.
+      if (name.startsWith(CLAIM_PREFIX)) {
+        if (name.slice(CLAIM_PREFIX.length) >= today) continue;
+        try {
+          fs.unlinkSync(path.join(dir, name));
+        } catch {
+          /* best effort, same as the logs */
+        }
+        continue;
+      }
       const m = DATED_LOG.exec(name);
       if (!m || m[2] >= cutoff) continue;
       try {

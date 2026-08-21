@@ -122,11 +122,14 @@ export function serveIdleMs() {
 /**
  * How many days of dated JSONL logs (`recall-<date>`, `hooks-<date>`) are kept under `logs/`.
  *
- * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard. A
- * non-digit value falls back to the default, and a digits-only value too large to be a date is
- * returned as-is and makes the prune throw and delete nothing — which keeps every file, the safe
- * direction. Both failure modes err toward keeping logs; none widens the window silently while
- * appearing to work.
+ * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard.
+ *
+ * Three outcomes, none of which deletes more than asked: a non-digit value falls back to the
+ * default; a digits-only value too large to be a date (`999999999999`) is returned as-is and makes
+ * the prune throw, keeping every file; past 2^53 it is not a safe integer and also falls back to
+ * the default, so `99999999999999999999` retains 30 days rather than everything. That last one is
+ * a boundary, not a design — it is written down because the sentence above it used to claim the
+ * whole range kept every file, and it does not.
  */
 export function logRetentionDays() {
   // An EXPORTED-BUT-EMPTY env var is unset, not a value. `??` alone keeps `''`, so a shell that

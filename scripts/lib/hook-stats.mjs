@@ -23,7 +23,7 @@ export { DEFAULT_DAYS };
  * @typedef {{
  *   t?: string, slug?: string | null, hook?: string, event?: string,
  *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean,
- *   bytes?: number,
+ *   bytes?: number, pruned?: number,
  *   inTok?: number, cacheWriteTok?: number, cacheReadTok?: number, outTok?: number, usd?: number,
  * }} HookLine
  */
@@ -238,6 +238,11 @@ export function summarize(lines, slug = null, logDays = 0) {
     invocations,
     untimed,
     childLines,
+    // Retention rides on whichever line happened to be written when it ran, so it is summed over
+    // the window rather than attributed to a hook: the pass belongs to the machine, not to the
+    // caller that paid for it. Counted over the lines that HAVE the key, like every metric here —
+    // a line written before the field existed is not a zero.
+    pruned: lines.reduce((a, l) => a + (typeof l.pruned === 'number' ? l.pruned : 0), 0),
     first: lines.find((l) => l.t)?.t ?? null,
     last: [...lines].reverse().find((l) => l.t)?.t ?? null,
     hooks: [...hooks.entries()].sort((a, b) => b[1].n - a[1].n),
@@ -432,6 +437,15 @@ export function render(s, limits, recall = []) {
       '',
       `${s.childLines} of ${s.invocations} were fired by a background \`claude\` run, not by a`,
       'session — one distillation or graph regen fires SessionStart again on its way through.',
+    );
+
+  // The one thing in this report that DELETED the data this report reads. Without it the only
+  // evidence is the absence of files, which reads identically to a machine that never logged.
+  if (s.pruned)
+    out.push(
+      '',
+      `retention deleted ${s.pruned} dated log file(s) during this window — that many days of`,
+      'history are gone from every figure above. `logRetentionDays` decides how many are kept.',
     );
 
   out.push('', `not in this table: ${UNLOGGED}, and ${NO_WORKER_LINE}.`);

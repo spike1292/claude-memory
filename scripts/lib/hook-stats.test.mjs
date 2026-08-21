@@ -477,3 +477,21 @@ test('a billed-but-failed run is counted, and named, in the cost section', () =>
   );
   assert.doesNotMatch(clean, /failed after being billed/);
 });
+
+test('the hooks report says when retention deleted the history it is reporting on', () => {
+  const s = summarize([
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, pruned: 12 }),
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40 }),
+  ]);
+  assert.equal(
+    s.pruned,
+    12,
+    'summed over lines that carry the key, never a zero for those without',
+  );
+  assert.match(render(s, new Map()), /retention deleted 12 dated log file\(s\)/);
+  // Omitted, not "0 files": a window in which retention did nothing must not print a line about it.
+  assert.doesNotMatch(
+    render(summarize([line({ hook: 'x', ms: 1 })]), new Map()),
+    /retention deleted/,
+  );
+});
