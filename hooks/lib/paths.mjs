@@ -122,9 +122,11 @@ export function serveIdleMs() {
 /**
  * How many days of dated JSONL logs (`recall-<date>`, `hooks-<date>`) are kept under `logs/`.
  *
- * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard. Anything
- * unparseable falls back to the default: a typo must never widen the window to "everything" nor
- * narrow it to nothing.
+ * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard. A
+ * non-digit value falls back to the default, and a digits-only value too large to be a date is
+ * returned as-is and makes the prune throw and delete nothing — which keeps every file, the safe
+ * direction. Both failure modes err toward keeping logs; none widens the window silently while
+ * appearing to work.
  */
 export function logRetentionDays() {
   const raw = process.env.MEMORY_LOG_RETENTION_DAYS ?? config().logRetentionDays;

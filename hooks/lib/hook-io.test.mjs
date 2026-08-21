@@ -406,16 +406,20 @@ test('pruneDatedLogs deletes past the window and leaves everything else alone', 
         'hooks-2026-08-20.jsonl', // inside it
         'recall-2026-08-21.jsonl', // today
         'distill.log', // a free-form log; trimLog's job, not this one
-        'hooks-2026-13-99.jsonl', // pattern-shaped but not a date the cutoff can rank
-        '2026-01-01.jsonl', // no family prefix: not ours, whatever the date says
+        'hooks-2026-13-99.jsonl', // shaped like ours but not a date; it only sorts high
+        '2026-01-01.jsonl', // no family: not ours, whatever the date says
+        'backup-2026-01-01.jsonl', // someone else's file with a plausible prefix
+        'my-notes-export-2026-01-01.jsonl',
       ]);
-      const removed = pruneDatedLogs(new Date(2026, 7, 21));
+      const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
       assert.deepStrictEqual(removed.sort(), ['hooks-2026-07-01.jsonl', 'recall-2026-01-01.jsonl']);
       assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
         '2026-01-01.jsonl',
+        'backup-2026-01-01.jsonl',
         'distill.log',
         'hooks-2026-08-20.jsonl',
         'hooks-2026-13-99.jsonl',
+        'my-notes-export-2026-01-01.jsonl',
         'recall-2026-08-21.jsonl',
       ]);
     });
@@ -426,7 +430,7 @@ test('a retention of 0 keeps today and nothing before it', () => {
   withState((logs) => {
     withRetention('0', () => {
       seed(logs, ['hooks-2026-08-20.jsonl', 'hooks-2026-08-21.jsonl']);
-      pruneDatedLogs(new Date(2026, 7, 21));
+      pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
       assert.deepStrictEqual(fs.readdirSync(logs), ['hooks-2026-08-21.jsonl']);
     });
   });
@@ -441,7 +445,7 @@ test('an unparseable retention keeps the default window rather than emptying the
     for (const bad of [' ', '1e9', '-1', 'thirty', '999999999999']) {
       withRetention(bad, () => {
         seed(logs, ['hooks-2026-08-20.jsonl']);
-        pruneDatedLogs(new Date(2026, 7, 21));
+        pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
         assert.deepStrictEqual(fs.readdirSync(logs), ['hooks-2026-08-20.jsonl'], bad);
       });
     }
@@ -463,4 +467,29 @@ test('appendJsonl prunes when the day rolls over, and only then', () => {
       assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-01.jsonl')), true);
     });
   });
+});
+
+test('the window is UTC, like the filenames — a timezone ahead of it deletes nothing extra', () => {
+  const prevTz = process.env.TZ;
+  // 23:30 UTC is 01:30 the NEXT local day in Amsterdam, so the local date is one ahead of the date
+  // these files are named with. A local cutoff ranked today's file as older than the window and
+  // unlinked it — at a retention of 0 that is the live file of the other family, deleted on every
+  // append, because the day-roll guard never held either (measured 2026-08-21).
+  // Both sides of the clock are pinned: TZ here, and the instant passed in. Reading the real clock
+  // would make this pass or fail by the hour, since every zone matches UTC for part of the day.
+  process.env.TZ = 'Europe/Amsterdam';
+  try {
+    withState((logs) => {
+      withRetention('0', () => {
+        seed(logs, ['recall-2026-08-21.jsonl', 'hooks-2026-08-20.jsonl']);
+        assert.deepStrictEqual(pruneDatedLogs(new Date('2026-08-21T23:30:00Z')), [
+          'hooks-2026-08-20.jsonl',
+        ]);
+        assert.deepStrictEqual(fs.readdirSync(logs), ['recall-2026-08-21.jsonl']);
+      });
+    });
+  } finally {
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  }
 });

@@ -158,3 +158,46 @@ test('normaliseRemote lowercases ASCII ONLY, like tr A-Z a-z', () => {
   assert.strictEqual(normaliseRemote('https://exämple.com/Ä/b'), 'exämple.com-Ä-b');
   assert.strictEqual(normaliseRemote('https://example.com/İ/b'), 'example.com-İ-b');
 });
+
+// logRetentionDays — the knob that decides what gets DELETED, so every failure direction is tested,
+// not just the happy one. It sits beside serveIdleMs/modelIdleMs in kind but not in guard: those
+// use `positiveMs`, which rejects 0, and 0 is a legitimate retention (keep today only).
+test('logRetentionDays: env wins, then config, then a sane default', async (t) => {
+  const prevEnv = process.env.MEMORY_LOG_RETENTION_DAYS;
+  const prevHome = process.env.CLAUDE_MEMORY_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'retention-'));
+  t.after(() => {
+    if (prevEnv === undefined) delete process.env.MEMORY_LOG_RETENTION_DAYS;
+    else process.env.MEMORY_LOG_RETENTION_DAYS = prevEnv;
+    if (prevHome === undefined) delete process.env.CLAUDE_MEMORY_HOME;
+    else process.env.CLAUDE_MEMORY_HOME = prevHome;
+  });
+  process.env.CLAUDE_MEMORY_HOME = home;
+
+  // config() memoises for the life of the process, so the config arm needs a fresh module. This
+  // arm is the one README and CLAUDE.md call the preferred place to set the value, and it had no
+  // test at all until a reviewer noticed the env arm was standing in for both.
+  delete process.env.MEMORY_LOG_RETENTION_DAYS;
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ logRetentionDays: 7 }));
+  const fromConfig = await import(`./paths.mjs?retention=config`);
+  assert.equal(fromConfig.logRetentionDays(), 7, 'config.json is read');
+
+  process.env.MEMORY_LOG_RETENTION_DAYS = '3';
+  assert.equal(fromConfig.logRetentionDays(), 3, 'env beats config');
+
+  const fresh = await import(`./paths.mjs?retention=env`);
+  delete process.env.MEMORY_LOG_RETENTION_DAYS;
+  fs.writeFileSync(path.join(home, 'config.json'), '{}');
+  assert.equal(fresh.logRetentionDays(), 30, 'default is 30 days');
+
+  process.env.MEMORY_LOG_RETENTION_DAYS = '0';
+  assert.equal(fresh.logRetentionDays(), 0, '0 is a value, not a typo: keep today only');
+
+  // Anything that is not digits falls back to 30. `Number(' ')` is 0 and `Number('1e9')` is a
+  // billion, and both passed an `isInteger && >= 0` guard in the first draft of this function —
+  // the first deletes every log but today's, the second is the "widen to everything" direction.
+  for (const bad of ['', ' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
+    process.env.MEMORY_LOG_RETENTION_DAYS = bad;
+    assert.equal(fresh.logRetentionDays(), 30, `"${bad}" must fall back to the default`);
+  }
+});

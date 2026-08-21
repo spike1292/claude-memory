@@ -243,14 +243,17 @@ The free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) 
 — `trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
 `pruneDatedLogs()` deletes `<family>-<date>.jsonl` older than `logRetentionDays()` (default 30,
 `logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`), because the read views query a
-window of days and a day is the unit anyone reads these in. It DELETES where the vault's
+window of dated FILES — one per day a family ran — so a day is the unit anyone reads these in. That
+also makes retention a ceiling on those views: `--hooks=60` can only read what 30 days kept. It DELETES where the vault's
 `prune-logs.mjs` only moves: these are machine-local debug lines nothing else reads, and an
 `Archive/` here would be the unbounded directory again under another name.
 
 **Retention runs opportunistically, on the first append of a new day** — not from `/memory:prune`.
 A retention policy that needs a human to run a command is not one, and the day rolls over exactly
 when today's file does not exist yet, so the cost is one `existsSync` per append and one `readdir`
-per day. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
+per family per day (two, today). **The cutoff is built in UTC**, by the same `toISOString()` that
+names the files; the vault pruner's `cutoffDate()` is LOCAL by design and using it here deleted the
+live file of the other family on every append, east of Greenwich, at a retention of 0. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
 machine that stopped writing logs and therefore stopped pruning them.
 
 `logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what

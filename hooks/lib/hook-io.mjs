@@ -16,7 +16,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { stateDir, projectKey, logRetentionDays } from './paths.mjs';
-import { cutoffDate } from '../../scripts/lib/prune-logs.mjs';
 
 /** Claude Code sends hook input as one JSON object on stdin. A hook must never die on bad input. */
 export function readStdin() {
@@ -528,15 +527,34 @@ export function appendJsonl(family, cwd, record) {
 }
 
 /**
+ * The dated JSONL families, and the only basenames retention may delete. A constant rather than a
+ * pattern for the same reason `REASONS` is one: a literal here and a caller passing `family` are
+ * two lists that drift, and this one decides what gets unlinked.
+ */
+export const LOG_FAMILIES = /** @type {const} */ (['recall', 'hooks']);
+
+/**
  * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
  *
  * DELETES, where the vault's log prune only ever moves. These are machine-local debug lines that
  * no release replaces and nothing else reads — the same class of file `trimLog()` already
  * truncates in place. An Archive/ here would be the unbounded directory again under another name.
  *
- * The date comes from the FILENAME and the cutoff from `cutoffDate()`, which is the vault
- * pruner's — one implementation of a comparison whose traps (unpadded years, `days = 1e9`) are
- * written down there and cost a directory when they were two.
+ * The date comes from the FILENAME, and the cutoff is built in UTC by the SAME producer that
+ * writes those names — `toISOString()`. The vault pruner's `cutoffDate()` was used here first and
+ * was wrong for it: that one is local by design (vault note filenames are local-dated), and these
+ * names are UTC. East of Greenwich, between local and UTC midnight, the two disagree by a day —
+ * measured 2026-08-21, `TZ=Pacific/Kiritimati` with a retention of 0 deleted the file the OTHER
+ * family was appending to, on every single append, because the guard below never held either.
+ * Sharing the comparison was worth less than sharing the clock.
+ *
+ * First run after a long gap is the slow one and it is synchronous inside a hook: measured
+ * 2026-08-21, macOS/APFS, 150 ms to unlink 1095 stale files and 882 ms for 4686, against the 10 s
+ * timeout `hooks.json` declares for the hooks that append. Steady state is free — 300 appends into
+ * an already-pruned directory ran at 5.96 ms each here against 6.51 ms on `main`, i.e. inside the
+ * noise of `appendFileSync` itself.
+ * ponytail: uncapped. Cap the pass at N unlinks and let the next day finish it if a machine ever
+ * arrives with a backlog big enough to be felt.
  *
  * Best effort, like everything on this path: a file we cannot unlink is one that stays.
  *
@@ -548,12 +566,26 @@ export function pruneDatedLogs(now = new Date()) {
   const removed = [];
   try {
     const dir = stateDir('logs');
-    const cutoff = cutoffDate(now, logRetentionDays());
+    const days = logRetentionDays();
+    // Date arithmetic, not `now - days * 86400`: only the day count is meaningful here, and UTC
+    // days are all the same length anyway. An out-of-range `days` makes an Invalid Date, whose
+    // `toISOString()` THROWS — caught below, so the failure keeps every file rather than ranking
+    // them against a `NaN-NaN-NaN` string that sorts above every real date and deletes the lot.
+    // (That is not hypothetical: it is what `cutoffDate()`'s own comment records costing it.)
+    const cutoff = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days),
+    )
+      .toISOString()
+      .slice(0, 10);
     for (const name of fs.readdirSync(dir)) {
-      // Anchored on the family prefix too, so nothing without one — a hand-saved copy, a file
-      // some other tool put here — is ever matched by the date alone.
-      const m = /^[a-z][a-z-]*-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
-      if (!m || m[1] >= cutoff) continue;
+      // Anchored on the two families BY NAME. An `[a-z-]+` prefix was not the same thing: it
+      // matched `backup-2026-01-01.jsonl` and `my-notes-export-2026-01-01.jsonl` and unlinked
+      // both without trace (measured 2026-08-21). This directory is machine-local and a human
+      // may well have put something in it; only what we write is ours to delete.
+      const m = new RegExp(`^(${LOG_FAMILIES.join('|')})-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`).exec(
+        name,
+      );
+      if (!m || m[2] >= cutoff) continue;
       try {
         fs.unlinkSync(path.join(dir, name));
         removed.push(name);
