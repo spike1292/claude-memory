@@ -747,8 +747,12 @@ export function gate(p) {
  * The gate's outcome, for the hook log.
  *
  * `stop_hook_active` is Claude Code's own recursion guard and `child run` is this hook's, so both
- * are the same story: the hook fired inside work it had itself started. Every other skip is a real
- * decision about a real session and reads as `ran`.
+ * are the same story: the hook fired inside work it had itself started.
+ *
+ * Every value in GATE_REASONS is mapped, and a test proves gatePlan can emit nothing else — so the
+ * trailing `ran` is unreachable for a skip today. It is the default for a reason ADDED without a
+ * mapping here, which is precisely the drift that shipped once already; treat landing on it as the
+ * bug, not as the intended behaviour of a new branch.
  *
  * @param {GatePlan} plan
  * @returns {import('./hook-io.mjs').HookOutcome}

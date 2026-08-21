@@ -217,6 +217,14 @@ test('a reason never publishes a path, because the report invites a paste', () =
     redact("ENOENT: open '/Users/bob/My Vault/Memory/proj/secret.md'"),
     "ENOENT: open '<path>'",
   );
+  // logHook caps a reason at 200 chars, which cuts the CLOSING QUOTE off a long path — the quoted
+  // pass then stops matching and the bare rule publishes the spaced segments it exists to hide. A
+  // deep iCloud vault path passes 200 characters on its own.
+  const truncated =
+    "ENOENT: no such file or directory, open '/Users/bob/Library/Mobile Documents/" +
+    'com~apple~CloudDocs/My Private Vault/Memory/proj/a-long-note-name.m';
+  assert.strictEqual(redact(truncated), "ENOENT: no such file or directory, open '<path>");
+
   // And it leaves the reasons that are the whole point of the column alone.
   for (const kept of [
     'transcript missing',

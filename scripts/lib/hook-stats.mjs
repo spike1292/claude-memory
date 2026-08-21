@@ -197,9 +197,16 @@ const num = (v, digits = 0) => (v === null ? '-' : v.toFixed(digits));
 // `fs` errors on paths these hooks pass in as absolute POSIX.
 /** @param {string} text @returns {string} */
 export function redact(text) {
-  return String(text)
-    .replace(/(['"`])(?:~|\.{0,2})?\/[^'"`]*\1/g, '$1<path>$1')
-    .replace(/(?:~|\.{0,2})?\/[^\s'"`)\]]*/g, '<path>');
+  return (
+    String(text)
+      .replace(/(['"`])(?:~|\.{0,2})?\/[^'"`]*\1/g, '$1<path>$1')
+      // An UNTERMINATED quoted path, which is what `logHook`'s 200-char cap leaves behind: the
+      // closing quote is gone, the pass above stops matching, and the bare rule below then publishes
+      // the spaced segments it was added to hide. A deep iCloud vault path passes 200 characters on
+      // its own.
+      .replace(/(['"`])(?:~|\.{0,2})?\/[^'"`]*$/g, '$1<path>')
+      .replace(/(?:~|\.{0,2})?\/[^\s'"`)\]]*/g, '<path>')
+  );
 }
 
 /**
@@ -284,13 +291,15 @@ export function render(s, limits) {
     ),
     '',
     'ran = did its work · spawned = handed it to a detached child · child-guard = it fired inside',
-    'work it had itself started · debounced = it stood down, for its own timer OR for a lock',
-    'somebody else holds · noop-missing-dep = a dependency is gone, so this hook is doing nothing',
-    'at all · error = it threw, or the work it tried to start never did.',
+    'work it had itself started · debounced = it stood down: its own timer, a line count below the',
+    'threshold, or a lock somebody else holds · noop-missing-dep = a dependency is absent, so this',
+    'hook is doing nothing at all · error = it threw, or the work it tried to start never did.',
     '',
-    'A column that is ALL of one skip is not a healthy hook. 100% debounced means this hook has not',
-    'done its work once in the window — a timer that never expires, or a lock nothing ever releases',
-    '— and it says nothing and exits 0 either way. That is the state this table exists to show.',
+    'A HIGH SKIP RATE IS NOT A FAULT BY ITSELF — read it against what the hook is for.',
+    '`distill-session · Stop` is a crash fallback and stands down on nearly every assistant turn, so',
+    '100% debounced there is the healthy state. It IS a finding where work was expected: a',
+    '`· SessionEnd` row that never spawns, or a `graph-staleness-check` debounced by a lock nothing',
+    'releases. Either way the hook says nothing and exits 0, which is why the column exists.',
   ];
 
   if (s.untimed)

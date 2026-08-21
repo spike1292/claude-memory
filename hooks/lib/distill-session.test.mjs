@@ -558,12 +558,21 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
     path.join(path.dirname(fileURLToPath(import.meta.url)), 'distill-session.mjs'),
     'utf8',
   );
-  const planBody = src.slice(
-    src.indexOf('export function gatePlan'),
-    src.indexOf('export function gate('),
+  const from = src.indexOf('export function gatePlan');
+  const to = src.indexOf('export function gate(');
+  const planBody = from === -1 || to === -1 ? '' : src.slice(from, to);
+  // A scan that silently covers NOTHING is the failure this test was written to prevent, one level
+  // up: rename gatePlan and `slice(-1, n)` returns '', matchAll finds nothing, and the test goes
+  // green over a body it never read.
+  assert.ok(
+    planBody.includes('GATE_REASONS.'),
+    'the scan found gatePlan and it uses the constants',
   );
-  for (const m of planBody.matchAll(/reason: '([^']+)'/g))
-    assert.fail(`gatePlan returns the literal ${JSON.stringify(m[1])} — use GATE_REASONS`);
+
+  // Every quoting form, not just the single quotes prettier happens to produce today: a template
+  // literal (`stop: ${n} lines`) would evade a quote-only scan and reach gateOutcome unrecognised.
+  for (const m of planBody.matchAll(/reason:\s*(['"`])((?:(?!\1).)*)\1/g))
+    assert.fail(`gatePlan returns the literal ${JSON.stringify(m[2])} — use GATE_REASONS`);
 
   // And the stand-downs really do map away from `ran`, which is documented as "did its work".
   for (const r of [GATE_REASONS.stopShort, GATE_REASONS.trivial, GATE_REASONS.debounced])

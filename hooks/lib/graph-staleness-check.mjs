@@ -57,6 +57,11 @@ export const REASONS = {
   child: 'child run',
   debounced: 'debounced',
   noClaude: 'no claude CLI',
+  noReport: 'no report yet',
+  noRepo: 'not a git work tree',
+  noCommit: 'no recorded commit',
+  noHead: 'no HEAD',
+  fresh: 'fresh',
 };
 
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
@@ -155,9 +160,9 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   const { slug, report } = reportFor(cwd, vaultRoot);
   // Never auto-generate the FIRST report: that is a minutes-long unattended run the user never
   // asked for. Absence is a choice, not a gap.
-  if (!report) return { action: 'silent', reason: 'no report yet' };
+  if (!report) return { action: 'silent', reason: REASONS.noReport };
   if (git(cwd, ['rev-parse', '--is-inside-work-tree']) !== 'true')
-    return { action: 'silent', reason: 'not a git work tree' };
+    return { action: 'silent', reason: REASONS.noRepo };
 
   let recorded = null;
   try {
@@ -165,11 +170,11 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   } catch {
     /* unreadable report -> cannot judge -> stay silent */
   }
-  if (!recorded) return { action: 'silent', reason: 'no recorded commit' };
+  if (!recorded) return { action: 'silent', reason: REASONS.noCommit };
 
   const head = git(cwd, ['rev-parse', 'HEAD']);
-  if (!head) return { action: 'silent', reason: 'no HEAD' };
-  if (isFresh(head, recorded)) return { action: 'silent', reason: 'fresh' };
+  if (!head) return { action: 'silent', reason: REASONS.noHead };
+  if (isFresh(head, recorded)) return { action: 'silent', reason: REASONS.fresh };
 
   const marker = markerPath(`graphgen-${slug}`);
   if (withinDebounce(readMarker(marker), DEBOUNCE_SECONDS, now))
@@ -273,5 +278,12 @@ function outcomeOf(p) {
   // A missing `claude` CLI is the one dependency this hook has, and losing it is invisible from
   // outside: the nudge it prints instead is the same nudge a debounced run prints.
   if (p.reason === REASONS.noClaude) return 'noop-missing-dep';
+  // The L4 graph layer is optional and most installs never set it up, so on those machines this
+  // hook does nothing forever. As `ran` — "did its work" — that is a permanently dead hook
+  // reporting as a permanently healthy one, which is the state the outcome column exists to end.
+  // `noop-missing-dep` with the reason beside it says which absent thing it is waiting on.
+  if (p.reason === REASONS.noReport || p.reason === REASONS.noRepo) return 'noop-missing-dep';
+  // `fresh` really is work done — the report was checked against HEAD and matched. So are the two
+  // degenerate reads below it, which checked and could not judge.
   return 'ran';
 }

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   recordedCommit,
   isFresh,
@@ -184,9 +185,27 @@ test('check names the reason it stayed silent, so a guard is not read as a miss'
   }
 });
 
-test('no report yet is a decision, not a missing dependency', () => {
+test('an install with no graph layer reports a dependency, not a healthy hook', () => {
   const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'graphvault-'));
   const r = check(process.cwd(), { vaultRoot });
-  assert.strictEqual(r.outcome, 'ran');
-  assert.strictEqual(r.reason, 'no report yet');
+  // The L4 layer is optional and most installs never set it up. As `ran` this hook would report
+  // itself healthy forever while doing nothing at all — for most users, on every session.
+  assert.strictEqual(r.outcome, 'noop-missing-dep');
+  assert.strictEqual(r.reason, REASONS.noReport);
+});
+
+test('every reason plan() can return is one outcomeOf actually recognises', () => {
+  // The same round-trip guard distill-session has, for the same reason: a literal in the plan and a
+  // constant in the mapper drift apart in silence, and a test written against either half alone
+  // stays green through it.
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'graph-staleness-check.mjs'),
+    'utf8',
+  );
+  const from = src.indexOf('export function plan(');
+  const to = src.indexOf('export function check(');
+  const body = from === -1 || to === -1 ? '' : src.slice(from, to);
+  assert.ok(body.includes('REASONS.'), 'the scan found plan() and it uses the constants');
+  for (const m of body.matchAll(/reason:\s*(['"`])((?:(?!\1).)*)\1/g))
+    assert.fail(`plan() returns the literal ${JSON.stringify(m[2])} — use REASONS`);
 });

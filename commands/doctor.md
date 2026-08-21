@@ -77,9 +77,11 @@ transcript) are separate rows with separate budgets. Read it with three things i
 whole process**, node startup included, because that is what the timeout applies to; a `· worker`
 row is the detached background run and has no timeout, so never read it as a slow hook; and the
 outcome column is the point — `noop-missing-dep` means a hook is doing nothing at all and needs
-`/memory:doctor` proper. `debounced` and `child-guard` are deliberate skips, but read the SHARE, not
-the label: a hook that is 100% `debounced` has not done its work once in the window, which is a
-timer that never expires or a lock nothing releases, not a hook working as designed. The
+`/memory:doctor` proper. `debounced` and `child-guard` are deliberate skips, and a high skip rate is
+not a fault by itself — read it against what the hook is for. `distill-session · Stop` is a crash
+fallback that stands down on nearly every assistant turn, so 100% `debounced` there is the healthy
+state. It is a finding where work was expected: a `· SessionEnd` row that never spawns, or a
+`graph-staleness-check` held off by a lock nothing releases. The
 bash hook (`vault-memory-sync`) is not instrumented, and `graph-staleness-check`'s background run
 is timed by nothing; the report names both, so their absence is not a hook that failed to run.
 
