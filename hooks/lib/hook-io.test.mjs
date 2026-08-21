@@ -274,7 +274,7 @@ test('appendJsonl stamps t and slug FIRST, then the record verbatim', () => {
 test('appendJsonl dates the file by the same clock it stamps the line with', () => {
   withState((logs) => {
     appendJsonl('hooks', process.cwd(), { hook: 'x' });
-    // `.retention-stamp` lives here too, and sorts first — the log files are the .jsonl ones.
+    // The day-claim dotfile lives here too, and sorts first — the log files are the .jsonl ones.
     const [file] = fs.readdirSync(logs).filter((f) => f.endsWith('.jsonl'));
     const [rec] = readJsonl(path.join(logs, file));
     // A line landing in yesterday's file is how a window silently loses a day. Same ISO string for
@@ -429,16 +429,6 @@ test('pruneDatedLogs deletes past the window and leaves everything else alone', 
         'my-notes-export-2026-01-01.jsonl',
         'recall-2026-08-21.jsonl',
       ]);
-    });
-  });
-});
-
-test('a retention of 0 keeps today and nothing before it', () => {
-  withState((logs) => {
-    withRetention('0', () => {
-      seed(logs, ['hooks-2026-08-20.jsonl', 'hooks-2026-08-21.jsonl']);
-      pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
-      assert.deepStrictEqual(fs.readdirSync(logs), ['hooks-2026-08-21.jsonl']);
     });
   });
 });

@@ -287,9 +287,7 @@ function prunedSection(s) {
   return [
     '',
     `retention deleted ${s.pruned} dated log file(s) while this window was being logged —`,
-    'machine-wide, every project and both families, since one pass deletes for all of them.',
-    'They were older than `logRetentionDays`, so they are only missing from a window asked to',
-    'reach further back than retention keeps.',
+    'machine-wide: one pass deletes for every project and both families.',
   ];
 }
 
@@ -736,8 +734,9 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   // as "while this window was being logged" over last week's dates.
   // `files[0]` is the OLDEST file in the window — logFiles() sorts and slices off the end — and it
   // is the whole bound: a pass recorded on any earlier day belongs to a window this report is not
-  // printing. `null` when there are no hook files at all: no window, so nothing to attribute to
-  // one, where an empty string would let every recall line back in and restore the unbounded sum.
+  // printing. `null` when there are no hook files at all — no window, so nothing to attribute to
+  // one — the filter below says so in the same expression that bounds the window. An empty string
+  // instead would let every recall line back in and restore the unbounded sum.
   const from = files.length
     ? /** @type {RegExpExecArray} */ (DATE_IN_NAME.exec(path.basename(files[0])))[1]
     : null;
@@ -748,11 +747,9 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
     files.length,
-    from === null
-      ? 0
-      : recallLines
-          .filter((r) => (r.t ?? '') >= from)
-          .reduce((a, r) => a + (typeof r.pruned === 'number' ? r.pruned : 0), 0),
+    recallLines
+      .filter((r) => from !== null && (r.t ?? '') >= from)
+      .reduce((a, r) => a + (typeof r.pruned === 'number' ? r.pruned : 0), 0),
   );
   const head = files.length
     ? `${files.length} log file(s), most recent first: ${files

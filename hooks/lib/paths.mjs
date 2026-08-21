@@ -122,35 +122,13 @@ export function serveIdleMs() {
 /**
  * How many days of dated JSONL logs (`recall-<date>`, `hooks-<date>`) are kept under `logs/`.
  *
- * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard.
- *
- * A non-digit value falls back to the default. A digits-only value is CLAMPED to a century, which
- * is the "keep everything" the person typing twelve digits meant, and never falls back — falling
- * back would delete 30 days for someone asking to delete nothing.
- *
- * The clamp exists because the alternative was a throw. `999999999999` days makes an Invalid Date,
- * whose `toISOString()` throws inside `pruneDatedLogs()`; the logs survived that, but the pass was
- * abandoned before it swept its own day-claim markers, so `logs/` accumulated a dotfile a day —
- * the unbounded directory this whole change exists to close, reappearing in a corner of it
- * (found in review, 2026-08-21). A value that cannot make a date is the bug; clamping removes it.
+ * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard. Anything
+ * else unparseable falls back to the default, because a typo must never widen a retention window
+ * to "everything" nor narrow it to nothing.
  */
-const MAX_RETENTION_DAYS = 36500;
 export function logRetentionDays() {
-  // An EXPORTED-BUT-EMPTY env var is unset, not a value. `??` alone keeps `''`, so a shell that
-  // exports the name without a value — or a `hooks.json` env block with a blank string — shadowed
-  // config.json and silently reinstated the default (found by this function's own test).
-  const env = process.env.MEMORY_LOG_RETENTION_DAYS;
-  const raw = env === undefined || env.trim() === '' ? config().logRetentionDays : env;
-  // Digits only, NOT `Number()`. Measured here on 2026-08-21, the same defect the vault pruner
-  // records: `MEMORY_LOG_RETENTION_DAYS=" "` casts to 0 and passes an `isInteger && >= 0` guard,
-  // so a stray space in a config deletes every log but today's, silently.
-  const s = String(raw ?? '').trim();
-  if (!/^\d+$/.test(s)) return 30;
-  // `Math.min` is the whole clamp. A digits-only string parses to an exact number, a huge rounded
-  // one, or Infinity, and all three are far above the ceiling — so no length test is needed, and
-  // the one that stood here read `0000000007` as ten characters and gave a century to someone
-  // asking for a week (found in review, 2026-08-21).
-  return Math.min(Number(s), MAX_RETENTION_DAYS);
+  const n = Number(process.env.MEMORY_LOG_RETENTION_DAYS ?? config().logRetentionDays);
+  return Number.isInteger(n) && n >= 0 ? n : 30;
 }
 
 /**

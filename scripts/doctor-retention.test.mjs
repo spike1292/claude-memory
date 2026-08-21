@@ -56,6 +56,8 @@ test('doctor reports the window and the oldest file, and only ours count as ours
   // 2018 would be the answer if the pattern matched any prefix — and it would read as retention
   // being seven years overdue while working perfectly.
   assert.match(line, /keep 30d, oldest 2026-08-19/);
+  // And with no dated file at all the line still prints, with `none` where a date would be.
+  assert.match(retentionLine([]), /keep 30d, oldest none/);
 });
 
 test('the window doctor prints is the one the hooks resolve, not a number the shell keeps', () => {
@@ -68,8 +70,4 @@ test('the window doctor prints is the one the hooks resolve, not a number the sh
     retentionLine(['hooks-2026-08-20.jsonl'], { MEMORY_LOG_RETENTION_DAYS: '' }),
     /keep 30d/,
   );
-});
-
-test('an empty logs dir says none rather than nothing', () => {
-  assert.match(retentionLine([]), /keep 30d, oldest none/);
 });

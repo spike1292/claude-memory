@@ -238,36 +238,28 @@ that cannot be written must never fail or delay a hook. Two families use it — 
 duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
-**One retention policy covers `logs/`, in two mechanisms because there are two kinds of file.**
-The free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by size
-— `trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
+**One retention policy covers `logs/`, in two mechanisms because there are two kinds of file.** The
+free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by SIZE —
+`trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
 `pruneDatedLogs()` deletes `<family>-<date>.jsonl` older than `logRetentionDays()` (default 30,
-`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`, digits only and clamped to a
-century so no value can make the cutoff throw — one that did abandoned the pass before it swept its
-own day-claim markers, which grew `logs/` a dotfile a day), because the read views query a
-window of dated FILES — one per day a family ran — so a day is the unit anyone reads these in. That
-also makes retention a ceiling on those views: `--hooks=60` can only read what 30 days kept. It DELETES where the vault's
-`prune-logs.mjs` only moves: these are machine-local debug lines nothing else reads, and an
-`Archive/` here would be the unbounded directory again under another name.
+`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`). A day is the unit because the
+read views query a window of dated FILES, one per day a family ran — which also makes retention a
+ceiling on them: `--hooks=60` reads only what 30 days kept. It DELETES where the vault's
+`prune-logs.mjs` only moves; an `Archive/` here would be the unbounded directory under another name.
 
-**Retention runs opportunistically, on the first append of a new day** — not from `/memory:prune`.
-A retention policy that needs a human to run a command is not one, and the day rolls over exactly
-when one process creates `logs/.retention-<day>` with `wx` — an atomic claim, so exactly one caller
-per day per machine runs the pass and the rest pay one failed `open`. Two weaker guards were tried
-first and each had a herd: `!existsSync(today's file)` is check-then-act across processes and is
-per family, so **nine of nine** concurrent hooks each ran a full pass; a read-then-write date stamp
-took the median to one but ran up to eight, and INVERTED where the stamp could not be written —
-read never returned today, so every append pruned, 20 of 20 at 146 ms each. With `wx`: exactly one
-pass in 15 trials of nine hooks, and **zero** when `logs/` is read-only, which is correct because
-those unlinks would fail too. The claim is taken before the pass and is swept by the next day's.
-**A pass that deleted anything says so** — `pruned: n` after the caller's own fields, omitted when
-it deleted nothing, and summed by `/memory:doctor --hooks`, which reports history it may have
-deleted. **That sum is the one figure in that report which is NOT scoped to the project you run it
-from**, and it is deliberate: one pass deletes every project's files, so scoping it told the
-project that lost 300 files that it had lost none. **The cutoff is built in UTC**, by the same `toISOString()` that
-names the files; the vault pruner's `cutoffDate()` is LOCAL by design and using it here deleted the
-live file of the other family on every append, east of Greenwich, at a retention of 0. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
-machine that stopped writing logs and therefore stopped pruning them.
+**It runs on the first append of a new day, claimed with `wx`** — not from `/memory:prune`, because
+a policy that waits for a human to run a command is not one. `logs/.retention-<day>` is created
+create-if-absent, so exactly one process per machine per day runs the pass and the rest pay one
+failed `open`; a claim that cannot be created means no pass, which is right, because those unlinks
+would fail too. **Two weaker guards each caused a herd and the numbers are in `hook-io.mjs`** — do
+not replace this one without reading them. **The cutoff is UTC**, from the same `toISOString()` that
+names the files; the vault pruner's `cutoffDate()` is local by design and deleted a live log here.
+
+**A pass that deleted anything reports it**: `pruned: n` after the caller's own fields, omitted when
+it deleted nothing, summed by `/memory:doctor --hooks`. **That sum is the one figure in that report
+not scoped to your project** — one pass deletes every project's files, so scoping it told the
+project that lost 300 files it had lost none. `/memory:doctor` also prints the window and the oldest
+dated file, which is what shows a machine that stopped writing logs and so stopped pruning them.
 
 `logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what
 `hooks.json`'s timeout applies to. **Those timeouts live in `hooks.json` and nowhere else**:

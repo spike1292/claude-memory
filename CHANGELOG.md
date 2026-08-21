@@ -12,23 +12,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 ### Added
 
 - **Retention for `$CLAUDE_MEMORY_HOME/logs/`, so the directory is bounded on both of its axes.**
-  The free-form logs (`distill.log`, `graphgen.log`, `semantic-index.log`) were capped at 1 MB;
-  the dated JSONL families (`recall-<date>`, `hooks-<date>`) accumulated one file per active day,
-  forever, in machine-local state that no release replaces. They are now deleted past
-  `logRetentionDays` — 30 days by default, settable in `config.json` or via
-  `MEMORY_LOG_RETENTION_DAYS`
-  ([#53](https://github.com/spike1292/claude-memory/issues/53)). Size for the appends, age for the dated files: the read views
-  (`/memory:doctor --stats`, `--hooks`) query a window of dated files, one per day a family ran, so
-  a day is the unit — and retention is now the ceiling on how far back those views can look. The
-  prune runs on the first append of a NEW day rather than from `/memory:prune`, because a retention
-  policy that waits for a human to run a command is not one; an atomic day-claim
-  (`logs/.retention-<day>`, created with `wx`) means exactly one of the concurrent SessionStart
-  hooks runs the pass rather than all nine, and a pass that deleted anything records `pruned: n` on
-  the log line it was already writing — which `--hooks` sums, so a report never quietly omits the
-  history retention removed from it. It deletes where the vault's log prune only moves — these are
-  machine-local debug lines, and an `Archive/` here would be the same unbounded directory under
-  another name. `/memory:doctor` now prints the window and the oldest dated file beside the size,
-  which is what shows a machine that stopped writing logs and so stopped pruning them.
+  The free-form logs were capped at 1 MB; the dated JSONL families (`recall-<date>`, `hooks-<date>`)
+  accumulated one file per active day, forever, in machine-local state no release replaces. They are
+  now deleted past `logRetentionDays` — 30 days by default, settable in `config.json` or via
+  `MEMORY_LOG_RETENTION_DAYS` ([#53](https://github.com/spike1292/claude-memory/issues/53)). Size
+  for the appends, age for the dated files, because the read views (`/memory:doctor --stats`,
+  `--hooks`) query a window of days — which retention now caps. The prune runs on the first log line
+  of a new day rather than from `/memory:prune`, and a pass that deleted anything records `pruned:
+  n` on that line, which `--hooks` sums. `/memory:doctor` reports the window and the oldest dated
+  file beside the directory size.
 
 - **`/memory:doctor --hooks` — what every hook did, and how long it took.** Nine hook invocations
   fire per session and none of them recorded anything, so a hook that has been permanently dead

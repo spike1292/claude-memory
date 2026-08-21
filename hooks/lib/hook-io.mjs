@@ -104,12 +104,9 @@ export function writeMarker(file, seconds) {
   }
 }
 
-// The day-claim marker `logs/.retention-<day>`. Declared here because `claimDay()` writes it and
-// `pruneDatedLogs()` sweeps yesterday's.
-const CLAIM_PREFIX = '.retention-';
-// Anchored on a DATE, not on the prefix, for the same reason `DATED_LOG` is anchored on the two
-// families: `.retention-notes.md` is not ours to delete, and `.startsWith()` alone deleted a bare
-// `.retention-` and anything sorting below today.
+// The day-claim marker `logs/.retention-<day>`: written by `claimDay()`, swept by
+// `pruneDatedLogs()`. Anchored on a DATE — `.startsWith('.retention-')` also matched
+// `.retention-notes.md` and a bare `.retention-`, which are not ours to delete.
 const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
 
 /**
@@ -130,7 +127,7 @@ const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
  */
 function claimDay(dir, day) {
   try {
-    fs.closeSync(fs.openSync(path.join(dir, `${CLAIM_PREFIX}${day}`), 'wx'));
+    fs.closeSync(fs.openSync(path.join(dir, `.retention-${day}`), 'wx'));
     return true;
   } catch {
     return false;
@@ -588,15 +585,10 @@ export function appendJsonl(family, cwd, record) {
   }
 }
 
-/**
- * The dated JSONL families, and the only basenames retention may delete. A constant rather than a
- * pattern for the same reason `REASONS` is one: a literal here and a caller passing `family` are
- * two lists that drift, and this one decides what gets unlinked. `scripts/doctor.sh` names the same
- * two in a `sed -E`, because a shell cannot import a constant — keep them in step; a wildcard there
- * read a stray file as ours and reported retention as eight years overdue (2026-08-21).
- */
-const LOG_FAMILIES = /** @type {const} */ (['recall', 'hooks']);
-const DATED_LOG = new RegExp(`^(${LOG_FAMILIES.join('|')})-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`);
+// The dated families, and the only basenames retention may delete. `scripts/doctor.sh` names the
+// same two in a `sed -E` — a shell cannot import this, so keep them in step. A wildcard prefix
+// deleted `backup-2026-01-01.jsonl` here and misread one there (2026-08-21).
+const DATED_LOG = /^(recall|hooks)-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 /**
  * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.

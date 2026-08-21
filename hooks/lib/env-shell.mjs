@@ -16,7 +16,6 @@ import {
   projectKey,
   legacyKey,
   recallEnabled,
-  logRetentionDays,
   config,
 } from './paths.mjs';
 
@@ -45,7 +44,6 @@ export const VARS = [
   'MEMORY_ENV_RECALL',
   'MEMORY_ENV_RECALL_CONFIG',
   'MEMORY_ENV_MODEL',
-  'MEMORY_ENV_LOG_RETENTION_DAYS',
 ];
 
 /**
@@ -86,7 +84,6 @@ export function resolve(dir) {
     MEMORY_ENV_RECALL: recallEnabled() ? '1' : '0',
     MEMORY_ENV_RECALL_CONFIG: recallCfg === undefined ? '' : String(recallCfg),
     MEMORY_ENV_MODEL: config().model ?? '',
-    MEMORY_ENV_LOG_RETENTION_DAYS: String(logRetentionDays()),
   };
 }
 
