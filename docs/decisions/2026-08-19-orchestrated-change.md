@@ -1,6 +1,6 @@
 # Orchestrating a change: Implement → Verify → Document → Review → Land
 
-**Date:** 2026-08-19 · **Status:** shipped, six runs · **Rewritten from
+**Date:** 2026-08-19, extended 2026-08-21 · **Status:** shipped, eight runs · **Rewritten from
 `docs/plans/2026-08-18-refactor-backlog.md`, deleted when its last run merged**
 
 ## Question
@@ -86,11 +86,59 @@ and one flagged it. The review was valid by accident.
   `### Fixed` three times among them, in a section that ships as release notes *verbatim*. Each
   agent only ever read the line it inserted after. `Document` now merges into the existing headings.
 
+## What runs 7 and 8 taught: the loop ends on a clean round, not a round count
+
+Runs 7 (#46, PR #57) and 8 (#47, PR #60) were the first worked with the review loop run to
+exhaustion rather than for a fixed one or two passes. Thirteen rounds between them, and the shape of
+what they found is the finding:
+
+| | rounds | rounds that found something | rounds whose find was in the PREVIOUS round's fix |
+| --- | ---: | ---: | ---: |
+| #46 | 8 | 7 | 3 |
+| #47 | 5 | 4 | 2 |
+
+**A review round is a change, and it introduces defects at a measurable rate.** This record already
+said a review pass needs reviewing, from a single instance on #24. Five of thirteen rounds is not an
+anecdote: **budget for it, and never stop on a round that found something.** The stopping rule is a
+round that comes back clean, and it is worth telling the reviewer that "ready" is a legitimate
+answer — otherwise late rounds manufacture findings to justify themselves.
+
+Two designs were built, reviewed, and then deleted, both after they had already been "fixed" once:
+
+- A supervisor process wrapping detached work. Round 1 found it broke a lock whose pid must belong
+  to a process that lives exactly as long as the work; excluded from that hook, round 2 found it
+  wrapped only two of our own scripts, each able to log itself in six lines. Deleting it also
+  deleted the guard round 1 had added *for* it — dead code justified by three sentences that had
+  stopped being true.
+- A retry added in one round to stop a fallback losing data. The next round found it double-charged
+  a billed API call; the round after that found the guard for *that* was too narrow.
+
+**The cheapest defence found: test the round trip, not each half.** Four defects, in both runs, were
+a producer and a consumer that had stopped agreeing while a test pinned each end separately and both
+stayed green — a `reason:` literal against a mapper's constant, a log line identical whether a CLI
+ran once or twice, a source grep for a guard that had become unreachable, a scan whose slice covered
+nothing. Every one was caught by a test that traverses both sides in one assertion, and one such
+test found a third instance seven rounds of reviewers had walked past. A scan-based guard must
+**assert that it found something**: a slice that silently covers nothing passes over everything.
+
+**Report prose is code, and drifts like it.** Both runs shipped a read view, and a third of all
+findings were sentences the code no longer supported — a health heuristic falsified by a later
+round's own change, a "safe to paste" claim broken by a column added afterwards, a comment naming
+the wrong guard. When a round changes behaviour, re-read every sentence describing it, including in
+`CHANGELOG.md`, which ships as release notes verbatim.
+
+**Plan for the reviewer that cannot run.** `claude-code-action` refuses a workflow whose content
+differs from the default branch, so any PR carrying a new invariant into
+`.github/workflows/claude-review.yml` — which CLAUDE.md requires — suppresses its own bot review.
+Both runs did. Say so in the PR body, and treat the local rounds as the review rather than assuming
+one is coming.
+
 ## Consequences
 
 Agent count roughly doubles per run: one `Document`, two whole-diff reviewers, and a refutation
 panel on anything touching a hot path. That is the cost of the ordering, and the escapes above are
-what it buys.
+what it buys. Runs 7 and 8 add the loop's own cost: rounds continue until one is clean, which was
+eight and five rather than the two this record previously implied.
 
 The local CI reviewer needs the prompt read at run time —
 `node scripts/review-prompt.mjs` — not pasted into a script, or it becomes a third place the
