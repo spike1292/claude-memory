@@ -195,8 +195,12 @@ done
 # keeps whatever it had, and the only way to see that is to print the date rather than the policy.
 # The date is read from the FILENAME, like every other date in this system.
 if [ -d "$STATE/logs" ]; then
+  # The SAME two families pruneDatedLogs() deletes, named again because a shell cannot import the
+  # constant. A `[a-z-]*` prefix here read a stray `backup-2018-05-05.jsonl` as ours and printed
+  # "oldest 2018-05-05" — retention looking eight years broken while working perfectly. `sed -E`:
+  # BSD basic regex has no alternation.
   oldest=$(ls "$STATE/logs" 2>/dev/null |
-    sed -n 's/^[a-z][a-z-]*-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)\.jsonl$/\1/p' | sort | head -1)
+    sed -nE 's/^(recall|hooks)-([0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl$/\2/p' | sort | head -1)
   # `?` and not the default: in the degraded branch vault-env.sh could not ask node — no node at
   # all, which the runtime section above FAILs on, or a node that ran and failed, which it does not.
   # Either way this line restates no number it did not resolve.

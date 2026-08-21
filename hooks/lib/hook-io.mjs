@@ -529,9 +529,12 @@ export function appendJsonl(family, cwd, record) {
 /**
  * The dated JSONL families, and the only basenames retention may delete. A constant rather than a
  * pattern for the same reason `REASONS` is one: a literal here and a caller passing `family` are
- * two lists that drift, and this one decides what gets unlinked.
+ * two lists that drift, and this one decides what gets unlinked. `scripts/doctor.sh` names the same
+ * two in a `sed -E`, because a shell cannot import a constant — keep them in step; a wildcard there
+ * read a stray file as ours and reported retention as eight years overdue (2026-08-21).
  */
-export const LOG_FAMILIES = /** @type {const} */ (['recall', 'hooks']);
+const LOG_FAMILIES = /** @type {const} */ (['recall', 'hooks']);
+const DATED_LOG = new RegExp(`^(${LOG_FAMILIES.join('|')})-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`);
 
 /**
  * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
@@ -582,9 +585,7 @@ export function pruneDatedLogs(now = new Date()) {
       // matched `backup-2026-01-01.jsonl` and `my-notes-export-2026-01-01.jsonl` and unlinked
       // both without trace (measured 2026-08-21). This directory is machine-local and a human
       // may well have put something in it; only what we write is ours to delete.
-      const m = new RegExp(`^(${LOG_FAMILIES.join('|')})-(\\d{4}-\\d{2}-\\d{2})\\.jsonl$`).exec(
-        name,
-      );
+      const m = DATED_LOG.exec(name);
       if (!m || m[2] >= cutoff) continue;
       try {
         fs.unlinkSync(path.join(dir, name));
