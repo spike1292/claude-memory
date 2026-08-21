@@ -341,88 +341,6 @@ test('logHook caps a runaway reason instead of writing an unbounded line', () =>
   });
 });
 
-test('detach({worker}) still runs the command, and logs when it finishes', async () => {
-  const state = tmp();
-  const prev = process.env.CLAUDE_MEMORY_HOME;
-  process.env.CLAUDE_MEMORY_HOME = state;
-  try {
-    const proof = path.join(state, 'ran');
-    // The supervisor is in front of the real work for three hooks, one of which is a headless
-    // `claude` run that takes minutes. If it ever failed to exec its child, distillation and graph
-    // regeneration would stop with nothing to show for it — so this asserts the child ran FIRST and
-    // the log line second.
-    const pid = detach('/bin/sh', ['-c', `echo hi > ${proof}`], {
-      worker: { hook: 'distill-session', session: 'sess-1' },
-      cwd: state,
-    });
-    assert.ok(pid, 'the pid returned is the supervisor, which lives as long as the work does');
-
-    const day = new Date().toISOString().slice(0, 10);
-    const log = path.join(state, 'logs', `hooks-${day}.jsonl`);
-    for (let i = 0; i < 100 && !fs.existsSync(log); i++)
-      await new Promise((r) => setTimeout(r, 50));
-
-    assert.strictEqual(fs.readFileSync(proof, 'utf8').trim(), 'hi', 'the child really ran');
-    const [rec] = readJsonl(log);
-    assert.strictEqual(rec.hook, 'distill-session');
-    assert.strictEqual(rec.event, 'worker', 'a worker line, distinct from the gate line');
-    assert.strictEqual(rec.session, 'sess-1', 'and correlated to the gate by session id');
-    assert.strictEqual(rec.outcome, 'ran');
-  } finally {
-    if (prev === undefined) delete process.env.CLAUDE_MEMORY_HOME;
-    else process.env.CLAUDE_MEMORY_HOME = prev;
-  }
-});
-
-test('a worker that dies is logged as an error, not as a run', async () => {
-  const state = tmp();
-  const prev = process.env.CLAUDE_MEMORY_HOME;
-  process.env.CLAUDE_MEMORY_HOME = state;
-  try {
-    detach('/bin/sh', ['-c', 'exit 3'], { worker: { hook: 'semantic-index-refresh' } });
-    const day = new Date().toISOString().slice(0, 10);
-    const log = path.join(state, 'logs', `hooks-${day}.jsonl`);
-    for (let i = 0; i < 100 && !fs.existsSync(log); i++)
-      await new Promise((r) => setTimeout(r, 50));
-    const [rec] = readJsonl(log);
-    // A background job that fails silently is the failure mode this whole log exists to end: the
-    // gate said "spawned" and, without this line, nothing anywhere would ever contradict it.
-    assert.strictEqual(rec.outcome, 'error');
-    assert.strictEqual(rec.reason, 'exit 3');
-  } finally {
-    if (prev === undefined) delete process.env.CLAUDE_MEMORY_HOME;
-    else process.env.CLAUDE_MEMORY_HOME = prev;
-  }
-});
-
-test('detach({worker}) still reports a command that cannot start', () => {
-  const state = tmp();
-  const prev = process.env.CLAUDE_MEMORY_HOME;
-  process.env.CLAUDE_MEMORY_HOME = state;
-  try {
-    const notExecutable = path.join(state, 'claude');
-    fs.writeFileSync(notExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
-    const logFile = path.join(state, 'graphgen.log');
-
-    // The regression the supervisor introduced: it rewrites the command to node, which ALWAYS
-    // spawns, so the pid came back truthy for a binary that cannot run. graph-staleness-check.mjs
-    // reads that pid to decide whether to release its lock and whether to write a 24h marker — a
-    // truthy one there mutes a stale repo for a day as if a regeneration had happened.
-    assert.strictEqual(
-      detach(notExecutable, ['-p', 'x'], { worker: { hook: 'graph-staleness-check' }, logFile }),
-      null,
-    );
-    assert.match(fs.readFileSync(logFile, 'utf8'), /cannot execute/, 'and the log file says why');
-    assert.ok(
-      detach('/bin/sh', ['-c', 'exit 0'], { worker: { hook: 'x' } }),
-      'an executable spawns',
-    );
-  } finally {
-    if (prev === undefined) delete process.env.CLAUDE_MEMORY_HOME;
-    else process.env.CLAUDE_MEMORY_HOME = prev;
-  }
-});
-
 test('a hook line fired inside a background claude run is flagged as one', () => {
   withState((logs) => {
     const prev = process.env.CBM_GRAPHGEN_CHILD;
@@ -441,4 +359,19 @@ test('a hook line fired inside a background claude run is flagged as one', () =>
     assert.strictEqual(inChild.child, true);
     assert.ok(!('child' in inSession), 'and a real session carries no flag at all');
   });
+});
+
+test('detach returns null when the command cannot start, and says so in the log file', async () => {
+  const state = tmp();
+  const logFile = path.join(state, 'graphgen.log');
+  const missing = path.join(state, 'definitely-not-here');
+
+  // A null pid is the ONLY signal a caller gets, because spawn reports a missing binary
+  // ASYNCHRONOUSLY — and both gates now decide their outcome on it, while graph-staleness-check
+  // goes further and releases its lock rather than muting the repo for 24h.
+  assert.strictEqual(detach(missing, [], { logFile }), null, 'a missing binary is a null pid');
+
+  for (let i = 0; i < 100 && !/spawn failed/.test(fs.readFileSync(logFile, 'utf8')); i++)
+    await new Promise((r) => setTimeout(r, 20));
+  assert.match(fs.readFileSync(logFile, 'utf8'), /spawn failed/, 'and the log file records why');
 });

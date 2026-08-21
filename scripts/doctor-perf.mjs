@@ -79,33 +79,43 @@ try {
 const state = memoryHome();
 const model = activeModel();
 
-process.stdout.write(
-  hooksArg
-    ? hookReport({
-        logDir: path.join(state, 'logs'),
-        // The manifest is the ONLY source of the timeouts. Read at run time and never copied into
-        // a log line or into the reader, because a duplicated timeout drifts in silence.
-        manifest: path.join(hooksDir, 'hooks.json'),
-        days: windowOf(hooksArg),
-        slug,
-      })
-    : statsArg
-      ? recallReport({
-          logDir: path.join(state, 'logs'),
-          days: windowOf(statsArg),
-          indexNotes: slug
-            ? indexNotes(path.join(state, 'db', `semantic-${slug}-${model}.db`))
-            : null,
-          // The logs are machine-wide and the index is not, so the report is scoped to THIS project
-          // — otherwise one project's never-injected notes would be measured against every project's
-          // retrievals. doctor.sh runs this from $PWD for exactly that reason.
-          slug,
-        })
-      : await report({
-          state,
-          activeModel: model,
-          activeSlug: slug ?? '(unresolved)',
-          modelKeys: Object.keys(MODELS),
-          counts,
-        }),
-);
+// ADDITIVE, not a ternary. `commands/doctor.md` tells the model the flags may be combined, and
+// through doctor.sh they are — it invokes this script once per flag. Passed together to the entry
+// itself, a ternary chain silently printed one section and dropped the rest, so the doc was true
+// only by accident of which wrapper was used.
+if (hooksArg)
+  process.stdout.write(
+    hookReport({
+      logDir: path.join(state, 'logs'),
+      // The manifest is the ONLY source of the timeouts. Read at run time and never copied into
+      // a log line or into the reader, because a duplicated timeout drifts in silence.
+      manifest: path.join(hooksDir, 'hooks.json'),
+      days: windowOf(hooksArg),
+      slug,
+    }),
+  );
+
+if (statsArg)
+  process.stdout.write(
+    recallReport({
+      logDir: path.join(state, 'logs'),
+      days: windowOf(statsArg),
+      indexNotes: slug ? indexNotes(path.join(state, 'db', `semantic-${slug}-${model}.db`)) : null,
+      // The logs are machine-wide and the index is not, so the report is scoped to THIS project —
+      // otherwise one project's never-injected notes would be measured against every project's
+      // retrievals. doctor.sh runs this from $PWD for exactly that reason.
+      slug,
+    }),
+  );
+
+// The perf report is the DEFAULT, so it prints when no flag selected something else.
+if (!hooksArg && !statsArg)
+  process.stdout.write(
+    await report({
+      state,
+      activeModel: model,
+      activeSlug: slug ?? '(unresolved)',
+      modelKeys: Object.keys(MODELS),
+      counts,
+    }),
+  );

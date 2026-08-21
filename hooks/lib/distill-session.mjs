@@ -647,7 +647,7 @@ export function distill(transcript, cwd) {
 /**
  * @typedef {{ run: false, reason: string, lines?: number }} SkipGate
  * @typedef {{ run: true, transcript: string, marker: string, now: number, lines: number }} RunGate
- * @typedef {SkipGate | RunGate} GatePlan
+ * @typedef {SkipGate | (RunGate & { spawned?: boolean })} GatePlan
  */
 
 /** Below this a session has no lesson in it; distilling would be noise with an LLM call attached. */
@@ -664,6 +664,8 @@ export const GATE_REASONS = {
   child: 'child run',
   stopActive: 'stop_hook_active',
   debounced: 'stop: debounced',
+  noTranscript: 'no transcript path',
+  badTranscript: 'transcript missing',
 };
 
 /**
@@ -686,11 +688,11 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
 
   const transcript = p?.transcript_path;
-  if (!transcript) return { run: false, reason: 'no transcript path' };
+  if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
     if (!fs.statSync(transcript).isFile()) return { run: false, reason: 'transcript not a file' };
   } catch {
-    return { run: false, reason: 'transcript missing' };
+    return { run: false, reason: GATE_REASONS.badTranscript };
   }
 
   const lines = countLines(transcript);
@@ -722,16 +724,20 @@ export function gate(p) {
   const plan = gatePlan(p);
   if (!plan.run) return plan;
   writeMarker(plan.marker, plan.now);
-  detach(
+  const pid = detach(
     process.execPath,
     [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, p?.cwd || process.cwd()],
     {
       cwd: p?.cwd,
       logFile: path.join(paths.stateDir('logs'), 'distill.log'),
-      worker: { hook: 'distill-session', session: p?.session_id },
+      env: { MEMORY_HOOK_SESSION: p?.session_id },
     },
   );
-  return plan;
+  // The spawn is the only part of this gate that can fail, and it fails ASYNCHRONOUSLY: a null pid
+  // is the one signal there is. Ignoring it meant logging `spawned` for a run that never started —
+  // a healthy-looking column with nothing anywhere to contradict it, which is the exact failure the
+  // outcome field exists to end.
+  return { ...plan, spawned: pid != null };
 }
 
 /**
@@ -745,9 +751,15 @@ export function gate(p) {
  * @returns {import('./hook-io.mjs').HookOutcome}
  */
 export function gateOutcome(plan) {
-  if (plan.run) return 'spawned';
+  // `spawned === false` means detach() came back with no pid.
+  if (plan.run) return plan.spawned === false ? 'error' : 'spawned';
   if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
     return 'child-guard';
   if (plan.reason === GATE_REASONS.debounced) return 'debounced';
+  // A transcript that is absent or unreadable is this hook's missing dependency: Claude Code hands
+  // it the path, and if that stops arriving the distiller is permanently dead while exiting 0 and
+  // printing nothing. Reporting it as `ran` would hide exactly the outage worth seeing.
+  if (plan.reason === GATE_REASONS.noTranscript || plan.reason === GATE_REASONS.badTranscript)
+    return 'noop-missing-dep';
   return 'ran';
 }

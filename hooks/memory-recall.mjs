@@ -117,6 +117,10 @@ try {
   // suffix. Fail-open is right; fail-open AND silent is not.
   if (!fs.existsSync(dbPath)) {
     log({ abstained: true, reason: 'no index at ' + path.basename(dbPath) });
+    // NOT `ran`. This is the 2026-08-15 incident in the comment above — a model suffix appeared in
+    // the DB filename and recall was silently off for six hours — and it is exactly what the
+    // outcome set is for. As `ran` it would be a healthy column of thousands of invocations.
+    outcome = 'noop-missing-dep';
     process.exit(0);
   }
 

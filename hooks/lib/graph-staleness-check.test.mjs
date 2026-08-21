@@ -151,11 +151,10 @@ test('check takes the lock, hands it to the child, and the next session stands d
     } finally {
       const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
       try {
-        // The GROUP, not the pid. What the lock holds is hooks/log-worker.mjs — the supervisor
-        // that exists so the background run gets a log line of its own — and the stand-in `claude`
-        // is its child, not its process. `detach()` spawns the supervisor with setsid, so it is
-        // the group leader and one negative pid takes both; killing the pid alone would leave a
-        // 30-second sleep behind.
+        // The GROUP, not the pid. `detach()` spawns with setsid, so the stand-in `claude` is its
+        // own group leader; a negative pid reaches it and anything it started. Killing the pid
+        // alone was enough while nothing else ran under it, and this is the form that stays right
+        // if it ever does.
         process.kill(-pid, 'SIGKILL');
       } catch {
         /* already gone, or never spawned */

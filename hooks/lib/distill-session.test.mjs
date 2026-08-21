@@ -481,10 +481,30 @@ test('gateOutcome tells a guard from a decision from a debounce', () => {
     delete process.env.CLAUDE_DISTILL_CHILD;
   }
   assert.strictEqual(gateOutcome({ run: false, reason: 'trivial session' }), 'ran');
-  assert.strictEqual(gateOutcome({ run: false, reason: 'transcript missing' }), 'ran');
+  // A transcript that never arrives is this hook's missing dependency, not a quiet decision: if
+  // Claude Code stopped sending the path, distillation would stop forever while every line said
+  // `ran`.
   assert.strictEqual(
-    gateOutcome({ run: true, transcript: '/t', marker: '/m', now: 1, lines: 60 }),
+    gateOutcome({ run: false, reason: GATE_REASONS.noTranscript }),
+    'noop-missing-dep',
+  );
+  assert.strictEqual(
+    gateOutcome({ run: false, reason: GATE_REASONS.badTranscript }),
+    'noop-missing-dep',
+  );
+  const ran = /** @type {const} */ ({
+    run: true,
+    transcript: '/t',
+    marker: '/m',
+    now: 1,
+    lines: 60,
+  });
+  assert.strictEqual(
+    gateOutcome({ ...ran, spawned: true }),
     'spawned',
     'the gate never claims to have done the work — the worker line says that',
   );
+  // And it never claims to have spawned what it failed to spawn. detach() reports a failed fork
+  // with a null pid; treating that as `spawned` is a healthy column over a dead distiller.
+  assert.strictEqual(gateOutcome({ ...ran, spawned: false }), 'error');
 });

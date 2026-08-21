@@ -5,12 +5,14 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   resolveSlug,
   runtimeInstalled,
   plan,
   outcomeOf,
   REASONS,
+  workerEnv,
 } from './semantic-index-refresh.mjs';
 import { legacyKey } from './paths.mjs';
 
@@ -69,8 +71,32 @@ test('outcomeOf separates a missing dependency from a quiet decision', () => {
   // And end to end: an empty vault root reaches the noVault branch through plan(), not a literal.
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-empty-'));
   assert.strictEqual(outcomeOf(plan(process.cwd(), { vaultRoot: empty })), 'ran');
-  assert.strictEqual(
-    outcomeOf({ run: true, slug: 's', script: '/x', args: [], logFile: '/l' }),
-    'spawned',
+  const ran = /** @type {const} */ ({
+    run: true,
+    slug: 's',
+    script: '/x',
+    args: /** @type {string[]} */ ([]),
+    logFile: '/l',
+  });
+  assert.strictEqual(outcomeOf({ ...ran, spawned: true }), 'spawned');
+  // A fork that failed is not a re-index that happened. Nothing else would ever contradict it:
+  // with no child, no worker line is written either.
+  assert.strictEqual(outcomeOf({ ...ran, spawned: false }), 'error');
+});
+
+test('the indexer worker line is scoped by a marker, not just by the session id', () => {
+  const env = workerEnv('s1');
+  assert.strictEqual(env.MEMORY_HOOK_SESSION, 's1');
+  // Without the marker, the re-index the DISTILLER runs at the end of every distillation inherits
+  // the session id and is logged as this hook's worker — a SessionEnd re-index filed under
+  // SessionStart. Observed end to end on 2026-08-21 before this was added.
+  assert.strictEqual(env.MEMORY_INDEX_HOOK, '1');
+
+  // And the indexer reads the same spelling. A rename on either side stops the worker line being
+  // written at all, silently — the exact failure mode this log exists to make impossible.
+  const indexer = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../scripts/memory-semantic.mjs'),
+    'utf8',
   );
+  assert.match(indexer, /process\.env\.MEMORY_INDEX_HOOK/);
 });

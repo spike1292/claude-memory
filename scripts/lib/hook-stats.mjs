@@ -25,7 +25,15 @@ export { DEFAULT_DAYS };
  *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean,
  * }} HookLine
  */
-/** @typedef {{ n: number, latencies: number[], outcomes: Map<string, number>, worker: boolean }} HookRow */
+/**
+ * @typedef {{
+ *   n: number,
+ *   latencies: number[],
+ *   outcomes: Map<string, number>,
+ *   reasons: Map<string, Map<string, number>>,
+ *   worker: boolean,
+ * }} HookRow
+ */
 
 // A hook that runs at half its declared timeout is not failing, and is one slow vault away from
 // failing. Half is the point at which a number is worth printing rather than a threshold anything
@@ -38,9 +46,10 @@ export const NEAR_FRACTION = 0.5;
 // the distinction the outcome column exists to make everywhere else.
 export const UNLOGGED = 'vault-memory-sync (bash, not instrumented)';
 
-// graph-staleness-check is observed at its gate only. Its background run is a headless `claude`
-// whose pid has to be what graphgen.lock holds — a supervisor in front of it would free the lock
-// if it died while the work continued, and two concurrent re-indexes is what that lock prevents.
+// graph-staleness-check is observed at its gate only. Its background run is the `claude` binary,
+// which cannot log for itself, and nothing may be put in front of it to do so: graphgen.lock holds
+// that process's pid, and a wrapper that died would free the lock while the work carried on — two
+// concurrent re-indexes, which is what the lock is for.
 export const NO_WORKER_LINE = 'graph-staleness-check (its background run is timed by nothing)';
 
 /**
@@ -106,12 +115,23 @@ export function summarize(lines, slug = null) {
     const key = worker ? `${name} (worker)` : name;
     const row =
       hooks.get(key) ??
-      /** @type {HookRow} */ ({ n: 0, latencies: [], outcomes: new Map(), worker });
+      /** @type {HookRow} */ ({
+        n: 0,
+        latencies: [],
+        outcomes: new Map(),
+        reasons: new Map(),
+        worker,
+      });
     row.n++;
     if (typeof l.ms === 'number') row.latencies.push(l.ms);
     else untimed++;
     const o = l.outcome ?? '(none)';
     row.outcomes.set(o, (row.outcomes.get(o) ?? 0) + 1);
+    if (l.reason) {
+      const by = row.reasons.get(o) ?? new Map();
+      by.set(l.reason, (by.get(l.reason) ?? 0) + 1);
+      row.reasons.set(o, by);
+    }
     hooks.set(key, row);
   }
 
@@ -149,6 +169,21 @@ export function nearTimeout(latencies, timeoutSeconds) {
 
 /** @param {number | null} v @param {number} [digits] @returns {string} */
 const num = (v, digits = 0) => (v === null ? '-' : v.toFixed(digits));
+
+/**
+ * The commonest reason behind one (hook, outcome) row, and how many others there were.
+ *
+ * @param {HookRow} row
+ * @param {string} outcome
+ * @returns {string}
+ */
+function reasonFor(row, outcome) {
+  const by = [...(row.reasons.get(outcome) ?? new Map()).entries()].sort((a, b) => b[1] - a[1]);
+  if (!by.length) return '-';
+  const [text] = by[0];
+  const others = by.slice(1).reduce((a, [, c]) => a + c, 0);
+  return others ? `${text} (+${others} other)` : `${text}`;
+}
 
 /**
  * The hook section body.
@@ -199,10 +234,16 @@ export function render(s, limits) {
     'the survivors ran. Read a hook that stops appearing, or whose n falls, as the breach.',
     '',
     'outcomes',
+    // The REASON column, not just the count. Every call site records one and nothing printed it,
+    // so the first question an `error` row raises — "error saying what?" — could only be answered
+    // by hand-reading the JSONL. The commonest reason per row is shown; `+N other` says when the
+    // row is not of one mind.
     table(
-      ['hook', 'outcome', 'n'],
+      ['hook', 'outcome', 'n', 'commonest reason'],
       s.hooks.flatMap(([name, r]) =>
-        [...r.outcomes.entries()].sort((a, b) => b[1] - a[1]).map(([o, n]) => [name, o, n]),
+        [...r.outcomes.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([o, n]) => [name, o, n, reasonFor(r, o)]),
       ),
     ),
     '',
@@ -254,6 +295,8 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
         .reverse()
         .map((f) => path.basename(f))
         .join(', ')}`
-    : `no hook logs in ${logDir} — no session has run with this version of the plugin yet.`;
+    : `no hook logs in ${logDir} — nothing has been logged there in this window. That is a` +
+      ' session that has not run yet, a cleared logs/, a window too narrow, or a directory the' +
+      ' hooks cannot write (they swallow exactly that).';
   return `\nhook analytics\n${`${head}\n\n${render(summary, timeouts(manifest))}`.replace(/^(?=.)/gm, '  ')}\n`;
 }

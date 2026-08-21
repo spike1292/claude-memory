@@ -241,16 +241,21 @@ cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 `logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what
 `hooks.json`'s timeout applies to. **Those timeouts live in `hooks.json` and nowhere else**:
 `scripts/lib/hook-stats.mjs` parses the manifest at run time, and a copy anywhere would drift in
-silence. A gate's own duration is a decision and never the work, so `distill-session` and
-`semantic-index-refresh` write a second line from `hooks/log-worker.mjs`, the supervisor
-`detach({ worker })` puts in front of background work.
+silence.
 
-**`graph-staleness-check` must NOT be given that supervisor.** `graphgen.lock` holds a pid and
-`lockHolder()` frees a lock whose pid is dead, so the pid has to be a process that lives exactly as
-long as the work — a supervisor that dies orphans the headless `claude` and frees the lock under
-it, which is two concurrent re-indexes. The same rewrite is why `detach({ worker })` re-checks
-`X_OK` on the real command first: it replaces the command with `node`, which always spawns, and the
-null pid that told a caller "this could not start" would otherwise never come back.
+**A gate logs its DECISION; the work logs itself.** A gate exits in milliseconds, so
+`distill-session`'s worker branch and `scripts/memory-semantic.mjs --index` each write their own
+`event: worker` line, correlated by `MEMORY_HOOK_SESSION` which the gate exports. The indexer's is
+guarded by that variable, so a manual `/memory:prune` never lands in a per-hook report. There is no
+supervisor process: one was tried and deleted, because after `graph-staleness-check` had to be
+excluded from it — `graphgen.lock` holds a pid and `lockHolder()` frees a lock whose pid is dead, so
+a supervisor that died would orphan the headless `claude` while freeing the lock under it — it wrapped
+only two of our own scripts, each of which can log itself in six lines. `graph-staleness-check`'s
+background run is therefore timed by nothing, and the report says so rather than leaving a gap.
+
+**A gate that detaches decides its outcome on `detach()`'s pid.** The spawn fails asynchronously, so
+a null pid is the only signal there is; logging `spawned` for a run that never started is the
+healthy-looking lie this whole log exists to end.
 
 **A reason string that an outcome mapper decides on is a constant, not a literal** (`GATE_REASONS`,
 `REASONS`) — a literal in the plan and a copy in the mapper drift apart in silence, and every test

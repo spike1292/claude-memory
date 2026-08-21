@@ -9,8 +9,8 @@ const p = payload(readStdin());
 const cwd = hookCwd(p);
 const session = /** @type {string|undefined} */ (p.session_id);
 
-// This is a GATE: it decides and detaches, so the line below times the decision, never the
-// re-index. The re-index writes its own line under the same session id, from log-worker.mjs.
+// A GATE: it decides and detaches, so the line below times the decision, never the re-index. The
+// re-index writes its own line under the same session id, from scripts/memory-semantic.mjs.
 const plan = refresh(cwd, new Date(), session);
 logHook({
   hook: 'semantic-index-refresh',

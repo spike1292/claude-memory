@@ -31,10 +31,10 @@ test('timeouts come from the real manifest, and are never written down twice', (
 });
 
 test('a hook declared under two events is held to the tighter limit', () => {
-  const t = timeouts(MANIFEST);
   // distill-session is on SessionEnd and Stop. If those ever differ, the one it can actually
-  // breach is the smaller — a max would report near-misses that are really breaches.
-  assert.strictEqual(t.get('distill-session'), 15);
+  // breach is the smaller — a max would report near-misses that are really breaches. Proved
+  // against a SYNTHETIC manifest: asserting the real 15 here would put a timeout in a second
+  // place, which is the thing this whole reader is built to avoid.
   const written = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-'));
   const file = path.join(written, 'hooks.json');
   fs.writeFileSync(
@@ -167,11 +167,15 @@ test('every hook name an entry logs is a name the manifest declares', () => {
   // entry AND in the manifest's command path. Rename hooks/memory-link-lint.mjs and update
   // hooks.json, and this report silently prints "-" for the timeout of a hook that still has one.
   const declared = timeouts(MANIFEST);
+  // RECURSIVE: the two `hook:` literals that matter most sit in hooks/lib/, on the worker lines,
+  // and a non-recursive scan walked straight past exactly the names it was written to protect.
   const dir = path.join(here, '../../hooks');
   const logged = new Set();
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.mjs') || f.endsWith('.test.mjs')) continue;
-    for (const m of fs.readFileSync(path.join(dir, f), 'utf8').matchAll(/hook: '([\w.-]+)'/g))
+  for (const f of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!f.name.endsWith('.mjs') || f.name.endsWith('.test.mjs')) continue;
+    for (const m of fs
+      .readFileSync(path.join(f.parentPath, f.name), 'utf8')
+      .matchAll(/hook: '([\w.-]+)'/g))
       logged.add(m[1]);
   }
   assert.ok(logged.size >= 7, `found only ${logged.size} logged hook names — the scan broke`);

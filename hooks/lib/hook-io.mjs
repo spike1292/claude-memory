@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { stateDir, hooksDir, projectKey } from './paths.mjs';
+import { stateDir, projectKey } from './paths.mjs';
 
 /** Claude Code sends hook input as one JSON object on stdin. A hook must never die on bad input. */
 export function readStdin() {
@@ -327,20 +327,10 @@ function openLog(file) {
  *
  * Returns the child pid, or null. The pid is what a caller writes into its lock file.
  *
- * `worker` puts hooks/log-worker.mjs in front of the command, so the BACKGROUND run gets a log
- * line of its own. Without it a heavy hook is only ever observed at its gate: the gate decides in
- * milliseconds and exits, and how long the distillation, the re-index or the headless graph regen
- * actually took — or that it died — is recorded nowhere. One supervisor covers all three, including
- * the one whose worker is the `claude` binary and cannot be instrumented from the inside.
- *
- * The pid returned is then the supervisor's, which is the pid a caller wants anyway: it is alive
- * for as long as the work is, where the old one was a process that may have exited long before.
- *
  * @typedef {object} DetachOptions
  * @property {Record<string, string|undefined>} [env]
  * @property {string} [cwd]
  * @property {string} [logFile]
- * @property {{ hook: string, session?: string }} [worker]
  */
 
 /**
@@ -349,41 +339,8 @@ function openLog(file) {
  * @param {DetachOptions} [opts]
  * @returns {number|null}
  */
-export function detach(cmd, args, { env, cwd, logFile, worker } = {}) {
+export function detach(cmd, args, { env, cwd, logFile } = {}) {
   const fd = logFile ? openLog(logFile) : null;
-  if (worker) {
-    // The supervisor would otherwise MASK a command that cannot start. `spawn` reports a missing
-    // or non-executable binary asynchronously, so before this wrapper existed the caller learned
-    // about it through a null pid — and graph-staleness-check.mjs uses exactly that to release its
-    // lock and NOT write a 24h marker. Wrapped, `process.execPath` always spawns, the pid is always
-    // truthy, and a repo whose `claude` had been chmod'd 0644 would go quiet for a day as if a
-    // regeneration had happened. Checking here restores the signal at the moment it is acted on;
-    // `findClaude()` checks at plan time, which is a different moment.
-    //
-    // ponytail: an X_OK check, not an exec. It does not see an exec-format error, or a binary
-    // deleted in the microseconds after it — the supervisor's own line reports those as `error`,
-    // minutes later.
-    try {
-      fs.accessSync(cmd, fs.constants.X_OK);
-    } catch {
-      if (logFile) logBanner(logFile, `cannot execute ${cmd}`, new Date().toISOString());
-      if (fd != null) {
-        try {
-          fs.closeSync(fd);
-        } catch {
-          /* nothing else holds it */
-        }
-      }
-      return null;
-    }
-    args = [
-      path.join(hooksDir, 'log-worker.mjs'),
-      JSON.stringify({ ...worker, cwd }),
-      cmd,
-      ...args,
-    ];
-    cmd = process.execPath;
-  }
   try {
     const child = spawn(cmd, args, {
       cwd,
@@ -516,10 +473,19 @@ export function logBanner(file, label, iso) {
 // the median (70.3 vs 73.2 over 30 runs of that row alone) even though it now writes TWO lines,
 // because it had already resolved `projectKey` and paid one append.
 //
-// The write is the cost and there is nothing else to cut: `stateDir()`'s mkdir is 0.015 ms and
-// `projectKey()` on an already-resolved cwd is 0.0002 ms. A cwd whose key is NOT yet cached forks
-// git once (~40 ms), which validate-note did not previously pay — once per repo, on the first
-// Write, into a cache every other hook in the session then reads.
+// The write is the cost in the ordinary case: `stateDir()`'s mkdir is 0.015 ms and `projectKey()`
+// on an already-resolved cwd is 0.0002 ms.
+//
+// The exception is worth knowing, because it is NOT once per repo. `projectKey()` refuses to cache
+// a checkout whose `.git` is a FILE — a worktree or a submodule — since it cannot cheaply validate
+// the stamp (paths.mjs: `stamp = null // do not cache`). The in-process Map dies with the hook, so
+// in those checkouts every call forks git: measured 14.6 ms in a worktree of this repo, 2026-08-21,
+// on EVERY Write/Edit through validate-note, which never resolved a key before this change. The
+// bench numbers above were taken in an ordinary clone and do not include it.
+//
+// ponytail: left uncached. Fixing it means resolving the `.git` file to the real config path and
+// stamping THAT, which is a change to project identity — the one thing in this repo that must not
+// wobble — and belongs in its own commit with its own test.
 
 /**
  * Append one record to a daily-dated log family under `$CLAUDE_MEMORY_HOME/logs/`.

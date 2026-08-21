@@ -35,20 +35,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
   ([#46](https://github.com/spike1292/claude-memory/issues/46))
 - **A worker line for two of the three detached hooks.** `distill-session` and
   `semantic-index-refresh` decide in milliseconds and hand the real work to a detached child, so
-  their own elapsed time measures a gate and never the work. Each now writes a second line — same
-  session id, `event: worker` — when the background run finishes, carrying its real duration and
-  whether it failed. It comes from one supervisor (`hooks/log-worker.mjs`) that `detach({ worker })`
-  puts in front of the command.
-  **`graph-staleness-check` deliberately does not get one.** The pid written into `graphgen.lock`
-  has to be a process that lives exactly as long as the work does, because `lockHolder()` frees a
-  lock whose pid is dead. A supervisor breaks that: lose it to a crash or an OOM and the headless
-  `claude` regenerates on as an orphan while the lock reads as free, so the next session starts a
-  second concurrent re-index — the one thing that lock exists to prevent. The report names the gap
-  rather than leaving it to be discovered.
-  The supervisor also re-checks that the real command is executable before wrapping it: it rewrites
-  the command to `node`, which always spawns, and that would have turned a `claude` binary gone
-  non-executable into a truthy pid — muting a stale repo for 24 h as if a regeneration had run.
-
+  their own elapsed time measures a gate and never the work. Each background run now writes its own
+  line — same session id, `event: worker` — carrying its real duration and whether it failed. The
+  session id travels in `MEMORY_HOOK_SESSION`, which the gate exports; the indexer's line is guarded
+  by that variable, so a manual `/memory:prune` never appears in a per-hook report.
+  **`graph-staleness-check` deliberately gets none.** The pid written into `graphgen.lock` has to
+  belong to a process that lives exactly as long as the work does, because `lockHolder()` frees a
+  lock whose pid is dead — so nothing may sit between the hook and the headless `claude` it starts.
+  The report names that gap rather than leaving its absence to read as a run that never happened.
+- **A gate that detaches now reports a failed spawn.** `detach()` returns a null pid when the fork
+  fails, which is the only signal there is — it fails asynchronously — and both gates previously
+  discarded it and logged `spawned` regardless. A re-index or a distillation that never started now
+  reads as `error`, which is the whole point of recording an outcome.
   Measured with `node scripts/bench-hooks.mjs -n 40 --notes 50` before and after: **+1.5 to +3.6 ms
   per hook** at the median, against a 31.5 ms bare-node floor. A disarmed recall is unchanged
   (36.7 → 35.7 ms) because nothing is logged above the arming gate, and an armed one is flat at the

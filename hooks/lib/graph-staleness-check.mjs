@@ -206,13 +206,14 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * point this at a scratch vault instead of the real one — a check() that could only read the live
  * vault could not be tested at all, and this is the half with the lock sequence in it.
  *
- * This is the ONE detached hook that does NOT run under hooks/log-worker.mjs, and the reason is
- * the lock. `lockHolder()` frees a lock whose pid is dead, so the pid written into `graphgen.lock`
- * has to be a process that lives exactly as long as the work does. A supervisor breaks that: kill
- * it, or lose it to an OOM, and the headless `claude` keeps regenerating as an orphan while the
- * lock reads as free — so the next session starts a SECOND concurrent re-index, which is the one
- * thing this lock exists to prevent. A worker line is worth less than that, so this hook is
- * observed at its gate only and `--hooks` says so.
+ * This is the ONE detached hook with no worker line, and the reason is the lock. `lockHolder()`
+ * frees a lock whose pid is dead, so the pid written into `graphgen.lock` has to belong to a
+ * process that lives exactly as long as the work does — and nothing may sit between this hook and
+ * the `claude` it starts. (A supervisor process was tried and deleted for exactly this: killed or
+ * OOM'd, it would orphan the regeneration while freeing the lock under it, and the next session
+ * would start a SECOND concurrent re-index.) The work is also the `claude` binary, which cannot log
+ * for itself the way our own two workers do. So this hook is observed at its gate only, and
+ * `--hooks` names the gap.
  *
  *
  * @param {string} cwd

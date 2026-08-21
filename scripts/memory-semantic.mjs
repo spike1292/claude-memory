@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../hooks/lib/paths.mjs';
+import { logHook } from '../hooks/lib/hook-io.mjs';
 import { CARD } from './lib/lexical.mjs';
 import {
   MODEL_KEY,
@@ -373,6 +374,23 @@ if (flag('--index')) {
     }
   };
   process.on('exit', releaseLock);
+  // The hook log's WORKER line, and only when the SessionStart gate started THIS run.
+  // MEMORY_INDEX_HOOK is set by that gate alone: a manual `/memory:prune` is not a hook, and the
+  // re-index the distiller runs at the end of every distillation is a different hook's work that
+  // would otherwise inherit the session id and be filed under this one. The gate exits in
+  // milliseconds, so without this the re-index — the part that takes real time — is timed by
+  // nothing. `process.on('exit')` rather than a call at the end, so a throw is recorded too.
+  if (process.env.MEMORY_INDEX_HOOK)
+    process.on('exit', (code) =>
+      logHook({
+        hook: 'semantic-index-refresh',
+        event: 'worker',
+        cwd: process.cwd(),
+        session: process.env.MEMORY_HOOK_SESSION,
+        outcome: code === 0 ? 'ran' : 'error',
+        reason: code === 0 ? undefined : `exit ${code}`,
+      }),
+    );
   for (const sig of ['SIGINT', 'SIGTERM'])
     process.on(sig, () => {
       releaseLock();
