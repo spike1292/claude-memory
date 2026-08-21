@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
   gatePlan,
+  gateOutcome,
+  GATE_REASONS,
   MIN_MESSAGES,
   STOP_MIN_MESSAGES,
   STOP_DEBOUNCE_SECONDS,
@@ -461,4 +463,122 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     );
   // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
+});
+
+test('gateOutcome tells a guard from a decision from a debounce', () => {
+  // These are the three states that look identical from outside the hook: it exited 0 and printed
+  // nothing. Which one it was is the difference between "working as designed" and "off for weeks".
+  // Through the CONSTANTS, not through literals: gatePlan() and gateOutcome() have to agree, and a
+  // test written against a copy of the string cannot see them stop agreeing.
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.child }), 'child-guard');
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.stopActive }), 'child-guard');
+  assert.strictEqual(gateOutcome({ run: false, reason: GATE_REASONS.debounced }), 'debounced');
+  // And end to end for the one branch that needs no fixture, so the wiring itself is exercised.
+  process.env.CLAUDE_DISTILL_CHILD = '1';
+  try {
+    assert.strictEqual(gateOutcome(gatePlan({})), 'child-guard');
+  } finally {
+    delete process.env.CLAUDE_DISTILL_CHILD;
+  }
+
+  // A transcript that never arrives is this hook's missing dependency, not a quiet decision: if
+  // Claude Code stopped sending the path, distillation would stop forever while every line said
+  // `ran`.
+  assert.strictEqual(
+    gateOutcome({ run: false, reason: GATE_REASONS.noTranscript }),
+    'noop-missing-dep',
+  );
+  assert.strictEqual(
+    gateOutcome({ run: false, reason: GATE_REASONS.badTranscript }),
+    'noop-missing-dep',
+  );
+  const ran = /** @type {const} */ ({
+    run: true,
+    transcript: '/t',
+    marker: '/m',
+    now: 1,
+    lines: 60,
+  });
+  assert.strictEqual(
+    gateOutcome({ ...ran, spawned: true }),
+    'spawned',
+    'the gate never claims to have done the work — the worker line says that',
+  );
+  // And it never claims to have spawned what it failed to spawn. detach() reports a failed fork
+  // with a null pid; treating that as `spawned` is a healthy column over a dead distiller.
+  assert.strictEqual(gateOutcome({ ...ran, spawned: false }), 'error');
+});
+
+test('the distill WORKER really writes its own line, outcome and reason and all', (t) => {
+  // The entry's process.on('exit') handler is the only thing that records how long a distillation
+  // took, and until now it was covered by nothing but a source grep — which stays green if the
+  // handler becomes unreachable, or if the outcome mapping inverts. This runs it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillworker-'));
+  // Same reason as the test above: #30 added `t.after` after leaked worlds reached 2.7 GB in
+  // $TMPDIR, and this one builds a state dir, a logs dir and a vault on every run of the suite.
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i}` } }),
+    ).join('\n') + '\n',
+  );
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  execFileSync(process.execPath, [entry, transcript, process.cwd()], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_DRYRUN: '1',
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-worker',
+    },
+  });
+
+  const logDir = path.join(root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim().split('\n')[0]);
+  assert.strictEqual(rec.hook, 'distill-session');
+  assert.strictEqual(rec.event, 'worker', 'a worker line, not a gate line');
+  assert.strictEqual(rec.outcome, 'ran');
+  assert.strictEqual(rec.session, 'sess-worker', 'correlated to its gate through the environment');
+  assert.match(String(rec.reason), /^wrote \d+, merged \d+$/);
+  // The duration has to be the WORK. A gate decides in ~40 ms; this process did the distillation.
+  assert.ok(rec.ms > 0);
+});
+
+test('every reason gatePlan can return is one gateOutcome actually recognises', () => {
+  // The round trip, not the two halves separately. Round 5 added `stopShort` to the mapper and left
+  // the plan emitting the literal, so the branch it shipped to fix never fired — with both existing
+  // tests green, because one asserts the literal and the other only ever feeds in constants.
+  const seen = new Set(Object.values(GATE_REASONS));
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'distill-session.mjs'),
+    'utf8',
+  );
+  const from = src.indexOf('export function gatePlan');
+  const to = src.indexOf('export function gate(');
+  const planBody = from === -1 || to === -1 ? '' : src.slice(from, to);
+  // A scan that silently covers NOTHING is the failure this test was written to prevent, one level
+  // up: rename gatePlan and `slice(-1, n)` returns '', matchAll finds nothing, and the test goes
+  // green over a body it never read.
+  assert.ok(
+    planBody.includes('GATE_REASONS.'),
+    'the scan found gatePlan and it uses the constants',
+  );
+
+  // Every quoting form, not just the single quotes prettier happens to produce today: a template
+  // literal (`stop: ${n} lines`) would evade a quote-only scan and reach gateOutcome unrecognised.
+  for (const m of planBody.matchAll(/reason:\s*(['"`])((?:(?!\1).)*)\1/g))
+    assert.fail(`gatePlan returns the literal ${JSON.stringify(m[2])} — use GATE_REASONS`);
+
+  // And the stand-downs really do map away from `ran`, which is documented as "did its work".
+  for (const r of [GATE_REASONS.stopShort, GATE_REASONS.trivial, GATE_REASONS.debounced])
+    assert.strictEqual(gateOutcome({ run: false, reason: r }), 'debounced', r);
+  // A transcript that is absent, unreadable, or not a file at all is the same outage.
+  for (const r of [GATE_REASONS.noTranscript, GATE_REASONS.badTranscript, GATE_REASONS.notAFile])
+    assert.strictEqual(gateOutcome({ run: false, reason: r }), 'noop-missing-dep', r);
+  assert.ok(seen.size >= 6, 'the constant table still covers every branch');
 });

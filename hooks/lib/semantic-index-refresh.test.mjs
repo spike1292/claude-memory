@@ -5,7 +5,15 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSlug, runtimeInstalled, plan } from './semantic-index-refresh.mjs';
+import { fileURLToPath } from 'node:url';
+import {
+  resolveSlug,
+  runtimeInstalled,
+  plan,
+  outcomeOf,
+  REASONS,
+  workerEnv,
+} from './semantic-index-refresh.mjs';
 import { legacyKey } from './paths.mjs';
 
 const vaultWith = (/** @type {readonly string[]} */ dirs) => {
@@ -49,4 +57,46 @@ test('runtimeInstalled DEREFERENCES a symlinked node_modules', () => {
 
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-bare-'));
   assert.strictEqual(runtimeInstalled(bare), false);
+});
+
+test('outcomeOf separates a missing dependency from a quiet decision', () => {
+  // The whole point of the outcome field. An install whose embedding runtime never finished is
+  // permanently doing nothing, and it exits 0 and prints the same nothing as a project that simply
+  // has no vault memory yet.
+  // Through the CONSTANTS plan() itself returns. A test holding its own copy of the string cannot
+  // see plan() and outcomeOf() stop agreeing — the drift would just quietly report `ran`.
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noRuntime }), 'noop-missing-dep');
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noScript }), 'noop-missing-dep');
+  assert.strictEqual(outcomeOf({ run: false, reason: REASONS.noVault }), 'ran');
+  // And end to end: an empty vault root reaches the noVault branch through plan(), not a literal.
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sir-empty-'));
+  assert.strictEqual(outcomeOf(plan(process.cwd(), { vaultRoot: empty })), 'ran');
+  const ran = /** @type {const} */ ({
+    run: true,
+    slug: 's',
+    script: '/x',
+    args: /** @type {string[]} */ ([]),
+    logFile: '/l',
+  });
+  assert.strictEqual(outcomeOf({ ...ran, spawned: true }), 'spawned');
+  // A fork that failed is not a re-index that happened. Nothing else would ever contradict it:
+  // with no child, no worker line is written either.
+  assert.strictEqual(outcomeOf({ ...ran, spawned: false }), 'error');
+});
+
+test('the indexer worker line is scoped by a marker, not just by the session id', () => {
+  const env = workerEnv('s1');
+  assert.strictEqual(env.MEMORY_HOOK_SESSION, 's1');
+  // Without the marker, the re-index the DISTILLER runs at the end of every distillation inherits
+  // the session id and is logged as this hook's worker — a SessionEnd re-index filed under
+  // SessionStart. Observed end to end on 2026-08-21 before this was added.
+  assert.strictEqual(env.MEMORY_INDEX_HOOK, '1');
+
+  // And the indexer reads the same spelling. A rename on either side stops the worker line being
+  // written at all, silently — the exact failure mode this log exists to make impossible.
+  const indexer = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../scripts/memory-semantic.mjs'),
+    'utf8',
+  );
+  assert.match(indexer, /process\.env\.MEMORY_INDEX_HOOK/);
 });

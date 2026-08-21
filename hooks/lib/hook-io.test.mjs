@@ -19,6 +19,8 @@ import {
   takeLock,
   writeLock,
   releaseLock,
+  appendJsonl,
+  logHook,
 } from './hook-io.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
@@ -224,4 +226,152 @@ test('detach records an async spawn failure in the log', async () => {
     await new Promise((r) => setTimeout(r, 20));
   }
   assert.match(fs.readFileSync(f, 'utf8'), /spawn failed: .*ENOENT/);
+});
+
+// ---------------------------------------------------------------- structured logs
+//
+// The one thing every assertion below is really about: this appender sits on the per-prompt recall
+// path and on every SessionStart hook, so "it cannot throw" and "it cannot be wrong about the day"
+// are correctness properties, not politeness.
+
+/** Run `fn` with $CLAUDE_MEMORY_HOME pointed at a scratch dir, and hand back its logs/ path. */
+const withState = (/** @type {(logs: string) => void} */ fn) => {
+  const state = tmp();
+  const prev = process.env.CLAUDE_MEMORY_HOME;
+  process.env.CLAUDE_MEMORY_HOME = state;
+  try {
+    fn(path.join(state, 'logs'));
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_MEMORY_HOME;
+    else process.env.CLAUDE_MEMORY_HOME = prev;
+  }
+};
+
+/** @param {string} file @returns {Record<string, unknown>[]} */
+const readJsonl = (file) =>
+  fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+
+test('appendJsonl stamps t and slug FIRST, then the record verbatim', () => {
+  withState((logs) => {
+    appendJsonl('recall', process.cwd(), { abstained: true, reason: 'nope', ms: 12.5 });
+    const day = new Date().toISOString().slice(0, 10);
+    const file = path.join(logs, `recall-${day}.jsonl`);
+    const [rec] = readJsonl(file);
+    // Field ORDER is the contract, not just the field set: recall's records have been written as
+    // t, slug, <entry…>, ms since the log began, and a reader diffing two days of them must not see
+    // the shape change under it.
+    assert.deepStrictEqual(Object.keys(rec), ['t', 'slug', 'abstained', 'reason', 'ms']);
+    assert.match(String(rec.t), /^\d{4}-\d{2}-\d{2}T/);
+    assert.strictEqual(rec.reason, 'nope');
+  });
+});
+
+test('appendJsonl dates the file by the same clock it stamps the line with', () => {
+  withState((logs) => {
+    appendJsonl('hooks', process.cwd(), { hook: 'x' });
+    const [file] = fs.readdirSync(logs);
+    const [rec] = readJsonl(path.join(logs, file));
+    // A line landing in yesterday's file is how a window silently loses a day. Same ISO string for
+    // both, so they cannot disagree even across a midnight boundary mid-call.
+    assert.strictEqual(file, `hooks-${String(rec.t).slice(0, 10)}.jsonl`);
+  });
+});
+
+test('appendJsonl appends rather than replaces, and keeps families apart', () => {
+  withState((logs) => {
+    appendJsonl('hooks', process.cwd(), { hook: 'a' });
+    appendJsonl('hooks', process.cwd(), { hook: 'b' });
+    appendJsonl('recall', process.cwd(), { abstained: false });
+    const day = new Date().toISOString().slice(0, 10);
+    assert.strictEqual(readJsonl(path.join(logs, `hooks-${day}.jsonl`)).length, 2);
+    assert.strictEqual(readJsonl(path.join(logs, `recall-${day}.jsonl`)).length, 1);
+  });
+});
+
+test('appendJsonl swallows an unwritable log directory', () => {
+  const state = tmp();
+  // A FILE where the state dir must be: stateDir()'s mkdirSync throws, which is the closest thing
+  // to a read-only or full logs/ that a test can create without root. The hook must not notice.
+  fs.writeFileSync(path.join(state, 'logs'), 'not a directory');
+  const prev = process.env.CLAUDE_MEMORY_HOME;
+  process.env.CLAUDE_MEMORY_HOME = state;
+  try {
+    assert.doesNotThrow(() => appendJsonl('hooks', process.cwd(), { hook: 'x' }));
+    assert.doesNotThrow(() => logHook({ hook: 'x', outcome: 'ran' }));
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_MEMORY_HOME;
+    else process.env.CLAUDE_MEMORY_HOME = prev;
+  }
+});
+
+test('logHook omits reason and session rather than writing them empty', () => {
+  withState((logs) => {
+    logHook({ hook: 'validate-note', event: 'PostToolUse', cwd: process.cwd(), outcome: 'ran' });
+    logHook({
+      hook: 'distill-session',
+      event: 'SessionEnd',
+      cwd: process.cwd(),
+      session: 's1',
+      outcome: 'spawned',
+      reason: '60 lines',
+    });
+    const day = new Date().toISOString().slice(0, 10);
+    const [bare, full] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+    // An absent key means NOT RECORDED. A null or an empty string would read as recorded-as-empty,
+    // and the two must stay tellable apart as fields get added to these lines.
+    assert.ok(!('reason' in bare) && !('session' in bare));
+    assert.strictEqual(full.reason, '60 lines');
+    assert.strictEqual(full.session, 's1');
+    assert.strictEqual(typeof bare.ms, 'number');
+    assert.ok(/** @type {number} */ (bare.ms) > 0, 'ms is measured from process start, never zero');
+  });
+});
+
+test('logHook caps a runaway reason instead of writing an unbounded line', () => {
+  withState((logs) => {
+    logHook({ hook: 'x', outcome: 'error', reason: 'e'.repeat(5000) });
+    const day = new Date().toISOString().slice(0, 10);
+    const [rec] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+    // The reason is usually an exception message, which can carry a whole stack or a file dump.
+    assert.strictEqual(String(rec.reason).length, 200);
+  });
+});
+
+test('a hook line fired inside a background claude run is flagged as one', () => {
+  withState((logs) => {
+    const prev = process.env.CBM_GRAPHGEN_CHILD;
+    process.env.CBM_GRAPHGEN_CHILD = '1';
+    try {
+      logHook({ hook: 'insights-surface', cwd: process.cwd(), outcome: 'ran' });
+    } finally {
+      if (prev === undefined) delete process.env.CBM_GRAPHGEN_CHILD;
+      else process.env.CBM_GRAPHGEN_CHILD = prev;
+    }
+    logHook({ hook: 'insights-surface', cwd: process.cwd(), outcome: 'ran' });
+    const day = new Date().toISOString().slice(0, 10);
+    const [inChild, inSession] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+    // A regeneration fires SessionStart itself, so four hooks run again with no user behind them.
+    // Unflagged, they are counted as sessions and skew every percentile in the report.
+    assert.strictEqual(inChild.child, true);
+    assert.ok(!('child' in inSession), 'and a real session carries no flag at all');
+  });
+});
+
+test('detach returns null when the command cannot start, and says so in the log file', async () => {
+  const state = tmp();
+  const logFile = path.join(state, 'graphgen.log');
+  const missing = path.join(state, 'definitely-not-here');
+
+  // A null pid is the ONLY signal a caller gets, because spawn reports a missing binary
+  // ASYNCHRONOUSLY — and both gates now decide their outcome on it, while graph-staleness-check
+  // goes further and releases its lock rather than muting the repo for 24h.
+  assert.strictEqual(detach(missing, [], { logFile }), null, 'a missing binary is a null pid');
+
+  for (let i = 0; i < 100 && !/spawn failed/.test(fs.readFileSync(logFile, 'utf8')); i++)
+    await new Promise((r) => setTimeout(r, 20));
+  assert.match(fs.readFileSync(logFile, 'utf8'), /spawn failed/, 'and the log file records why');
 });

@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../hooks/lib/paths.mjs';
+import { logHook } from '../hooks/lib/hook-io.mjs';
 import { CARD } from './lib/lexical.mjs';
 import {
   MODEL_KEY,
@@ -345,6 +346,33 @@ if (flag('--check-embedding')) {
 
 if (flag('--index')) {
   const indexDb = /** @type {DatabaseSync} */ (db);
+  // The hook log's WORKER line, and only when the SessionStart gate started THIS run.
+  // MEMORY_INDEX_HOOK is set by that gate alone: a manual `/memory:prune` is not a hook, and the
+  // re-index the distiller runs at the end of every distillation is a different hook's work that
+  // would otherwise inherit the session id and be filed under this one. The gate exits in
+  // milliseconds, so without this the re-index — the part that takes real time — is timed by
+  // nothing. `process.on('exit')` rather than a call at the end, so a throw is recorded too.
+  //
+  // Registered ABOVE the lock, because the lock has its own `process.exit(0)`: below it, a run
+  // that stood down for a lock held elsewhere wrote no worker line at all, and a gate line saying
+  // `spawned` with no worker after it is exactly what the report teaches a reader to read as a
+  // run killed at its timeout.
+  /** @type {import('../hooks/lib/hook-io.mjs').HookOutcome} */
+  let workerOutcome = 'ran';
+  /** @type {string | undefined} */
+  let workerReason;
+  if (process.env.MEMORY_INDEX_HOOK)
+    process.on('exit', (code) =>
+      logHook({
+        hook: 'semantic-index-refresh',
+        event: 'worker',
+        cwd: process.cwd(),
+        session: process.env.MEMORY_HOOK_SESSION,
+        outcome: code === 0 ? workerOutcome : 'error',
+        reason: code === 0 ? workerReason : `exit ${code}`,
+      }),
+    );
+
   // Cross-process write lock, PER MODEL — same scope as the DB it guards. A long background
   // bge-m3 build must not stall the default profile's incremental refresh. (The cross-model
   // corruption this lock was born from — a table holding 384-dim and 1024-dim vectors at once —
@@ -358,6 +386,10 @@ if (flag('--index')) {
     const age = Date.now() - (fs.statSync(lockDir).mtimeMs || 0);
     if (age < 30 * 60 * 1000) {
       console.log('another --index is running (lock held); skipping');
+      // A stand-down, not a re-index. Exiting 0 with the default outcome would report it as work
+      // that happened.
+      workerOutcome = 'debounced';
+      workerReason = 'another --index holds the lock';
       process.exit(0);
     }
     fs.rmSync(lockDir, { recursive: true, force: true });

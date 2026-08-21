@@ -647,7 +647,7 @@ export function distill(transcript, cwd) {
 /**
  * @typedef {{ run: false, reason: string, lines?: number }} SkipGate
  * @typedef {{ run: true, transcript: string, marker: string, now: number, lines: number }} RunGate
- * @typedef {SkipGate | RunGate} GatePlan
+ * @typedef {SkipGate | (RunGate & { spawned?: boolean })} GatePlan
  */
 
 /** Below this a session has no lesson in it; distilling would be noise with an LLM call attached. */
@@ -656,6 +656,20 @@ export const MIN_MESSAGES = 15;
 export const STOP_MIN_MESSAGES = 400;
 /** …and at most this often, so a hard-killed long session loses at most two hours of lessons. */
 export const STOP_DEBOUNCE_SECONDS = 7200;
+
+// Constants because gateOutcome() decides on them. Two literals — one in the plan, one in the
+// mapper — drift apart silently: reword one and a recursion guard starts reporting as a hook that
+// ran, with every test still green.
+export const GATE_REASONS = {
+  child: 'child run',
+  stopActive: 'stop_hook_active',
+  debounced: 'stop: debounced',
+  stopShort: 'stop: session too short',
+  trivial: 'trivial session',
+  notAFile: 'transcript not a file',
+  noTranscript: 'no transcript path',
+  badTranscript: 'transcript missing',
+};
 
 /**
  * Decide whether this event should distil, without spawning or writing.
@@ -672,28 +686,28 @@ export const STOP_DEBOUNCE_SECONDS = 7200;
 export function gatePlan(p, { now = nowSeconds() } = {}) {
   // The headless extractor runs as a `claude` session, whose Stop fires this hook again. Without
   // this the distiller distils its own distillation, recursively.
-  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: 'child run' };
+  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: GATE_REASONS.child };
   // Claude Code's own Stop-loop guard. Absent on SessionEnd, harmless there.
-  if (p?.stop_hook_active === true) return { run: false, reason: 'stop_hook_active' };
+  if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
 
   const transcript = p?.transcript_path;
-  if (!transcript) return { run: false, reason: 'no transcript path' };
+  if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
-    if (!fs.statSync(transcript).isFile()) return { run: false, reason: 'transcript not a file' };
+    if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };
   } catch {
-    return { run: false, reason: 'transcript missing' };
+    return { run: false, reason: GATE_REASONS.badTranscript };
   }
 
   const lines = countLines(transcript);
-  if (lines < MIN_MESSAGES) return { run: false, reason: 'trivial session', lines };
+  if (lines < MIN_MESSAGES) return { run: false, reason: GATE_REASONS.trivial, lines };
 
   const sid = p?.session_id || 'nosession';
   const marker = markerPath(`distill-${sid}`);
 
   if (p?.hook_event_name !== 'SessionEnd') {
-    if (lines < STOP_MIN_MESSAGES) return { run: false, reason: 'stop: session too short', lines };
+    if (lines < STOP_MIN_MESSAGES) return { run: false, reason: GATE_REASONS.stopShort, lines };
     if (withinDebounce(readMarker(marker), STOP_DEBOUNCE_SECONDS, now))
-      return { run: false, reason: 'stop: debounced', lines };
+      return { run: false, reason: GATE_REASONS.debounced, lines };
   }
 
   return { run: true, transcript, marker, now, lines };
@@ -713,10 +727,60 @@ export function gate(p) {
   const plan = gatePlan(p);
   if (!plan.run) return plan;
   writeMarker(plan.marker, plan.now);
-  detach(
+  const pid = detach(
     process.execPath,
     [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, p?.cwd || process.cwd()],
-    { cwd: p?.cwd, logFile: path.join(paths.stateDir('logs'), 'distill.log') },
+    {
+      cwd: p?.cwd,
+      logFile: path.join(paths.stateDir('logs'), 'distill.log'),
+      env: { MEMORY_HOOK_SESSION: p?.session_id },
+    },
   );
-  return plan;
+  // The spawn is the only part of this gate that can fail, and it fails ASYNCHRONOUSLY: a null pid
+  // is the one signal there is. Ignoring it meant logging `spawned` for a run that never started —
+  // a healthy-looking column with nothing anywhere to contradict it, which is the exact failure the
+  // outcome field exists to end.
+  return { ...plan, spawned: pid != null };
+}
+
+/**
+ * The gate's outcome, for the hook log.
+ *
+ * `stop_hook_active` is Claude Code's own recursion guard and `child run` is this hook's, so both
+ * are the same story: the hook fired inside work it had itself started.
+ *
+ * Every value in GATE_REASONS is mapped, and a test proves gatePlan can emit nothing else — so the
+ * trailing `ran` is unreachable for a skip today. It is the default for a reason ADDED without a
+ * mapping here, which is precisely the drift that shipped once already; treat landing on it as the
+ * bug, not as the intended behaviour of a new branch.
+ *
+ * @param {GatePlan} plan
+ * @returns {import('./hook-io.mjs').HookOutcome}
+ */
+export function gateOutcome(plan) {
+  // `spawned` is set by the acting wrapper from detach()'s pid. Absent means nobody acted, and the
+  // loud reading is the right default: a false `error` is a question, a false `spawned` is the
+  // silent lie this log exists to end.
+  if (plan.run) return plan.spawned ? 'spawned' : 'error';
+  if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
+    return 'child-guard';
+  // Every stand-down on a line count or a timer is `debounced`. They fire on nearly every assistant
+  // turn, and as `ran` — "did its work" — they made the busiest hook in the log look like the most
+  // productive one while burying the SessionEnd run that does the work.
+  if (
+    plan.reason === GATE_REASONS.debounced ||
+    plan.reason === GATE_REASONS.stopShort ||
+    plan.reason === GATE_REASONS.trivial
+  )
+    return 'debounced';
+  // A transcript that is absent or unreadable is this hook's missing dependency: Claude Code hands
+  // it the path, and if that stops arriving the distiller is permanently dead while exiting 0 and
+  // printing nothing. Reporting it as `ran` would hide exactly the outage worth seeing.
+  if (
+    plan.reason === GATE_REASONS.noTranscript ||
+    plan.reason === GATE_REASONS.badTranscript ||
+    plan.reason === GATE_REASONS.notAFile
+  )
+    return 'noop-missing-dep';
+  return 'ran';
 }

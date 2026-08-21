@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   recordedCommit,
   isFresh,
@@ -15,6 +16,7 @@ import {
   DEBOUNCE_SECONDS,
   BUSY_MESSAGE,
   STALE_MESSAGE,
+  REASONS,
 } from './graph-staleness-check.mjs';
 import { readMarker } from './hook-io.mjs';
 
@@ -129,7 +131,10 @@ test('check takes the lock, hands it to the child, and the next session stands d
     // failing one leaks the stand-in `claude` for its full sleep.
     const first = check(cwd, { vaultRoot });
     try {
-      assert.ok(first.includes(STALE_MESSAGE), 'the session that wins says it is regenerating');
+      assert.ok(
+        first.line.includes(STALE_MESSAGE),
+        'the session that wins says it is regenerating',
+      );
       assert.ok(readMarker(marker) > 0, 'and the 24h per-repo debounce is now set');
 
       const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
@@ -140,11 +145,18 @@ test('check takes the lock, hands it to the child, and the next session stands d
       // debounce has nothing to say here — only the machine-wide lock stops it.
       const other = staleRepo();
       staleReport(other, vaultRoot);
-      assert.ok(check(other, { vaultRoot }).includes(BUSY_MESSAGE), 'no second re-index starts');
+      assert.ok(
+        check(other, { vaultRoot }).line.includes(BUSY_MESSAGE),
+        'no second re-index starts',
+      );
     } finally {
       const [pid] = fs.readFileSync(lock, 'utf8').trim().split(/\s+/).map(Number);
       try {
-        process.kill(pid, 'SIGKILL');
+        // The GROUP, not the pid. `detach()` spawns with setsid, so the stand-in `claude` is its
+        // own group leader; a negative pid reaches it and anything it started. Killing the pid
+        // alone was enough while nothing else ran under it, and this is the form that stays right
+        // if it ever does.
+        process.kill(-pid, 'SIGKILL');
       } catch {
         /* already gone, or never spawned */
       }
@@ -155,4 +167,45 @@ test('check takes the lock, hands it to the child, and the next session stands d
     // which exits immediately and lets init reap, sees it disappear. That branch is covered
     // directly in hook-io.test.mjs ('a lock whose owner died is reclaimed').
   });
+});
+
+test('check names the reason it stayed silent, so a guard is not read as a miss', () => {
+  const prev = process.env.CBM_GRAPHGEN_CHILD;
+  process.env.CBM_GRAPHGEN_CHILD = '1';
+  try {
+    const r = check(process.cwd());
+    // The background regeneration fires SessionStart itself. Without an outcome, its own suppressed
+    // run and a session where the report was simply fresh are the same empty line.
+    assert.strictEqual(r.line, '');
+    assert.strictEqual(r.outcome, 'child-guard');
+    assert.strictEqual(r.reason, REASONS.child, 'the constant plan() returns, not a copy of it');
+  } finally {
+    if (prev === undefined) delete process.env.CBM_GRAPHGEN_CHILD;
+    else process.env.CBM_GRAPHGEN_CHILD = prev;
+  }
+});
+
+test('an install with no graph layer reports a dependency, not a healthy hook', () => {
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'graphvault-'));
+  const r = check(process.cwd(), { vaultRoot });
+  // The L4 layer is optional and most installs never set it up. As `ran` this hook would report
+  // itself healthy forever while doing nothing at all — for most users, on every session.
+  assert.strictEqual(r.outcome, 'noop-missing-dep');
+  assert.strictEqual(r.reason, REASONS.noReport);
+});
+
+test('every reason plan() can return is one outcomeOf actually recognises', () => {
+  // The same round-trip guard distill-session has, for the same reason: a literal in the plan and a
+  // constant in the mapper drift apart in silence, and a test written against either half alone
+  // stays green through it.
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'graph-staleness-check.mjs'),
+    'utf8',
+  );
+  const from = src.indexOf('export function plan(');
+  const to = src.indexOf('export function check(');
+  const body = from === -1 || to === -1 ? '' : src.slice(from, to);
+  assert.ok(body.includes('REASONS.'), 'the scan found plan() and it uses the constants');
+  for (const m of body.matchAll(/reason:\s*(['"`])((?:(?!\1).)*)\1/g))
+    assert.fail(`plan() returns the literal ${JSON.stringify(m[2])} — use REASONS`);
 });

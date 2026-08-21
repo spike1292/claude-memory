@@ -44,7 +44,25 @@ import {
  *   logFile: string,
  * }} RegenPlan
  * @typedef {SilentPlan | NudgePlan | RegenPlan} GraphPlan
+ * @typedef {{
+ *   line: string,
+ *   outcome: import('./hook-io.mjs').HookOutcome,
+ *   reason?: string,
+ * }} CheckResult
  */
+
+// Constants because outcomeOf() decides on them. A reworded literal here and a stale literal there
+// silently turns a missing `claude` back into an indistinguishable "ran".
+export const REASONS = {
+  child: 'child run',
+  debounced: 'debounced',
+  noClaude: 'no claude CLI',
+  noReport: 'no report yet',
+  noRepo: 'not a git work tree — nothing to compare a report against',
+  noCommit: 'no recorded commit',
+  noHead: 'no HEAD',
+  fresh: 'fresh',
+};
 
 export const DEBOUNCE_SECONDS = 86_400; // 24h — caps the cost of an otherwise heavy unattended run
 
@@ -137,14 +155,14 @@ export function reportFor(cwd, vaultRoot = vault()) {
  * @returns {GraphPlan}
  */
 export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
-  if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: 'child run' };
+  if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: REASONS.child };
 
   const { slug, report } = reportFor(cwd, vaultRoot);
   // Never auto-generate the FIRST report: that is a minutes-long unattended run the user never
   // asked for. Absence is a choice, not a gap.
-  if (!report) return { action: 'silent', reason: 'no report yet' };
+  if (!report) return { action: 'silent', reason: REASONS.noReport };
   if (git(cwd, ['rev-parse', '--is-inside-work-tree']) !== 'true')
-    return { action: 'silent', reason: 'not a git work tree' };
+    return { action: 'silent', reason: REASONS.noRepo };
 
   let recorded = null;
   try {
@@ -152,18 +170,18 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
   } catch {
     /* unreadable report -> cannot judge -> stay silent */
   }
-  if (!recorded) return { action: 'silent', reason: 'no recorded commit' };
+  if (!recorded) return { action: 'silent', reason: REASONS.noCommit };
 
   const head = git(cwd, ['rev-parse', 'HEAD']);
-  if (!head) return { action: 'silent', reason: 'no HEAD' };
-  if (isFresh(head, recorded)) return { action: 'silent', reason: 'fresh' };
+  if (!head) return { action: 'silent', reason: REASONS.noHead };
+  if (isFresh(head, recorded)) return { action: 'silent', reason: REASONS.fresh };
 
   const marker = markerPath(`graphgen-${slug}`);
   if (withinDebounce(readMarker(marker), DEBOUNCE_SECONDS, now))
-    return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'debounced', slug };
+    return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.debounced, slug };
 
   const claude = findClaude();
-  if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: 'no claude CLI', slug };
+  if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.noClaude, slug };
 
   return {
     action: 'regen',
@@ -193,16 +211,34 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
  * point this at a scratch vault instead of the real one — a check() that could only read the live
  * vault could not be tested at all, and this is the half with the lock sequence in it.
  *
+ * This is the ONE detached hook with no worker line, and the reason is the lock. `lockHolder()`
+ * frees a lock whose pid is dead, so the pid written into `graphgen.lock` has to belong to a
+ * process that lives exactly as long as the work does — and nothing may sit between this hook and
+ * the `claude` it starts. (A supervisor process was tried and deleted for exactly this: killed or
+ * OOM'd, it would orphan the regeneration while freeing the lock under it, and the next session
+ * would start a SECOND concurrent re-index.) The work is also the `claude` binary, which cannot log
+ * for itself the way our own two workers do. So this hook is observed at its gate only, and
+ * `--hooks` names the gap.
+ *
+ *
  * @param {string} cwd
  * @param {PlanOptions} [opts]
- * @returns {string}
+ * @returns {CheckResult}
  */
 export function check(cwd, opts) {
   const p = plan(cwd, opts);
-  if (p.action === 'silent') return '';
-  if (p.action === 'nudge') return systemMessage(p.message);
+  if (p.action === 'silent') return { line: '', outcome: outcomeOf(p), reason: p.reason };
+  if (p.action === 'nudge')
+    return { line: systemMessage(p.message), outcome: outcomeOf(p), reason: p.reason };
   if (!takeLock(p.lock, process.pid, p.now, LOCK_MAX_SECONDS, p.now))
-    return systemMessage(BUSY_MESSAGE);
+    // `debounced`, not `ran`: this session did nothing. Another one is regenerating, and on a
+    // machine where every session loses that race `ran` would report a permanently idle hook as a
+    // permanently healthy one.
+    return {
+      line: systemMessage(BUSY_MESSAGE),
+      outcome: 'debounced',
+      reason: 'lock held elsewhere',
+    };
 
   const pid = detach(
     p.claude,
@@ -214,7 +250,7 @@ export function check(cwd, opts) {
   // and writing it first meant a failed spawn muted this repo for 24h as if a regen had happened.
   if (!pid) {
     releaseLock(p.lock);
-    return systemMessage(NUDGE_MESSAGE);
+    return { line: systemMessage(NUDGE_MESSAGE), outcome: 'error', reason: 'spawn failed' };
   }
   writeMarker(p.marker, p.now);
   // The handover is the one write whose failure is WORSE than not locking at all: the file would
@@ -229,5 +265,25 @@ export function check(cwd, opts) {
       `LOCK HANDOVER FAILED (child ${pid}) — another session may start a second re-index`,
       new Date().toISOString(),
     );
-  return systemMessage(p.message);
+  return { line: systemMessage(p.message), outcome: 'spawned', reason: p.slug };
+}
+
+/**
+ * @param {SilentPlan | NudgePlan} p
+ * @returns {import('./hook-io.mjs').HookOutcome}
+ */
+function outcomeOf(p) {
+  if (p.reason === REASONS.child) return 'child-guard';
+  if (p.reason === REASONS.debounced) return 'debounced';
+  // A missing `claude` CLI is the one dependency this hook has, and losing it is invisible from
+  // outside: the nudge it prints instead is the same nudge a debounced run prints.
+  if (p.reason === REASONS.noClaude) return 'noop-missing-dep';
+  // The L4 graph layer is optional and most installs never set it up, so on those machines this
+  // hook does nothing forever. As `ran` — "did its work" — that is a permanently dead hook
+  // reporting as a permanently healthy one, which is the state the outcome column exists to end.
+  // `noop-missing-dep` with the reason beside it says which absent thing it is waiting on.
+  if (p.reason === REASONS.noReport || p.reason === REASONS.noRepo) return 'noop-missing-dep';
+  // `fresh` really is work done — the report was checked against HEAD and matched. So are the two
+  // degenerate reads below it, which checked and could not judge.
+  return 'ran';
 }

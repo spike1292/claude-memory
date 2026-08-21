@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-// CLI entry for the /memory:doctor --perf and --stats reports. Owns argv, the database handles and
-// stdout; the logic is in scripts/lib/doctor-perf.mjs and scripts/lib/recall-stats.mjs.
+// CLI entry for the /memory:doctor --perf, --stats and --hooks reports. Owns argv, the database
+// handles and stdout; the logic is in scripts/lib/doctor-perf.mjs, scripts/lib/recall-stats.mjs and
+// scripts/lib/hook-stats.mjs.
 //
 // `--stats` is the read side of the recall log: what recall decided, how often it abstained and
-// which notes it never surfaced. It is a separate flag rather than more of `--perf` because it
-// answers a different question — "is this helping" rather than "why is this slow" — and because
-// the hook and cost sections coming after it (#46, #47) belong beside it, not beside the RSS
-// table. Both are equally read-only.
-import { memoryHome, projectKey } from '../hooks/lib/paths.mjs';
+// which notes it never surfaced. `--hooks` is the read side of the hook log: what every hook did,
+// how long it took, and how close it ran to the timeout the manifest declares for it. Each is a
+// separate flag rather than more of `--perf` because each answers a different question — "is this
+// helping" and "is this alive" rather than "why is this slow". All three are equally read-only.
+import { hooksDir, memoryHome, projectKey } from '../hooks/lib/paths.mjs';
 import { activeModel } from './lib/model-default.mjs';
 import { MODELS } from './lib/models.mjs';
 import { report } from './lib/doctor-perf.mjs';
 import { report as recallReport } from './lib/recall-stats.mjs';
+import { report as hookReport } from './lib/hook-stats.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 
@@ -50,12 +52,18 @@ const indexNotes = (file) => {
   }
 };
 
-// argv is positional-then-flags: `doctor-perf.mjs [cwd] [--stats[=days]]`. Anything else is
-// ignored rather than an error — this is invoked from a report that must always exit 0.
+// argv is positional-then-flags: `doctor-perf.mjs [cwd] [--stats[=days]] [--hooks[=days]]`.
+// Anything else is ignored rather than an error — this is invoked from a report that must always
+// exit 0.
 const args = process.argv.slice(2);
 const statsArg = args.find((a) => a === '--stats' || a.startsWith('--stats='));
+const hooksArg = args.find((a) => a === '--hooks' || a.startsWith('--hooks='));
 const cwd = args.find((a) => !a.startsWith('--')) || process.cwd();
-const days = Number(statsArg?.split('=')[1]);
+/** @param {string} [arg] @returns {number | undefined} */
+const windowOf = (arg) => {
+  const n = Number(arg?.split('=')[1]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
 
 // `null` rather than a placeholder when the key does not resolve: `--stats` FILTERS on this, and a
 // slug no line can match would empty the whole report behind a message that reads like a bug. The
@@ -71,24 +79,43 @@ try {
 const state = memoryHome();
 const model = activeModel();
 
-process.stdout.write(
-  statsArg
-    ? recallReport({
-        logDir: path.join(state, 'logs'),
-        days: Number.isFinite(days) && days > 0 ? days : undefined,
-        indexNotes: slug
-          ? indexNotes(path.join(state, 'db', `semantic-${slug}-${model}.db`))
-          : null,
-        // The logs are machine-wide and the index is not, so the report is scoped to THIS project
-        // — otherwise one project's never-injected notes would be measured against every project's
-        // retrievals. doctor.sh runs this from $PWD for exactly that reason.
-        slug,
-      })
-    : await report({
-        state,
-        activeModel: model,
-        activeSlug: slug ?? '(unresolved)',
-        modelKeys: Object.keys(MODELS),
-        counts,
-      }),
-);
+// ADDITIVE, not a ternary. `commands/doctor.md` tells the model the flags may be combined, and
+// through doctor.sh they are — it invokes this script once per flag. Passed together to the entry
+// itself, a ternary chain silently printed one section and dropped the rest, so the doc was true
+// only by accident of which wrapper was used.
+if (hooksArg)
+  process.stdout.write(
+    hookReport({
+      logDir: path.join(state, 'logs'),
+      // The manifest is the ONLY source of the timeouts. Read at run time and never copied into
+      // a log line or into the reader, because a duplicated timeout drifts in silence.
+      manifest: path.join(hooksDir, 'hooks.json'),
+      days: windowOf(hooksArg),
+      slug,
+    }),
+  );
+
+if (statsArg)
+  process.stdout.write(
+    recallReport({
+      logDir: path.join(state, 'logs'),
+      days: windowOf(statsArg),
+      indexNotes: slug ? indexNotes(path.join(state, 'db', `semantic-${slug}-${model}.db`)) : null,
+      // The logs are machine-wide and the index is not, so the report is scoped to THIS project —
+      // otherwise one project's never-injected notes would be measured against every project's
+      // retrievals. doctor.sh runs this from $PWD for exactly that reason.
+      slug,
+    }),
+  );
+
+// The perf report is the DEFAULT, so it prints when no flag selected something else.
+if (!hooksArg && !statsArg)
+  process.stdout.write(
+    await report({
+      state,
+      activeModel: model,
+      activeSlug: slug ?? '(unresolved)',
+      modelKeys: Object.keys(MODELS),
+      counts,
+    }),
+  );
