@@ -158,3 +158,77 @@ test('normaliseRemote lowercases ASCII ONLY, like tr A-Z a-z', () => {
   assert.strictEqual(normaliseRemote('https://exämple.com/Ä/b'), 'exämple.com-Ä-b');
   assert.strictEqual(normaliseRemote('https://example.com/İ/b'), 'example.com-İ-b');
 });
+
+// logRetentionDays — the knob that decides what gets DELETED, so every failure direction is tested,
+// not just the happy one. It sits beside serveIdleMs/modelIdleMs in kind but not in guard: those
+// use `positiveMs`, which rejects 0, and 0 is a legitimate retention (keep today only).
+//
+// In a SUBPROCESS because `config()` memoises for the life of the process, so the config.json arm
+// cannot be reached twice in one. (`import('./paths.mjs?x=1')` busts that cache but `tsc` cannot
+// resolve a query string, and CI fails on any diagnostic.) The subprocess is also the honest test:
+// a hook is a fresh process, which is the only way this value is ever read.
+/** @param {Record<string, string>} env @returns {string} */
+const retentionIn = (env) =>
+  run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import(${JSON.stringify(MODULE)}).then((m) => console.log(m.logRetentionDays()))`,
+    ],
+    {
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+    },
+  ).trim();
+
+test('logRetentionDays: env wins, then config, then a sane default', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'retention-'));
+  const withHome = /** @param {Record<string, string>} e */ (e) => ({
+    CLAUDE_MEMORY_HOME: home,
+    ...e,
+  });
+  const clearEnv = { MEMORY_LOG_RETENTION_DAYS: '' };
+
+  fs.writeFileSync(path.join(home, 'config.json'), '{}');
+  assert.equal(retentionIn(withHome(clearEnv)), '30', 'default is 30 days');
+
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ logRetentionDays: 7 }));
+  assert.equal(retentionIn(withHome(clearEnv)), '7', 'config.json is read');
+  assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '3' })), '3', 'env beats config');
+
+  assert.equal(
+    retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '0' })),
+    '0',
+    '0 is a value, not a typo: keep today only',
+  );
+
+  // Anything that is not digits falls back to the default. `Number(' ')` is 0 and `Number('1e9')`
+  // is a billion, and both passed an `isInteger && >= 0` guard in the first draft of this function
+  // — the first deletes every log but today's, the second is the "widen to everything" direction.
+  fs.writeFileSync(path.join(home, 'config.json'), '{}');
+  // Digits, but not a number of days anything can make a date from. CLAMPED to a century, never
+  // rejected: falling back to 30 would delete a month of logs for someone asking to delete none,
+  // and returning it as-is made the cutoff throw and abandon the pass — which stopped it sweeping
+  // its own day-claim markers, so logs/ grew a dotfile a day.
+  for (const huge of ['999999999999', '99999999999999999999', '40000']) {
+    assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: huge })), '36500', huge);
+  }
+  assert.equal(
+    retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '  7  ' })),
+    '7',
+    'a value a human typed with spaces is that value',
+  );
+  // Leading zeros are a VALUE, not a length. A length-first clamp read this as ten characters and
+  // gave a century to someone asking for a week — retention silently doing nothing. Every huge
+  // value above passes with that branch restored, so this is the assertion that rules it out.
+  assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '0000000007' })), '7');
+
+  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
+    assert.equal(
+      retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: bad })),
+      '30',
+      `"${bad}" must fall back to the default`,
+    );
+  }
+});

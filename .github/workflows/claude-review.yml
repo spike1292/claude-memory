@@ -76,7 +76,9 @@ jobs:
                Hooks log what they did through `logHook()`, over `appendJsonl()` in
                `hooks/lib/hook-io.mjs` — the ONLY JSONL appender in the repo. Flag a
                second appender, a log write that can throw or block a hook, a size cap
-               added to what dated filenames already rotate, and any hook timeout
+               added to what dated filenames already rotate, a retention policy for
+               `logs/` that lives anywhere but `logRetentionDays()` + `pruneDatedLogs()`
+               or that needs a human to run a command, and any hook timeout
                written down outside `hooks/hooks.json` (the reader parses the manifest
                at run time so the two cannot drift). `memory-recall` deliberately logs
                NOTHING when it is disarmed — an inert feature must not cost every

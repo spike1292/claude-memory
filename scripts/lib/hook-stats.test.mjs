@@ -477,3 +477,105 @@ test('a billed-but-failed run is counted, and named, in the cost section', () =>
   );
   assert.doesNotMatch(clean, /failed after being billed/);
 });
+
+test('the hooks report says when retention deleted the history it is reporting on', () => {
+  const s = summarize([
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, pruned: 12 }),
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40 }),
+  ]);
+  assert.equal(
+    s.pruned,
+    12,
+    'summed over lines that carry the key, never a zero for those without',
+  );
+  assert.match(render(s, new Map()), /retention deleted 12 dated log file\(s\)/);
+  // Omitted, not "0 files": a window in which retention did nothing must not print a line about it.
+  assert.doesNotMatch(
+    render(summarize([line({ hook: 'x', ms: 1 })]), new Map()),
+    /retention deleted/,
+  );
+});
+
+test('the pruned count is machine-wide, where every other figure is scoped to one project', () => {
+  const lines = [
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, slug: 'proj-a', pruned: 300 }),
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, slug: 'proj-b' }),
+  ];
+  // One pass deletes every project's files, and the line recording it carries whichever slug
+  // happened to trigger it. Scoped, project B — which lost exactly as much — was told 0.
+  assert.equal(summarize(lines, 'proj-b').pruned, 300, 'B lost the same files and must be told');
+  assert.equal(summarize(lines, 'proj-a').pruned, 300);
+  assert.equal(summarize(lines, 'proj-a').invocations, 1, 'everything else stays scoped');
+});
+
+test('a pass recorded on a recall line still reaches the hooks report', () => {
+  // appendJsonl is family-agnostic: the day's FIRST append triggers the pass, and that is a recall
+  // line for any session crossing UTC midnight with recall armed. Nothing reads `pruned` from the
+  // recall family, so the count is passed in rather than looked up twice.
+  assert.equal(summarize([line({ hook: 'x', ms: 1 })], null, 0, 7).pruned, 7);
+  assert.match(
+    render(summarize([line({ hook: 'x', ms: 1 })], null, 0, 7), new Map()),
+    /deleted 7 dated/,
+  );
+});
+
+test('a project whose own lines were deleted is still told they were', () => {
+  // The no-invocations arm is exactly what retention produces for a project it pruned, and it used
+  // to answer "no hook has run for this project yet" while a pass had just deleted its history.
+  const out = render(
+    summarize([line({ hook: 'x', ms: 1, slug: 'other', pruned: 300 })], 'mine'),
+    new Map(),
+  );
+  assert.match(out, /not measured/);
+  assert.match(out, /retention deleted 300 dated log file\(s\)/);
+});
+
+test('the pruned sum is bounded by the window the report prints, not by a second file count', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-window-'));
+  const w = (/** @type {string} */ n, /** @type {object} */ o) =>
+    fs.writeFileSync(path.join(dir, n), JSON.stringify(o) + '\n');
+  // The recall family is sparser — it logs only when armed — so its newest N files reach back
+  // months further than the newest N hook files. A pass recorded in January is not "while this
+  // window was being logged" over last week's dates.
+  w('hooks-2026-08-20.jsonl', {
+    t: '2026-08-20T10:00:00Z',
+    hook: 'x',
+    event: 'e',
+    ms: 1,
+    outcome: 'ran',
+  });
+  w('hooks-2026-08-21.jsonl', {
+    t: '2026-08-21T10:00:00Z',
+    hook: 'x',
+    event: 'e',
+    ms: 1,
+    outcome: 'ran',
+  });
+  w('recall-2026-01-01.jsonl', { t: '2026-01-01T10:00:00Z', pruned: 500 });
+  // TWO in-window recall days, not one: with a single one, the oldest and the newest file of the
+  // window are the same file, and bounding on the WRONG end of the window passes just as well.
+  w('recall-2026-08-20.jsonl', { t: '2026-08-20T10:00:00Z', pruned: 3 });
+  w('recall-2026-08-21.jsonl', { t: '2026-08-21T10:00:00Z', pruned: 7 });
+
+  // days: 3, not 2. `logFiles()` slices per family by COUNT, so at 2 the January file falls out of
+  // the recall slice on its own and the date bound is never what excludes it — the assertion then
+  // passes with the bound deleted. Three lets all three recall files in, so only the bound can
+  // keep January out. (Found by mutation: removing the filter left this test green.)
+  const out = report({ logDir: dir, manifest: MANIFEST, days: 3 });
+  assert.match(out, /retention deleted 10 dated log file\(s\)/);
+  assert.doesNotMatch(out, /5(00|07|10) dated/);
+});
+
+test('with no hook window at all, there is nothing to attribute a pass to', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-nowindow-'));
+  // Only recall files: the bound has no dates to work from, and an empty-string bound would let
+  // every line back in and print a machine's whole history as "while this window was being
+  // logged" over a window that contains nothing.
+  fs.writeFileSync(
+    path.join(dir, 'recall-2026-01-01.jsonl'),
+    JSON.stringify({ t: '2026-01-01T10:00:00Z', pruned: 500 }) + '\n',
+  );
+  const out = report({ logDir: dir, manifest: MANIFEST, days: 2 });
+  assert.match(out, /no hook logs in/);
+  assert.doesNotMatch(out, /retention deleted/);
+});

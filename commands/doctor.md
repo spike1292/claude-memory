@@ -53,7 +53,8 @@ and a first query far slower than the second is just an index loading on demand.
 It never starts a server or re-indexes, so "not measured: no socket" is a state, not a fault.
 
 `--stats` appends the recall analytics report, read from the daily `recall-*.jsonl` logs (the last 7
-days recall ran; `--stats=30` widens the window) plus this project's index. The logs are
+days recall ran; `--stats=30` widens the window, up to whatever retention kept — `logRetentionDays`
+is 30 by default, so a wider request simply reads every file there is) plus this project's index. The logs are
 machine-wide and the index is not, so the report is scoped to the project you run it from and says
 how many decisions in the window belonged to other projects. It reports how often recall injected versus abstained,
 the abstention reasons, score and latency distributions per arm, the notes injected most, and the
@@ -69,7 +70,8 @@ prints is safe to paste into a public issue; that section is not. Show it to the
 are about to file an issue with it, say so and offer the rates without the note lists.
 
 `--hooks` appends the hook analytics report, read from the daily `hooks-*.jsonl` logs (the last 7
-days a hook ran; `--hooks=30` widens the window) plus `hooks.json` for the declared timeouts. It
+days a hook ran; `--hooks=30` widens the window, capped the same way by `logRetentionDays`) plus
+`hooks.json` for the declared timeouts. It
 reports invocation counts, p50/p95/max duration, the outcome breakdown, and how many invocations ran
 at or past half their timeout — **one row per hook AND event**, so `distill-session · Stop` (a cheap
 decision fired every assistant turn) and `distill-session · SessionEnd` (the run that reads the

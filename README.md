@@ -76,6 +76,7 @@ Settings live in **`~/.claude-memory/config.json`**:
 | `vault` | `~/Documents/ClaudeVault` | vault root |
 | `recall` | `false` | arm per-prompt recall |
 | `model` | `bge-m3` | also `bge-small-en`, `e5-multi`. Changing it means a full re-index. |
+| `logRetentionDays` | `30` | days of `logs/{recall,hooks}-<date>.jsonl` kept; older ones are deleted on the first log line of a new day. Clamped to 36500 (a century) — set it high to keep everything |
 
 `/memory:install` writes this file. `/memory:doctor` prints which source each value came from, and
 **hard-fails if you are pointed at an empty vault while a populated one exists** — the failure that
@@ -88,7 +89,8 @@ hooks, and the SessionStart hook duly built an empty vault at the default path. 
 context-mode keep their settings in their own file for the same reason.
 
 Environment overrides are still honoured where they do reach the process:
-`CLAUDE_VAULT`, `MEMORY_RECALL_ENABLED=1`, `MEMORY_SEMANTIC_MODEL`, and `CLAUDE_MEMORY_HOME`
+`CLAUDE_VAULT`, `MEMORY_RECALL_ENABLED=1`, `MEMORY_SEMANTIC_MODEL`, `MEMORY_LOG_RETENTION_DAYS`,
+and `CLAUDE_MEMORY_HOME`
 (which relocates the state directory itself, so it can only be an env var).
 
 **Per-prompt recall ships inert on purpose.** Injecting retrieved notes into every prompt changes
