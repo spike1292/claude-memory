@@ -92,11 +92,17 @@ jobs:
                printed without being labelled one, and any attempt to estimate the
                distiller's cost from transcript length (its bill is near-fixed cache
                overhead, measured, not proportional to input).
-            5. Config resolution drift. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
-               then the built-in default, and it must be read when the hook runs.
-               `hooks/lib/vault-env.sh` is the source of truth and `hooks/lib/paths.mjs`
-               mirrors it. A change to one that misses the other is a bug even when both
-               files pass their tests.
+            5. Config resolution. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
+               then the built-in default, and it must be read WHEN THE HOOK RUNS — a value
+               written to `settings.json`'s `env` block mid-session never reaches that
+               session's hooks. `CLAUDE_MEMORY_HOME` is the one exception: it relocates the
+               config file itself, so it can only be an env var.
+               **`hooks/lib/paths.mjs` is the single implementation.** `vault-env.sh`
+               resolves NOTHING — it `eval`s one `node scripts/env.mjs` call — so flag any
+               resolution logic re-added in shell, and any second reader of `config.json`.
+               Because those values are `eval`ed, `shellQuote()` in
+               `hooks/lib/env-shell.mjs` is a correctness boundary: a vault path containing
+               a `$`, a backtick or a quote is an injection without it.
             6. Retrieval changes with no numbers. No recall or MRR figure lands without a
                case-set run behind it, and any figure quoted must name its case set. Flag
                per-model assumptions that were only checked on one model — pooling, chunk
