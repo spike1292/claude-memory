@@ -456,3 +456,24 @@ test('a window with only recall measured never prints a zero for the injectors',
   assert.doesNotMatch(out, /across 0 injector/);
   assert.match(out, /recall injected ~300 tok/);
 });
+
+test('a billed-but-failed run is counted, and named, in the cost section', () => {
+  const out = render(
+    summarize([
+      line({ hook: 'distill-session', event: 'extract', usd: 0.0389 }),
+      line({ hook: 'distill-session', event: 'extract', usd: 0.0412, outcome: 'error' }),
+    ]),
+    new Map(),
+  );
+  // Including it is right — the money was spent. Saying nothing is not: it wrote no notes, so
+  // "per run" would price a distillation using a run that did not distil, which is the very fold
+  // the extract line's outcome field exists to prevent.
+  assert.match(out, /2 run\(s\), 1 of which failed after being billed/);
+  assert.match(out, /"per run" is not\n.*the price of a distillation/s);
+  // And a clean window says nothing about failures at all.
+  const clean = render(
+    summarize([line({ hook: 'distill-session', event: 'extract', usd: 0.0389 })]),
+    new Map(),
+  );
+  assert.doesNotMatch(clean, /failed after being billed/);
+});

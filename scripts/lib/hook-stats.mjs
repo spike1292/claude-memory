@@ -621,9 +621,16 @@ function costSection(s) {
   const partial = [...cols, usd].filter((c) => c.n && c.n < runs).length;
   const absent = [...cols, usd].filter((c) => !c.n).length;
 
+  // A run that was billed and then failed is IN these totals, and must be: the money was spent.
+  // But it wrote no notes, so folding it silently into "per run" prices a distillation using runs
+  // that did not distil — the exact fold the extract line's `outcome` was added to prevent, one
+  // level down. The log tells them apart; so must the report.
+  const errored = s.extracts.filter((l) => l.outcome === 'error').length;
+
   return [
     '',
-    `distiller cost (MEASURED, from the CLI's own usage figures) — ${runs} run(s)`,
+    `distiller cost (MEASURED, from the CLI's own usage figures) — ${runs} run(s)` +
+      (errored ? `, ${errored} of which failed after being billed` : ''),
     table(
       ['', 'in', 'cache write', 'cache read', 'out', 'USD'],
       [
@@ -650,6 +657,12 @@ function costSection(s) {
       : []),
     ...(absent
       ? [`${absent} column(s) print "-": no run in this window reported that figure at all.`]
+      : []),
+    ...(errored
+      ? [
+          'The failed runs are included: they cost money. They wrote no notes, so "per run" is not',
+          'the price of a distillation while any are in the window.',
+        ]
       : []),
     'Cache traffic dominates, and it is a near-fixed cost of the headless session rather than a',
     'function of transcript length — a longer session is not a proportionally dearer distillation.',
