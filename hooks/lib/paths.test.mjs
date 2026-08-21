@@ -207,10 +207,20 @@ test('logRetentionDays: env wins, then config, then a sane default', () => {
   // is a billion, and both passed an `isInteger && >= 0` guard in the first draft of this function
   // — the first deletes every log but today's, the second is the "widen to everything" direction.
   fs.writeFileSync(path.join(home, 'config.json'), '{}');
-  // '99999999999999999999' is digits but past 2^53, so `Number.isSafeInteger` rejects it and the
-  // default stands. Named because the comment on the function names it as the boundary, and a
-  // boundary nothing tests is a boundary that moves.
-  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10', '99999999999999999999']) {
+  // Digits, but not a number of days anything can make a date from. CLAMPED to a century, never
+  // rejected: falling back to 30 would delete a month of logs for someone asking to delete none,
+  // and returning it as-is made the cutoff throw and abandon the pass — which stopped it sweeping
+  // its own day-claim markers, so logs/ grew a dotfile a day.
+  for (const huge of ['999999999999', '99999999999999999999', '40000']) {
+    assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: huge })), '36500', huge);
+  }
+  assert.equal(
+    retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '  7  ' })),
+    '7',
+    'a value a human typed with spaces is that value',
+  );
+
+  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
     assert.equal(
       retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: bad })),
       '30',

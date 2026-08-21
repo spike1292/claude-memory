@@ -242,7 +242,9 @@ cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 The free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by size
 — `trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
 `pruneDatedLogs()` deletes `<family>-<date>.jsonl` older than `logRetentionDays()` (default 30,
-`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`), because the read views query a
+`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`, digits only and clamped to a
+century so no value can make the cutoff throw — one that did abandoned the pass before it swept its
+own day-claim markers, which grew `logs/` a dotfile a day), because the read views query a
 window of dated FILES — one per day a family ran — so a day is the unit anyone reads these in. That
 also makes retention a ceiling on those views: `--hooks=60` can only read what 30 days kept. It DELETES where the vault's
 `prune-logs.mjs` only moves: these are machine-local debug lines nothing else reads, and an

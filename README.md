@@ -76,7 +76,7 @@ Settings live in **`~/.claude-memory/config.json`**:
 | `vault` | `~/Documents/ClaudeVault` | vault root |
 | `recall` | `false` | arm per-prompt recall |
 | `model` | `bge-m3` | also `bge-small-en`, `e5-multi`. Changing it means a full re-index. |
-| `logRetentionDays` | `30` | days of `logs/{recall,hooks}-<date>.jsonl` kept; older ones are deleted on the first log line of a new day |
+| `logRetentionDays` | `30` | days of `logs/{recall,hooks}-<date>.jsonl` kept; older ones are deleted on the first log line of a new day. Clamped to 36500 (a century) — set it high to keep everything |
 
 `/memory:install` writes this file. `/memory:doctor` prints which source each value came from, and
 **hard-fails if you are pointed at an empty vault while a populated one exists** — the failure that

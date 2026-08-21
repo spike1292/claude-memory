@@ -124,13 +124,17 @@ export function serveIdleMs() {
  *
  * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard.
  *
- * Three outcomes, none of which deletes more than asked: a non-digit value falls back to the
- * default; a digits-only value too large to be a date (`999999999999`) is returned as-is and makes
- * the prune throw, keeping every file; past 2^53 it is not a safe integer and also falls back to
- * the default, so `99999999999999999999` retains 30 days rather than everything. That last one is
- * a boundary, not a design — it is written down because the sentence above it used to claim the
- * whole range kept every file, and it does not.
+ * A non-digit value falls back to the default. A digits-only value is CLAMPED to a century, which
+ * is the "keep everything" the person typing twelve digits meant, and never falls back — falling
+ * back would delete 30 days for someone asking to delete nothing.
+ *
+ * The clamp exists because the alternative was a throw. `999999999999` days makes an Invalid Date,
+ * whose `toISOString()` throws inside `pruneDatedLogs()`; the logs survived that, but the pass was
+ * abandoned before it swept its own day-claim markers, so `logs/` accumulated a dotfile a day —
+ * the unbounded directory this whole change exists to close, reappearing in a corner of it
+ * (found in review, 2026-08-21). A value that cannot make a date is the bug; clamping removes it.
  */
+const MAX_RETENTION_DAYS = 36500;
 export function logRetentionDays() {
   // An EXPORTED-BUT-EMPTY env var is unset, not a value. `??` alone keeps `''`, so a shell that
   // exports the name without a value — or a `hooks.json` env block with a blank string — shadowed
@@ -141,8 +145,11 @@ export function logRetentionDays() {
   // records: `MEMORY_LOG_RETENTION_DAYS=" "` casts to 0 and passes an `isInteger && >= 0` guard,
   // so a stray space in a config deletes every log but today's, silently.
   const s = String(raw ?? '').trim();
-  const n = /^\d+$/.test(s) ? Number(s) : NaN;
-  return Number.isSafeInteger(n) ? n : 30;
+  if (!/^\d+$/.test(s)) return 30;
+  // Not `Number(s)` alone: past 2^53 the parse is lossy, and `Math.min` on a lossy number is a
+  // lossy number. Length first, so a 20-digit string clamps for the same reason a 12-digit one
+  // does rather than by accident of what `Number()` made of it.
+  return s.length > 8 ? MAX_RETENTION_DAYS : Math.min(Number(s), MAX_RETENTION_DAYS);
 }
 
 /**

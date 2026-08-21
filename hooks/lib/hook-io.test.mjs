@@ -556,3 +556,39 @@ test('the window is UTC, like the filenames — a timezone ahead of it deletes n
     else process.env.TZ = prevTz;
   }
 });
+
+test('a pass sweeps its markers even at the largest retention there is', () => {
+  withState((logs) => {
+    withRetention('999999999999', () => {
+      // Twelve digits used to make an Invalid Date, whose toISOString() threw and abandoned the
+      // pass — logs survived, but the stale day-claims did not get swept, so logs/ grew a dotfile
+      // a day: the unbounded directory this change exists to close, in a corner of it.
+      seed(logs, ['hooks-2000-01-01.jsonl', '.retention-2000-01-01']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' });
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')),
+        true,
+        'a century keeps every log',
+      );
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, '.retention-2000-01-01')),
+        false,
+        'and still sweeps its own markers',
+      );
+    });
+  });
+});
+
+test('a log that cannot be unlinked is not reported as deleted, and does not stop the pass', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, ['hooks-2000-01-01.jsonl', 'hooks-2000-01-02.jsonl']);
+      // A DIRECTORY where a log file's name is: unlinkSync throws EPERM/EISDIR on it. The pass
+      // must skip it, keep going, and not count it — "a log we cannot delete is a log that stays".
+      fs.mkdirSync(path.join(logs, 'hooks-2000-01-03.jsonl'));
+      const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
+      assert.deepStrictEqual(removed.sort(), ['hooks-2000-01-01.jsonl', 'hooks-2000-01-02.jsonl']);
+      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-03.jsonl')), true);
+    });
+  });
+});
