@@ -127,7 +127,11 @@ live, and keep the negative result if it loses.
   ([AI-FIRST.md](https://raw.githubusercontent.com/eugeniughelbur/obsidian-second-brain/main/AI-FIRST.md)).
   We already have a greppable retrieval bridge that is measured rather than asserted — the
   `_Also asked as:` alias line, warned on at write time (`hooks/lib/validate-note.mjs`), justified by
-  a number: authored paraphrases reach the right note ~46% of the time without it. A second fixed
+  a number: authored paraphrases reach the right note only ~46% of the time without it
+  (`hooks/lib/validate-note.mjs:124`, measured 2026-08-14). Carry that figure with its caveat — the
+  comment records the date but **not the case set**, so by this repo's own rule it is weaker than the
+  numbers in `README.md:234`, which name case set, n and vault size. It is enough to say the alias
+  line was measured rather than asserted; it is not enough to quote as a retrieval result. A second fixed
   header per note is ceremony that buys nothing our notes are missing; ours are atomic and short,
   theirs are long human documents that need a summary at the top.
 - **The `PostCompact` background agent.** It exists because compaction destroys a long session's
