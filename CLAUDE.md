@@ -272,6 +272,14 @@ cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed ove
 headless session. Envelope parsing falls back to the old raw-stdout path — insights outrank a cost
 figure.
 
+**A local review loop ends on a CLEAN round, not after a fixed number.** Five of the thirteen rounds
+across #46 and #47 found a defect introduced by the previous round's fix, so stopping on a round
+that found something is stopping one round early —
+[docs/decisions/2026-08-19-orchestrated-change.md](docs/decisions/2026-08-19-orchestrated-change.md)
+has the numbers and the two designs that were built, reviewed and then deleted. The cheapest defence
+it names: **test the round trip, not each half**, and make a scan-based guard assert that it found
+something.
+
 **A reason string that an outcome mapper decides on is a constant, not a literal** (`GATE_REASONS`,
 `REASONS`) — a literal in the plan and a copy in the mapper drift apart in silence, and every test
 written against the copy stays green while a dead dependency starts reporting as `ran`.
