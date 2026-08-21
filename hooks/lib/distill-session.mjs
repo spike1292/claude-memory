@@ -423,8 +423,8 @@ export function todayStr(d = new Date()) {
 
 // ---------------------------------------------------------------- environment
 
-// findClaude lives in hook-io.mjs: graph-staleness-check probes the same four locations, and while
-// one list was here and the other was in bash they drifted without anything noticing.
+// findClaude lives in hook-io.mjs: graph-staleness-check probes the same locations, and while one
+// list was here and the other was in bash they drifted without anything noticing.
 
 /** project_key via paths.mjs, the one resolver. Falls back to the cwd-slug when git is
  *  unavailable — a hook must get an answer, never an exception.

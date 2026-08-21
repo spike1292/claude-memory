@@ -3,9 +3,10 @@
 //
 // This module exists because three hooks were three bash scripts that had each grown their own
 // copy of the same four things — stdin parsing, a timestamp debounce marker, locating the `claude`
-// CLI, and detaching a child. The copies had already drifted: graph-staleness-check.sh probed four
-// candidate `claude` paths in shell while distill-session.mjs probed the same four in Node, and
-// nothing kept the lists in step.
+// CLI, and detaching a child. The copies had already drifted: graph-staleness-check.sh probed a
+// list of candidate `claude` paths in shell while distill-session.mjs probed its own in Node, and
+// nothing kept the two in step. No count here on purpose — the list grew on 2026-08-21 and a
+// number written into prose is the next thing to drift.
 //
 // Everything here is either pure (and tested) or a three-line wrapper over one node: API. The
 // split is deliberate: the decisions are pure functions the tests can drive with plain values, and
@@ -310,14 +311,20 @@ export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
 /**
  * Locate the `claude` CLI.
  *
- * PATH first, then the three install locations a GUI-launched session may not have on PATH. One
- * list, because two lists drift and the failure is silent: the hook simply stops doing its job.
+ * PATH first, then the install locations a GUI-launched session may not have on PATH. One list,
+ * because two lists drift and the failure is silent: the hook simply stops doing its job.
+ *
+ * Both Homebrew prefixes are here because the list was Apple-Silicon-only until 2026-08-21, which
+ * made every hook a no-op on a Linux install that README claims to support — silently, since a
+ * missing `claude` is indistinguishable from a hook that had nothing to do.
  */
 export function findClaude() {
   for (const cand of [
     which('claude'),
     path.join(os.homedir(), '.claude/local/claude'),
+    path.join(os.homedir(), '.local/bin/claude'),
     '/opt/homebrew/bin/claude',
+    '/home/linuxbrew/.linuxbrew/bin/claude',
     '/usr/local/bin/claude',
   ]) {
     if (cand && fs.existsSync(cand)) return cand;
