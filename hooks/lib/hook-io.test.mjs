@@ -20,6 +20,7 @@ import {
   writeLock,
   releaseLock,
   appendJsonl,
+  pruneDatedLogs,
   logHook,
 } from './hook-io.mjs';
 
@@ -374,4 +375,92 @@ test('detach returns null when the command cannot start, and says so in the log 
   for (let i = 0; i < 100 && !/spawn failed/.test(fs.readFileSync(logFile, 'utf8')); i++)
     await new Promise((r) => setTimeout(r, 20));
   assert.match(fs.readFileSync(logFile, 'utf8'), /spawn failed/, 'and the log file records why');
+});
+
+// ---------------------------------------------------------------- retention
+
+/** @param {string} dir @param {string[]} names */
+const seed = (dir, names) => {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const n of names) fs.writeFileSync(path.join(dir, n), '{}\n');
+};
+
+/** @param {string} value @param {() => void} fn */
+const withRetention = (value, fn) => {
+  const prev = process.env.MEMORY_LOG_RETENTION_DAYS;
+  process.env.MEMORY_LOG_RETENTION_DAYS = value;
+  try {
+    fn();
+  } finally {
+    if (prev === undefined) delete process.env.MEMORY_LOG_RETENTION_DAYS;
+    else process.env.MEMORY_LOG_RETENTION_DAYS = prev;
+  }
+};
+
+test('pruneDatedLogs deletes past the window and leaves everything else alone', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, [
+        'recall-2026-01-01.jsonl', // older than the window
+        'hooks-2026-07-01.jsonl', // older than the window
+        'hooks-2026-08-20.jsonl', // inside it
+        'recall-2026-08-21.jsonl', // today
+        'distill.log', // a free-form log; trimLog's job, not this one
+        'hooks-2026-13-99.jsonl', // pattern-shaped but not a date the cutoff can rank
+        '2026-01-01.jsonl', // no family prefix: not ours, whatever the date says
+      ]);
+      const removed = pruneDatedLogs(new Date(2026, 7, 21));
+      assert.deepStrictEqual(removed.sort(), ['hooks-2026-07-01.jsonl', 'recall-2026-01-01.jsonl']);
+      assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+        '2026-01-01.jsonl',
+        'distill.log',
+        'hooks-2026-08-20.jsonl',
+        'hooks-2026-13-99.jsonl',
+        'recall-2026-08-21.jsonl',
+      ]);
+    });
+  });
+});
+
+test('a retention of 0 keeps today and nothing before it', () => {
+  withState((logs) => {
+    withRetention('0', () => {
+      seed(logs, ['hooks-2026-08-20.jsonl', 'hooks-2026-08-21.jsonl']);
+      pruneDatedLogs(new Date(2026, 7, 21));
+      assert.deepStrictEqual(fs.readdirSync(logs), ['hooks-2026-08-21.jsonl']);
+    });
+  });
+});
+
+test('an unparseable retention keeps the default window rather than emptying the directory', () => {
+  withState((logs) => {
+    // ' ' casts to 0 through Number() and 1e9 makes an Invalid Date — the two values that once
+    // archived a whole directory while printing a success line (scripts/lib/prune-logs.mjs).
+    // '999999999999' is digits and a safe integer, so it reaches cutoffDate() — which makes an
+    // Invalid Date and throws. Keeping everything is the correct direction for that failure.
+    for (const bad of [' ', '1e9', '-1', 'thirty', '999999999999']) {
+      withRetention(bad, () => {
+        seed(logs, ['hooks-2026-08-20.jsonl']);
+        pruneDatedLogs(new Date(2026, 7, 21));
+        assert.deepStrictEqual(fs.readdirSync(logs), ['hooks-2026-08-20.jsonl'], bad);
+      });
+    }
+  });
+});
+
+test('appendJsonl prunes when the day rolls over, and only then', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, ['hooks-2000-01-01.jsonl']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // first write today: the day rolled
+      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')), false);
+
+      // The guard is what keeps this off the per-prompt path: a stale file dropped in after
+      // today's already exists survives until tomorrow's first line. Without it, every append
+      // would readdir.
+      seed(logs, ['recall-2000-01-01.jsonl']);
+      appendJsonl('hooks', process.cwd(), { hook: 'b' });
+      assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-01.jsonl')), true);
+    });
+  });
 });

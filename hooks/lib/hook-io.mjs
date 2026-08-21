@@ -15,7 +15,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { stateDir, projectKey } from './paths.mjs';
+import { stateDir, projectKey, logRetentionDays } from './paths.mjs';
+import { cutoffDate } from '../../scripts/lib/prune-logs.mjs';
 
 /** Claude Code sends hook input as one JSON object on stdin. A hook must never die on bad input. */
 export function readStdin() {
@@ -456,6 +457,8 @@ export function logBanner(file, label, iso) {
 //
 // Dated filenames ARE the rotation. A size cap would be the second mechanism for the same job, and
 // the recall logs have settled the question already: a day is the unit anyone reads these in.
+// Retention is therefore also counted in days, by `pruneDatedLogs()` below, and runs from here on
+// the first append of a new day — the whole `logs/` policy is those two mechanisms and no third.
 //
 // Nothing here is allowed to throw, and nothing here is allowed to be slow — every call sits on a
 // path that must exit in milliseconds, and one of them is per-prompt.
@@ -513,13 +516,55 @@ export function appendJsonl(family, cwd, record) {
     } catch {
       /* no repo, or a key we cannot resolve — the line is still worth writing */
     }
-    fs.appendFileSync(
-      path.join(stateDir('logs'), `${family}-${t.slice(0, 10)}.jsonl`),
-      JSON.stringify({ t, slug, ...record }) + '\n',
-    );
+    const file = path.join(stateDir('logs'), `${family}-${t.slice(0, 10)}.jsonl`);
+    // The day has rolled over exactly when today's file does not exist yet, which is the one
+    // moment a new dated file appears — so retention costs one existsSync per append and a
+    // readdir once a day, on the day the directory actually grows.
+    if (!fs.existsSync(file)) pruneDatedLogs(new Date(t));
+    fs.appendFileSync(file, JSON.stringify({ t, slug, ...record }) + '\n');
   } catch {
     /* a log that cannot be written must never fail or delay a hook */
   }
+}
+
+/**
+ * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
+ *
+ * DELETES, where the vault's log prune only ever moves. These are machine-local debug lines that
+ * no release replaces and nothing else reads — the same class of file `trimLog()` already
+ * truncates in place. An Archive/ here would be the unbounded directory again under another name.
+ *
+ * The date comes from the FILENAME and the cutoff from `cutoffDate()`, which is the vault
+ * pruner's — one implementation of a comparison whose traps (unpadded years, `days = 1e9`) are
+ * written down there and cost a directory when they were two.
+ *
+ * Best effort, like everything on this path: a file we cannot unlink is one that stays.
+ *
+ * @param {Date} [now]
+ * @returns {string[]} the basenames removed
+ */
+export function pruneDatedLogs(now = new Date()) {
+  /** @type {string[]} */
+  const removed = [];
+  try {
+    const dir = stateDir('logs');
+    const cutoff = cutoffDate(now, logRetentionDays());
+    for (const name of fs.readdirSync(dir)) {
+      // Anchored on the family prefix too, so nothing without one — a hand-saved copy, a file
+      // some other tool put here — is ever matched by the date alone.
+      const m = /^[a-z][a-z-]*-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+      if (!m || m[1] >= cutoff) continue;
+      try {
+        fs.unlinkSync(path.join(dir, name));
+        removed.push(name);
+      } catch {
+        /* a log we cannot delete is a log that stays */
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+  return removed;
 }
 
 /**

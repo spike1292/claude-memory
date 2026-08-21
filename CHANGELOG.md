@@ -11,6 +11,20 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Retention for `$CLAUDE_MEMORY_HOME/logs/`, so the directory is bounded on both of its axes.**
+  The free-form logs (`distill.log`, `graphgen.log`, `semantic-index.log`) were capped at 1 MB;
+  the dated JSONL families (`recall-<date>`, `hooks-<date>`) accumulated one file per active day,
+  forever, in machine-local state that no release replaces. They are now deleted past
+  `logRetentionDays` — 30 days by default, settable in `config.json` or via
+  `MEMORY_LOG_RETENTION_DAYS`. Size for the appends, age for the dated files: the read views
+  (`/memory:doctor --stats`, `--hooks`) query a window of days, so a day is the unit. The prune
+  runs on the first append of a NEW day rather than from `/memory:prune`, because a retention
+  policy that waits for a human to run a command is not one; the guard costs one `existsSync` per
+  append and one `readdir` per day. It deletes where the vault's log prune only moves — these are
+  machine-local debug lines, and an `Archive/` here would be the same unbounded directory under
+  another name. `/memory:doctor` now prints the window and the oldest dated file beside the size,
+  which is what shows a machine that stopped writing logs and so stopped pruning them.
+
 - **`/memory:doctor --hooks` — what every hook did, and how long it took.** Nine hook invocations
   fire per session and none of them recorded anything, so a hook that has been permanently dead
   since a dependency vanished looked exactly like a healthy one: both exit 0 and print nothing.

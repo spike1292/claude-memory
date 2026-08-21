@@ -238,6 +238,21 @@ that cannot be written must never fail or delay a hook. Two families use it — 
 duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
+**One retention policy covers `logs/`, in two mechanisms because there are two kinds of file.**
+The free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by size
+— `trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
+`pruneDatedLogs()` deletes `<family>-<date>.jsonl` older than `logRetentionDays()` (default 30,
+`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`), because the read views query a
+window of days and a day is the unit anyone reads these in. It DELETES where the vault's
+`prune-logs.mjs` only moves: these are machine-local debug lines nothing else reads, and an
+`Archive/` here would be the unbounded directory again under another name.
+
+**Retention runs opportunistically, on the first append of a new day** — not from `/memory:prune`.
+A retention policy that needs a human to run a command is not one, and the day rolls over exactly
+when today's file does not exist yet, so the cost is one `existsSync` per append and one `readdir`
+per day. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
+machine that stopped writing logs and therefore stopped pruning them.
+
 `logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what
 `hooks.json`'s timeout applies to. **Those timeouts live in `hooks.json` and nowhere else**:
 `scripts/lib/hook-stats.mjs` parses the manifest at run time, and a copy anywhere would drift in

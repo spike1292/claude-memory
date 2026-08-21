@@ -190,6 +190,18 @@ for d in db logs eval run cache; do
   [ -d "$STATE/$d" ] || continue
   ok "$d/ $(du -shL "$STATE/$d" 2>/dev/null | cut -f1 | tr -d ' ')"
 done
+# What retention actually left behind, beside the size above. The oldest date is the check: the
+# dated files are pruned when a NEW day's file is created, so a machine that stopped writing logs
+# keeps whatever it had, and the only way to see that is to print the date rather than the policy.
+# The date is read from the FILENAME, like every other date in this system.
+if [ -d "$STATE/logs" ]; then
+  oldest=$(ls "$STATE/logs" 2>/dev/null |
+    sed -n 's/^[a-z][a-z-]*-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)\.jsonl$/\1/p' | sort | head -1)
+  # `?` and not the default: in the degraded branch node could not be asked, and this report says
+  # so above rather than restating a number it did not resolve.
+  keep_days=$(log_retention_days)
+  ok "logs/ dated files: keep ${keep_days:-?}d, oldest ${oldest:-none}"
+fi
 # ~722 MB of the expected total is the ONNX weights in models/, so the threshold has to sit well
 # above that. Past 2 GB something else grew: logs/ and eval/ only append, and db/ keeps one index
 # per model PER PROJECT, so a machine with many repos accumulates indexes nothing ever deletes.
