@@ -219,6 +219,10 @@ test('logRetentionDays: env wins, then config, then a sane default', () => {
     '7',
     'a value a human typed with spaces is that value',
   );
+  // Leading zeros are a VALUE, not a length. A length-first clamp read this as ten characters and
+  // gave a century to someone asking for a week — retention silently doing nothing. Every huge
+  // value above passes with that branch restored, so this is the assertion that rules it out.
+  assert.equal(retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: '0000000007' })), '7');
 
   for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
     assert.equal(

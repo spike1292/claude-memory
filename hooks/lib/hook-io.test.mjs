@@ -447,10 +447,7 @@ test('an unparseable retention keeps the default window rather than emptying the
   withState((logs) => {
     // ' ' casts to 0 through Number() and 1e9 makes an Invalid Date — the two values that once
     // archived a whole directory while printing a success line (scripts/lib/prune-logs.mjs).
-    // '999999999999' is digits and a safe integer, so it reaches the cutoff arithmetic — which
-    // makes an Invalid Date whose toISOString() throws. Keeping everything is the right direction
-    // for that failure, and the throw is caught inside pruneDatedLogs, never by the caller.
-    for (const bad of [' ', '1e9', '-1', 'thirty', '999999999999']) {
+    for (const bad of [' ', '1e9', '-1', 'thirty']) {
       withRetention(bad, () => {
         seed(logs, ['hooks-2026-08-20.jsonl']);
         pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
