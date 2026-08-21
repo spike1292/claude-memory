@@ -134,8 +134,14 @@ export function timeouts(manifest) {
  * @param {number} [logDays] how many daily log files the window read — the honest denominator for
  *   a per-day rate, since a day nothing was logged has no file and cannot be counted from lines
  */
-export function summarize(lines, slug = null, logDays = 0) {
+export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
   const seen = lines.length;
+  // BEFORE the slug filter, deliberately, and the one figure here that is not scoped. A retention
+  // pass is machine-wide: it deletes every project's files, and the line recording it carries
+  // whichever slug happened to trigger it. Scoped, the project that LOST the history was the one
+  // told nothing — 300 deleted files reported as 0 (measured 2026-08-21).
+  const pruned =
+    lines.reduce((a, l) => a + (typeof l.pruned === 'number' ? l.pruned : 0), 0) + extraPruned;
   lines = slug ? lines.filter((l) => l.slug === slug) : lines;
   /** @type {Map<string, HookRow>} */
   const hooks = new Map();
@@ -238,11 +244,7 @@ export function summarize(lines, slug = null, logDays = 0) {
     invocations,
     untimed,
     childLines,
-    // Retention rides on whichever line happened to be written when it ran, so it is summed over
-    // the window rather than attributed to a hook: the pass belongs to the machine, not to the
-    // caller that paid for it. Counted over the lines that HAVE the key, like every metric here —
-    // a line written before the field existed is not a zero.
-    pruned: lines.reduce((a, l) => a + (typeof l.pruned === 'number' ? l.pruned : 0), 0),
+    pruned,
     first: lines.find((l) => l.t)?.t ?? null,
     last: [...lines].reverse().find((l) => l.t)?.t ?? null,
     hooks: [...hooks.entries()].sort((a, b) => b[1].n - a[1].n),
@@ -444,8 +446,10 @@ export function render(s, limits, recall = []) {
   if (s.pruned)
     out.push(
       '',
-      `retention deleted ${s.pruned} dated log file(s) during this window — that many days of`,
-      'history are gone from every figure above. `logRetentionDays` decides how many are kept.',
+      `retention deleted ${s.pruned} dated log file(s) while this window was being logged —`,
+      'machine-wide, every project and both families, since one pass deletes for all of them.',
+      'They were older than `logRetentionDays`, so they are only missing from a window asked to',
+      'reach further back than retention keeps.',
     );
 
   out.push('', `not in this table: ${UNLOGGED}, and ${NO_WORKER_LINE}.`);
@@ -699,16 +703,26 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   // readLines() is shared with the recall reader and is typed for ITS record. The cast is the only
   // thing telling tsc these are hook lines — without it every field below type-checks against a
   // shape with no `hook`, `outcome` or `event` in it, and a rename in logHook() would pass.
+  // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
+  // is not given a `bytes` field, because one number with two sources is one number that will
+  // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
+  const recallLines = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall')));
+  const recall = recallLines.filter((r) => !slug || r.slug === slug);
+  // `pruned` rides on whichever line the day's first append happened to be, and that is a RECALL
+  // line for any session that crosses UTC midnight with recall armed — the hook family is not the
+  // one that pays. Unscoped, like the sum inside summarize() and for the same reason.
   const summary = summarize(
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
     files.length,
-  );
-  // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
-  // is not given a `bytes` field, because one number with two sources is one number that will
-  // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
-  const recall = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall'))).filter(
-    (r) => !slug || r.slug === slug,
+    recallLines.reduce(
+      (a, r) =>
+        a +
+        (typeof (/** @type {{pruned?: number}} */ (r).pruned) === 'number'
+          ? /** @type {{pruned: number}} */ (r).pruned
+          : 0),
+      0,
+    ),
   );
   const head = files.length
     ? `${files.length} log file(s), most recent first: ${files

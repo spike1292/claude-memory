@@ -207,7 +207,10 @@ test('logRetentionDays: env wins, then config, then a sane default', () => {
   // is a billion, and both passed an `isInteger && >= 0` guard in the first draft of this function
   // — the first deletes every log but today's, the second is the "widen to everything" direction.
   fs.writeFileSync(path.join(home, 'config.json'), '{}');
-  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10']) {
+  // '99999999999999999999' is digits but past 2^53, so `Number.isSafeInteger` rejects it and the
+  // default stands. Named because the comment on the function names it as the boundary, and a
+  // boundary nothing tests is a boundary that moves.
+  for (const bad of [' ', '1e9', '-1', 'thirty', '7.5', '0x10', '99999999999999999999']) {
     assert.equal(
       retentionIn(withHome({ MEMORY_LOG_RETENTION_DAYS: bad })),
       '30',

@@ -107,6 +107,10 @@ export function writeMarker(file, seconds) {
 // The day-claim marker `logs/.retention-<day>`. Declared here because `claimDay()` writes it and
 // `pruneDatedLogs()` sweeps yesterday's.
 const CLAIM_PREFIX = '.retention-';
+// Anchored on a DATE, not on the prefix, for the same reason `DATED_LOG` is anchored on the two
+// families: `.retention-notes.md` is not ours to delete, and `.startsWith()` alone deleted a bare
+// `.retention-` and anything sorting below today.
+const CLAIM = new RegExp(`^\\${CLAIM_PREFIX}(\\d{4}-\\d{2}-\\d{2})$`);
 
 /**
  * Claim today's retention pass, machine-wide. True for exactly one caller per day.
@@ -569,8 +573,7 @@ export function appendJsonl(family, cwd, record) {
     /** @type {number | undefined} */
     let pruned;
     if (claimDay(dir, day)) {
-      const n = pruneDatedLogs(new Date(t)).length;
-      if (n > 0) pruned = n;
+      pruned = pruneDatedLogs(new Date(t)).length;
     }
     // Deleting is work, so it logs itself — on the line the caller was already writing, AFTER the
     // caller's own fields, because their order is a contract this must not reach into. Omitted
@@ -648,8 +651,9 @@ export function pruneDatedLogs(now = new Date()) {
       // Yesterday's day-claim goes with yesterday's logs — the pass that this marker authorised
       // is the pass that cleans it up, so the directory does not accumulate one dotfile per day
       // in the name of not accumulating one log file per day.
-      if (name.startsWith(CLAIM_PREFIX)) {
-        if (name.slice(CLAIM_PREFIX.length) >= today) continue;
+      const claim = CLAIM.exec(name);
+      if (claim) {
+        if (claim[1] >= today) continue; // today's own claim, or a future one from a wrong clock
         try {
           fs.unlinkSync(path.join(dir, name));
         } catch {

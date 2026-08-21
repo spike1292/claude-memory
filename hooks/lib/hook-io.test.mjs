@@ -411,10 +411,16 @@ test('pruneDatedLogs deletes past the window and leaves everything else alone', 
         '2026-01-01.jsonl', // no family: not ours, whatever the date says
         'backup-2026-01-01.jsonl', // someone else's file with a plausible prefix
         'my-notes-export-2026-01-01.jsonl',
+        '.retention-notes.md', // shares the claim prefix, is not a claim
+        '.retention-', // the prefix and nothing else
+        '.retention-2099-01-01', // a claim from a clock that was wrong: kept until that day
       ]);
       const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
       assert.deepStrictEqual(removed.sort(), ['hooks-2026-07-01.jsonl', 'recall-2026-01-01.jsonl']);
       assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+        '.retention-',
+        '.retention-2099-01-01',
+        '.retention-notes.md',
         '2026-01-01.jsonl',
         'backup-2026-01-01.jsonl',
         'distill.log',

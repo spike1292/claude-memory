@@ -495,3 +495,26 @@ test('the hooks report says when retention deleted the history it is reporting o
     /retention deleted/,
   );
 });
+
+test('the pruned count is machine-wide, where every other figure is scoped to one project', () => {
+  const lines = [
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, slug: 'proj-a', pruned: 300 }),
+    line({ hook: 'memory-recall', event: 'UserPromptSubmit', ms: 40, slug: 'proj-b' }),
+  ];
+  // One pass deletes every project's files, and the line recording it carries whichever slug
+  // happened to trigger it. Scoped, project B — which lost exactly as much — was told 0.
+  assert.equal(summarize(lines, 'proj-b').pruned, 300, 'B lost the same files and must be told');
+  assert.equal(summarize(lines, 'proj-a').pruned, 300);
+  assert.equal(summarize(lines, 'proj-a').invocations, 1, 'everything else stays scoped');
+});
+
+test('a pass recorded on a recall line still reaches the hooks report', () => {
+  // appendJsonl is family-agnostic: the day's FIRST append triggers the pass, and that is a recall
+  // line for any session crossing UTC midnight with recall armed. Nothing reads `pruned` from the
+  // recall family, so the count is passed in rather than looked up twice.
+  assert.equal(summarize([line({ hook: 'x', ms: 1 })], null, 0, 7).pruned, 7);
+  assert.match(
+    render(summarize([line({ hook: 'x', ms: 1 })], null, 0, 7), new Map()),
+    /deleted 7 dated/,
+  );
+});
