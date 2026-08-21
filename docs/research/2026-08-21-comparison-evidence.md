@@ -420,6 +420,222 @@ manifest where one declares a licence. Repo metadata read 2026-08-21.
 
 ---
 
+## 8. `autoMemoryDirectory` and the auto-memory mechanics
+
+For #75. All facts read 2026-08-21 from <https://code.claude.com/docs/en/memory> (as `memory.md`),
+<https://code.claude.com/docs/en/settings>, <https://code.claude.com/docs/en/sessions>,
+<https://code.claude.com/docs/en/errors>, and the changelog at
+<https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md>. Version dates are npm
+publish dates for `@anthropic-ai/claude-code` (the changelog itself carries no dates). Where a
+question is not answered by those pages this section says **not documented** and names the search.
+
+### 8.1 `autoMemoryDirectory` — the exact contract
+
+- **Key name**: `autoMemoryDirectory`, a top-level key in `settings.json`.
+- **Scopes**: "read from any settings scope: **user, project, local, policy, or `--settings`**"
+  (memory.md, Storage location). From *project* or *local* settings it is honoured only under the
+  same workspace-trust rule as hooks in settings files, "since a cloned repository can supply this
+  file" (settings.md row, same wording).
+- **Value forms**: "The value **must be an absolute path or start with `~/`**" (memory.md);
+  settings.md repeats "Accepts an absolute path or a `~/`-prefixed path". **Relative paths are
+  therefore not accepted.** What Claude Code does with a relative value — reject at startup, ignore
+  the setting, or resolve it against cwd — is **not documented**.
+- **Whole path or parent?** The docs give the setting as a replacement for the *whole* memory
+  directory, not for the `~/.claude/projects/` parent. The default directory is
+  `~/.claude/projects/<project>/memory/`, and "to store auto memory in a different location, set
+  `autoMemoryDirectory`", illustrated as `"~/my-custom-memory-dir"`; the directory layout shown
+  immediately after is `MEMORY.md` plus topic files directly inside it. **Nothing on the page says
+  a `<project>` segment is appended to the configured value**, and the docs never show a
+  per-project subdirectory under a custom value.
+  - **The consequence, and it is the awkward one**: read literally, one `autoMemoryDirectory` in
+    *user* scope would be ONE memory directory for every repository on the machine — the
+    per-project split is a property of the default path, which the setting replaces. Setting it
+    per-project (project/local scope, under workspace trust) is the only documented way to keep
+    projects apart. **Whether Claude Code in fact appends a project segment to a user-scope value
+    is not documented and is the single most decision-relevant unknown here.**
+  - **Smallest safe experiment** (do not run against the live vault): `CLAUDE_CONFIG_DIR` to a
+    throwaway dir, `autoMemoryDirectory` in *user* scope pointing at an empty temp dir, start a
+    session in repo A and a session in repo B, ask each to remember one distinct fact, then look at
+    whether the temp dir contains one `MEMORY.md` or a per-project subtree.
+- **Missing directory**: **not documented.** Searched memory.md, settings.md and errors.md for
+  "does not exist", "create", "ENOENT" — no statement either way.
+
+### 8.2 The project key — ours and theirs are different rules
+
+Two docs pages describe the `<project>` segment and they are not phrased the same way:
+
+- **sessions.md** (Where sessions are stored): transcripts go to
+  `~/.claude/projects/<project>/<session-id>.jsonl`, "where `<project>` is **your working directory
+  path with non-alphanumeric characters replaced by `-`**". Over 200 characters the name is
+  truncated to 200 and a hash of the full path is appended.
+- **memory.md** (Storage location): "The `<project>` path is **derived from the git repository**, so
+  all worktrees and subdirectories within the same repo share one auto memory directory. **Outside a
+  git repo, the project root is used instead.**"
+
+Reconciling them: the naming *scheme* is a path slug (sessions.md), and what is slugged for memory
+is the repository rather than the cwd — which is what the 2.1.63 changelog line records: "Project
+configs & auto memory now shared across git worktrees of the same repository" (2026-02-28). This
+machine agrees with the path-slug scheme: all 29 directories under `~/.claude/projects/` are
+cwd-path slugs, e.g. `-Users-henkbakker-Development-claude-memory` (checked 2026-08-21).
+
+**Nothing in the docs mentions a git remote.** So:
+
+| | this plugin | Claude Code auto memory |
+| --- | --- | --- |
+| key | normalised git **remote** URL (`project_key`) | slugged **path** of the git repository |
+| same repo, two clones | one key | **two** directories |
+| same repo, two worktrees | one key | one directory (since 2.1.63, 2026-02-28) |
+| no remote | falls back (see `hooks/lib/paths.mjs`) | path slug, unaffected |
+| outside a git repo | — | "the project root is used instead" |
+
+The two rules agree only when a repo is cloned once per machine. **Multiple remotes, submodules and
+bare directories are not documented** — searched memory.md and sessions.md for "remote",
+"submodule", "bare"; the only qualifiers given are worktrees, subdirectories, and "outside a git
+repo". Which of the repository's paths is slugged (main worktree root vs. the `.git` common dir) is
+**not documented** either.
+
+Also relevant if we ever want a fixed key: `CLAUDE_CODE_PROJECT_DIR_NAME`, set **alongside**
+`CLAUDE_CONFIG_DIR`, names the `<project>` directory explicitly, and auto memory then lands in
+`<config dir>/projects/<that name>/memory/` whatever the working directory is. Ignored when
+`CLAUDE_CONFIG_DIR` is unset. Requires v2.1.234 (2026-08-17).
+
+### 8.3 The load cap — confirmed, and it is enforced on write too
+
+- **Confirmed**: "The first **200 lines** of `MEMORY.md`, or the first **25KB**, whichever comes
+  first, are loaded at the start of every conversation. Content beyond that threshold is not loaded
+  at session start." The 25 KB half arrived in 2.1.83 (2026-03-24): "`MEMORY.md` index now truncates
+  at 25KB as well as 200 lines".
+- **Both load and write.** On load it is a plain truncation. On write, "after Claude writes to
+  `MEMORY.md`, Claude Code measures the file against the 200-line and 25KB read limits": near a
+  limit Claude gets a reminder to compact (2.1.186, 2026-06-22); over a limit **the write still
+  succeeds** and Claude Code returns an error telling it to rewrite the index (2.1.210,
+  2026-07-14 — before that version an over-limit index was "silently truncated on the next load
+  with no write-time signal").
+- **A file Claude Code did not write**: the measurement is documented as happening **after Claude
+  writes** — there is no documented check at load time, and no documented warning for an
+  over-limit `MEMORY.md` that Claude Code never wrote. **This is the failure mode #75 is about, and
+  the docs confirm it is silent**: a vault index that crosses 25 KB is truncated on load with
+  nothing said. Searched memory.md and errors.md for a load-time warning; none exists.
+- **Reported to whom**: even the write-time error is not a terminal banner — errors.md says
+  "Claude Code delivers the error to Claude after the write rather than printing it as a banner in
+  your terminal, so you may notice it only in the transcript." The user is not told.
+- **What is stripped before measuring**: "YAML frontmatter and block-level HTML comments are
+  stripped before the index is loaded, so they don't count toward the limits." Confirmed as
+  v2.1.211 (2026-07-15); before that the raw file was measured.
+- **Scope of the cap**: `MEMORY.md` only. Topic files in the same directory are **not** loaded at
+  startup and are read on demand — CLAUDE.md files are loaded in full regardless of length.
+
+### 8.4 The write path
+
+- **Triggers**: Claude decides — "Claude doesn't save something every session. It decides what's
+  worth remembering based on whether the information would be useful in a future conversation."
+  Also on explicit request ("remember that…"). The UI signals are the "Saved N memories" /
+  "Recalled N memories" lines. Shipped in 2.1.32 (2026-02-05): "Claude now automatically records
+  and recalls memories as it works."
+- **What files**: `MEMORY.md` (the index) plus topic files Claude creates in the same directory.
+  "Claude reads and writes files in this directory throughout your session."
+- **Rewriting a file it did not create**: **not documented as a distinct case.** Claude Code
+  compacts `MEMORY.md` by instructing Claude to rewrite it when it is near or over a limit — that
+  instruction does not distinguish a file Claude wrote from one a plugin wrote. So the documented
+  behaviour is that an over-limit `MEMORY.md`, whoever authored it, is a rewrite target. **Whether
+  Claude actually rewrites a foreign index in practice would need an experiment** (a throwaway
+  `CLAUDE_CONFIG_DIR`, a synthetic 300-line `MEMORY.md`, one session, then diff the file).
+- **The `modified` stamp**: "When Claude writes a memory file that begins with YAML frontmatter,
+  Claude Code records the write time in a `modified` frontmatter field as an ISO 8601 timestamp…
+  **Any file that has frontmatter gets the field the next time Claude writes it**, including files
+  created on earlier versions; **Claude Code never adds frontmatter to a file that has none.**"
+  Requires v2.1.214 (2026-07-18); the shipped changelog line is "Added an ISO `modified` timestamp
+  to memory file frontmatter", alongside "Fixed memory frontmatter values being silently truncated
+  at an inline `#` when memory files are saved". An earlier, coarser form of this shipped in 2.1.75
+  (2026-03-13): "Added last-modified timestamps to memory files".
+  - For us: our notes carry frontmatter, so **the stamp is reachable on any file Claude Code
+    writes in that directory** — and the `#`-truncation fix is a reminder that this writer parses
+    and re-serialises our frontmatter, it does not append blindly.
+
+### 8.5 Symlinks — the crux, and it is undocumented
+
+**There is no documented statement about the auto-memory directory being a symlink.** Searched
+memory.md, settings.md, sessions.md and the full changelog for `symlink` co-occurring with
+`memory`: **zero hits**. Claude Code has hardened many *other* paths against symlinks recently, and
+the pattern is worth noting because it shows the direction of travel:
+
+| version | date | what was fenced |
+| --- | --- | --- |
+| 2.1.210 | 2026-07-14 | late-appearing `.claude/*` symlinks reconciled into the sandbox deny-write list |
+| 2.1.212 | 2026-07-16 | worktree creation no longer follows a committed symlink at `.claude/worktrees` |
+| 2.1.216 | 2026-07-20 | workflow saves and scheduled-task writes no longer follow a symlink at `.claude` |
+| 2.1.216 | 2026-07-20 | `/rewind` no longer restores or deletes through symlinks or hard links |
+| 2.1.217 | 2026-07-21 | background session isolation canonicalizes symlinked working directories |
+| 2.1.232 | 2026-08-15 | Cowork skips a `~/.claude/CLAUDE.md` that is itself a symlink or hard link, and a symlinked `~/.claude/rules/` pointing outside the workspace |
+
+None of those touch `projects/<project>/memory/`. **Empirically, on this machine 2026-08-21, the
+symlink IS followed**: `~/.claude/projects/-Users-henkbakker-Development-claude-memory/memory` is a
+symlink into the vault, and this repo's vault `MEMORY.md` was injected into a live session labelled
+"user's auto-memory, persists across conversations" (the evidence in #75). So today it works —
+**but it works undocumented, and the 2.1.232 Cowork precedent is a system that decided to stop
+following a user-scope symlink.** That is the risk to weigh: the arrangement rests on unstated
+behaviour that the vendor is actively tightening elsewhere.
+
+One documented near-miss worth keeping: 2.1.228 (2026-08-11) "Fixed session cleanup deleting
+contents inside a project's memory folder" — the retention sweep for `cleanupPeriodDays` once
+reached into the memory directory. memory.md now states the directory is excluded from that sweep.
+**A bug of that shape, against a symlinked directory, would delete vault notes.**
+
+### 8.6 Disabling
+
+- **`autoMemoryEnabled`** — settings.md: default `true`; "When `false`, Claude **does not read from
+  or write to** the auto memory directory." Settable per project. The `/memory` toggle writes it to
+  user settings at `~/.claude/settings.json`.
+- **`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`** — the environment-variable form, confirmed in memory.md
+  and cross-referenced from the settings.md row.
+- **`/memory`** — lists CLAUDE.md / CLAUDE.local.md and other memory locations across user and
+  project scopes, toggles auto memory, and offers to open the auto-memory folder. (Since 2.1.216,
+  2026-07-20, it no longer blocks the session while a GUI editor is open.)
+- **What disabling does to an existing directory**: nothing is deleted — the setting only stops
+  reads and writes, and memory.md separately states `MEMORY.md` and topic files "stay until you or
+  Claude edits or deletes them". Nothing documents a cleanup on disable.
+
+### 8.7 Version history
+
+| version | date (npm publish) | change |
+| --- | --- | --- |
+| 2.1.32 | 2026-02-05 | auto memory ships — "Claude now automatically records and recalls memories as it works" |
+| 2.1.33 | 2026-02-06 | `memory` frontmatter field for agents (`user` / `project` / `local` scope) |
+| 2.1.63 | 2026-02-28 | project configs & auto memory shared across git worktrees of the same repository |
+| **2.1.74** | **2026-03-11** | **`autoMemoryDirectory` setting added** |
+| 2.1.75 | 2026-03-13 | last-modified timestamps on memory files |
+| 2.1.83 | 2026-03-24 | `MEMORY.md` truncates at 25 KB as well as 200 lines |
+| 2.1.186 | 2026-06-22 | reminder to compact `MEMORY.md` when nearing the limit |
+| 2.1.210 | 2026-07-14 | over-limit write returns an explicit error instead of silent truncation |
+| 2.1.211 | 2026-07-15 | the over-limit measurement excludes frontmatter and HTML comments |
+| 2.1.214 | 2026-07-18 | ISO `modified` timestamp in memory-file frontmatter |
+| 2.1.228 | 2026-08-11 | fixed session cleanup deleting contents inside a project's memory folder |
+| 2.1.234 | 2026-08-17 | `CLAUDE_CODE_PROJECT_DIR_NAME` names the `<project>` directory |
+
+So auto memory is **six and a half months old** (2026-02-05) and `autoMemoryDirectory` is **five
+months old** (2026-03-11); five of the twelve changes above landed in the last six weeks. Every
+claim in this section is dated because the surface is still moving.
+
+### 8.8 What this means for the #75 decision
+
+Documented and decision-bearing:
+
+1. `autoMemoryDirectory` exists, takes absolute or `~/`-prefixed paths, and is honoured from user
+   scope without a trust prompt — **so "separate" is one line of user settings**, no per-repo setup,
+   *provided* a single user-scope value does not collapse every project into one directory (8.1,
+   undocumented).
+2. The cap is real, and for an index Claude Code did not write there is **no documented load-time
+   warning** — truncation is silent. Whichever way #75 goes, the bound belongs to us.
+3. Claude Code is a second writer with its own rewrite instructions and its own frontmatter stamp,
+   on a directory whose symlink-following is undocumented, against a vendor that has fenced
+   symlinks at five other `.claude` paths in the last five weeks.
+
+Undocumented and worth an experiment before committing to "co-operate": whether a user-scope
+`autoMemoryDirectory` keeps projects apart, and whether Claude rewrites a `MEMORY.md` it did not
+author.
+
+---
+
 ## Where ours loses — verified against this repo, 2026-08-21
 
 #42 names five. All five hold; the wording needs correcting on two, and there are three more.
@@ -554,6 +770,12 @@ Claude Code:
 
 - <https://docs.claude.com/en/docs/claude-code/memory> (read as `.../memory.md`)
 - <https://docs.claude.com/en/docs/claude-code/interactive-mode.md> (searched for `#`; no hit)
+- <https://code.claude.com/docs/en/memory.md> (section 8; same page, canonical host)
+- <https://code.claude.com/docs/en/settings.md> (section 8; `autoMemoryDirectory`, `autoMemoryEnabled` rows)
+- <https://code.claude.com/docs/en/sessions.md> (section 8; `<project>` derivation, `CLAUDE_CODE_PROJECT_DIR_NAME`)
+- <https://code.claude.com/docs/en/errors.md> (section 8; "Memory index is over its read limit")
+- <https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md> (section 8; version history, symlink search)
+- <https://registry.npmjs.org/@anthropic-ai/claude-code> (section 8; `time` map, for release dates the changelog omits)
 
 basic-memory:
 
