@@ -76,8 +76,10 @@ decision fired every assistant turn) and `distill-session · SessionEnd` (the ru
 transcript) are separate rows with separate budgets. Read it with three things in mind: **`ms` is the
 whole process**, node startup included, because that is what the timeout applies to; a `· worker`
 row is the detached background run and has no timeout, so never read it as a slow hook; and the
-outcome column is the point — `noop-missing-dep` means a hook is doing nothing at all and needs
-`/memory:doctor` proper. `debounced` and `child-guard` are deliberate skips, and a high skip rate is
+outcome column is the point — `noop-missing-dep` means the hook can do nothing at all because what
+it needs is absent. Read the reason before treating it as a fault: for `graph-staleness-check` it
+usually means the optional L4 graph layer was never set up, which is a permanent and perfectly
+healthy state on most installs. `/memory:doctor` proper says which it is. `debounced` and `child-guard` are deliberate skips, and a high skip rate is
 not a fault by itself — read it against what the hook is for. `distill-session · Stop` is a crash
 fallback that stands down on nearly every assistant turn, so 100% `debounced` there is the healthy
 state. It is a finding where work was expected: a `· SessionEnd` row that never spawns, or a

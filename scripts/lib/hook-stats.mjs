@@ -186,11 +186,17 @@ const num = (v, digits = 0) => (v === null ? '-' : v.toFixed(digits));
 // redaction has to happen before it is printed. The log file on disk keeps the full message — it is
 // local, and it is what someone debugging their own machine actually needs.
 //
-// Two passes, because a path with a SPACE in it is the common case here, not an edge case: vaults
-// live under `~/My Vault`, `~/Google Drive`, `Library/Mobile Documents/…`. The unquoted rule alone
-// turned `open '/Users/bob/My Vault/notes/x.md'` into `<path> Vault<path>`, publishing the vault
-// directory's name — so quoted paths are taken whole, first, and only then is the bare rule applied
-// to what is left.
+// THREE passes, in this order, and the order is the whole design. A path with a SPACE in it is the
+// common case here rather than an edge case — vaults live under `~/My Vault`, `~/Google Drive`,
+// `Library/Mobile Documents/…` — and the bare rule alone turned `open '/Users/bob/My Vault/x.md'`
+// into `<path> Vault<path>`, publishing the vault directory's name.
+//
+//   1. a QUOTED path, taken whole, spaces and all;
+//   2. a quoted path with NO CLOSING QUOTE, which is what logHook's 200-char cap leaves behind on a
+//      long path — without this one, pass 3 gets it and the leak reopens;
+//   3. the bare rule, on whatever is left.
+//
+// Each pass only sees what the ones before it did not take.
 //
 // Deliberately blunt: over-redacting a reason costs a word, under-redacting it publishes a private
 // file path. Windows paths are not matched, and are not reachable — these messages come from Node's
@@ -292,8 +298,9 @@ export function render(s, limits) {
     '',
     'ran = did its work · spawned = handed it to a detached child · child-guard = it fired inside',
     'work it had itself started · debounced = it stood down: its own timer, a line count below the',
-    'threshold, or a lock somebody else holds · noop-missing-dep = a dependency is absent, so this',
-    'hook is doing nothing at all · error = it threw, or the work it tried to start never did.',
+    'threshold, or a lock somebody else holds · noop-missing-dep = what it needs is absent, so it',
+    'can do nothing at all — sometimes permanently and correctly, when that thing is an OPTIONAL',
+    'integration this install never set up · error = it threw, or the work it started never ran.',
     '',
     'A HIGH SKIP RATE IS NOT A FAULT BY ITSELF — read it against what the hook is for.',
     '`distill-session · Stop` is a crash fallback and stands down on nearly every assistant turn, so',

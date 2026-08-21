@@ -58,7 +58,7 @@ export const REASONS = {
   debounced: 'debounced',
   noClaude: 'no claude CLI',
   noReport: 'no report yet',
-  noRepo: 'not a git work tree',
+  noRepo: 'not a git work tree — nothing to compare a report against',
   noCommit: 'no recorded commit',
   noHead: 'no HEAD',
   fresh: 'fresh',
