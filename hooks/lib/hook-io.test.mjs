@@ -274,7 +274,8 @@ test('appendJsonl stamps t and slug FIRST, then the record verbatim', () => {
 test('appendJsonl dates the file by the same clock it stamps the line with', () => {
   withState((logs) => {
     appendJsonl('hooks', process.cwd(), { hook: 'x' });
-    const [file] = fs.readdirSync(logs);
+    // `.retention-stamp` lives here too, and sorts first — the log files are the .jsonl ones.
+    const [file] = fs.readdirSync(logs).filter((f) => f.endsWith('.jsonl'));
     const [rec] = readJsonl(path.join(logs, file));
     // A line landing in yesterday's file is how a window silently loses a day. Same ISO string for
     // both, so they cannot disagree even across a midnight boundary mid-call.
@@ -452,19 +453,48 @@ test('an unparseable retention keeps the default window rather than emptying the
   });
 });
 
-test('appendJsonl prunes when the day rolls over, and only then', () => {
+test('appendJsonl prunes once a day, and says on the line how many it deleted', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, ['hooks-2000-01-01.jsonl', 'recall-2000-01-02.jsonl']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // no stamp yet: the day rolled
+      const day = new Date().toISOString().slice(0, 10);
+      const [first] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+      assert.strictEqual(
+        first.pruned,
+        2,
+        'the work logs itself, on the line already being written',
+      );
+      assert.strictEqual(fs.readFileSync(path.join(logs, '.retention-stamp'), 'utf8').trim(), day);
+
+      // The stamp is what keeps this off the per-prompt path, and it is shared by every family
+      // and every process: a stale file dropped in afterwards survives until tomorrow. The first
+      // guard was `!existsSync(today's file)`, which is per family and per process — measured,
+      // seven of nine concurrent hooks each ran a full pass.
+      seed(logs, ['recall-2000-01-03.jsonl']);
+      appendJsonl('recall', process.cwd(), { abstained: true });
+      assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-03.jsonl')), true);
+      const [second] = readJsonl(path.join(logs, `recall-${day}.jsonl`));
+      assert.ok(!('pruned' in second), 'omitted, never zero');
+    });
+  });
+});
+
+test('a stamp from an earlier day prunes again; a stamp we cannot read prunes rather than skips', () => {
   withState((logs) => {
     withRetention('30', () => {
       seed(logs, ['hooks-2000-01-01.jsonl']);
-      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // first write today: the day rolled
+      fs.writeFileSync(path.join(logs, '.retention-stamp'), '2000-01-01\n');
+      appendJsonl('hooks', process.cwd(), { hook: 'a' });
       assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')), false);
 
-      // The guard is what keeps this off the per-prompt path: a stale file dropped in after
-      // today's already exists survives until tomorrow's first line. Without it, every append
-      // would readdir.
-      seed(logs, ['recall-2000-01-01.jsonl']);
+      // An unreadable stamp reads as '' — never as today. Failing the other way would leave a
+      // machine pruning nothing, forever, with nothing saying so.
+      seed(logs, ['hooks-2000-01-02.jsonl']);
+      fs.rmSync(path.join(logs, '.retention-stamp'));
+      fs.mkdirSync(path.join(logs, '.retention-stamp'));
       appendJsonl('hooks', process.cwd(), { hook: 'b' });
-      assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-01.jsonl')), true);
+      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-02.jsonl')), false);
     });
   });
 });

@@ -105,6 +105,36 @@ export function writeMarker(file, seconds) {
 }
 
 /**
+ * The day the last retention pass ran, as `YYYY-MM-DD`, or `''` when there has never been one.
+ *
+ * A second marker format rather than `readMarker()`'s epoch seconds, because the question here is
+ * "has the day rolled over?" and a day is what the filenames are keyed on. Comparing seconds would
+ * reintroduce the clock arithmetic the UTC cutoff exists to avoid.
+ *
+ * @param {string} file
+ * @returns {string}
+ */
+export function readStamp(file) {
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * @param {string} file
+ * @param {string} day
+ */
+export function writeStamp(file, day) {
+  try {
+    fs.writeFileSync(file, `${day}\n`);
+  } catch {
+    /* a stamp we cannot write means the next hook prunes again — never a reason to fail */
+  }
+}
+
+/**
  * Is a run still inside its debounce window?
  *
  * `last === 0` means no marker, which must NOT count as recent — the missing-marker case is the
@@ -515,12 +545,32 @@ export function appendJsonl(family, cwd, record) {
     } catch {
       /* no repo, or a key we cannot resolve — the line is still worth writing */
     }
-    const file = path.join(stateDir('logs'), `${family}-${t.slice(0, 10)}.jsonl`);
-    // The day has rolled over exactly when today's file does not exist yet, which is the one
-    // moment a new dated file appears — so retention costs one existsSync per append and a
-    // readdir once a day, on the day the directory actually grows.
-    if (!fs.existsSync(file)) pruneDatedLogs(new Date(t));
-    fs.appendFileSync(file, JSON.stringify({ t, slug, ...record }) + '\n');
+    const dir = stateDir('logs');
+    const file = path.join(dir, `${family}-${t.slice(0, 10)}.jsonl`);
+    // A DATE STAMP, not "today's file is missing". That first guard was a check-then-act across
+    // PROCESSES: logs/ is machine-wide, five SessionStart hooks fire at once, and each family has
+    // its own file — measured 2026-08-21, seven of nine concurrent hooks each ran a full prune
+    // pass, 1.1 s apiece against a 4686-file backlog. The stamp is written BEFORE the pass, so the
+    // losers of the race skip it instead of repeating it: nine concurrent hooks over a 300-file
+    // backlog went from seven full passes to two. Two processes reading the stale stamp in the
+    // same instant still both prune; that costs a duplicate readdir, not a wrong result, and is
+    // the cheap half of a lock this path must not wait on.
+    const stamp = path.join(dir, '.retention-stamp');
+    const day = t.slice(0, 10);
+    /** @type {number | undefined} */
+    let pruned;
+    if (readStamp(stamp) !== day) {
+      writeStamp(stamp, day);
+      const n = pruneDatedLogs(new Date(t)).length;
+      if (n > 0) pruned = n;
+    }
+    // Deleting is work, so it logs itself, on the line the caller was already writing. Omitted
+    // when nothing was deleted, never zero — the same rule the cost fields follow. Without it a
+    // machine that came back after two months silently loses the only evidence --hooks reads.
+    fs.appendFileSync(
+      file,
+      JSON.stringify({ t, slug, ...(pruned && { pruned }), ...record }) + '\n',
+    );
   } catch {
     /* a log that cannot be written must never fail or delay a hook */
   }

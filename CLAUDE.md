@@ -250,8 +250,13 @@ also makes retention a ceiling on those views: `--hooks=60` can only read what 3
 
 **Retention runs opportunistically, on the first append of a new day** — not from `/memory:prune`.
 A retention policy that needs a human to run a command is not one, and the day rolls over exactly
-when today's file does not exist yet, so the cost is one `existsSync` per append and one `readdir`
-per family per day (two, today). **The cutoff is built in UTC**, by the same `toISOString()` that
+when the `.retention-stamp` beside the logs no longer names today, so the cost is one small read
+per append and — for the hooks that lose the race, which is most of them — no `readdir` at all.
+The stamp is written BEFORE the pass, and it is per DIRECTORY, not per family: the first guard was
+`!existsSync(today's file)`, which is check-then-act across processes, and five SessionStart hooks
+fire at once against one machine-wide `logs/`. Measured, nine concurrent hooks: seven full prune
+passes with that guard, two with the stamp. **A pass that deleted anything says so** — `pruned: n`
+on the line the caller was already writing, omitted when it deleted nothing. **The cutoff is built in UTC**, by the same `toISOString()` that
 names the files; the vault pruner's `cutoffDate()` is LOCAL by design and using it here deleted the
 live file of the other family on every append, east of Greenwich, at a retention of 0. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
 machine that stopped writing logs and therefore stopped pruning them.

@@ -21,8 +21,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   (`/memory:doctor --stats`, `--hooks`) query a window of dated files, one per day a family ran, so
   a day is the unit — and retention is now the ceiling on how far back those views can look. The
   prune runs on the first append of a NEW day rather than from `/memory:prune`, because a retention
-  policy that waits for a human to run a command is not one; the guard costs one `existsSync` per
-  append and one `readdir` per family per day. It deletes where the vault's log prune only moves — these are
+  policy that waits for a human to run a command is not one; a date stamp in the directory keeps
+  the concurrent SessionStart hooks from each repeating the pass, and a pass that deleted anything
+  records `pruned: n` on the log line it was already writing. It deletes where the vault's log prune only moves — these are
   machine-local debug lines, and an `Archive/` here would be the same unbounded directory under
   another name. `/memory:doctor` now prints the window and the oldest dated file beside the size,
   which is what shows a machine that stopped writing logs and so stopped pruning them.
