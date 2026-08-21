@@ -56,6 +56,7 @@ stays as it was written; it is not updated to track what shipped.
 | --- | --- |
 | [obsidian-second-brain](research/2026-08-21-obsidian-second-brain.md) | The repo several of our own checks came from. What is already ours, what was deliberately rejected, and the three items left. |
 | [Seven agent-memory systems](research/2026-08-21-agent-memory-systems-survey.md) | claude-mem, Mem0, Graphiti, Zep, memory-mcp, memsearch and the above, adversarially verified. Four mechanisms survive; the vendor benchmark numbers do not. |
+| [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
 
 ## Conventions for these documents
 
