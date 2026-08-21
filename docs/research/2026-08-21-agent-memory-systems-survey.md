@@ -34,7 +34,7 @@ Constants and the truncating break are in the hook source, and the README wordin
 
 **Sources:**
 - <https://github.com/eugeniughelbur/obsidian-second-brain>
-- <hooks/obsidian-recall.py (main)>
+- <https://raw.githubusercontent.com/eugeniughelbur/obsidian-second-brain/main/hooks/obsidian-recall.py>
 
 ### 3. WORTH STEALING #3 (with caveats) — progressive-disclosure retrieval: fetch a cheap ID-bearing index first, fetch full bodies only for filtered IDs. claude-mem exposes this as a three-layer MCP workflow — `search` (~50-100 tokens/result, compact index with IDs), `timeline` (chronological context, 100-200 tokens/observation), `get_observations` (~500-1,000 tokens/result, only for IDs that survived filtering) — plus a fourth workflow-reminder tool. memsearch implements the same shape as search → expand → transcript inside a forked-context subagent. Our single-shot recall injection has no retrieval-cost mechanism of this kind.
 
