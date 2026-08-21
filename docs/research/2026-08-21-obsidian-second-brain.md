@@ -8,7 +8,7 @@ blog post or a summary. Repo: `eugeniughelbur/obsidian-second-brain`, MIT, main 
 **Headline: we have already mined this repo, and the code says so.** Seven files in this repo credit
 it by name — `hooks/lib/validate-note.mjs:6`, `scripts/lib/memory-audit-checks.mjs:121`,
 `scripts/lib/memory-eval.mjs:9`, `scripts/lib/memory-synth-vault.mjs:8`,
-`scripts/memory-synth-vault.mjs:142`, `scripts/memory-semantic.mjs:284`,
+`scripts/memory-synth-vault.mjs:191`, `scripts/memory-semantic.mjs:284`,
 `scripts/lib/memory-semantic.mjs:599`. The write-time validator, the FRESH-1 predicate, the eval
 harness, the "what this does NOT measure" discipline, the index-coverage tripwire and the fusion-weight
 sweep are all already ours, taken from there. This note is therefore a second pass over the same
@@ -214,6 +214,6 @@ Ours (repo-relative):
 - `scripts/lib/memory-semantic.mjs` (:370 identity header, :585-604 fusion sweep and the w=20
   result, :621 `fuseRRF`, :689 best-chunk), `scripts/memory-semantic.mjs` (:284 coverage)
 - `scripts/lib/memory-eval.mjs` (:9), `scripts/lib/memory-synth-vault.mjs` (:8),
-  `scripts/memory-synth-vault.mjs` (:142)
+  `scripts/memory-synth-vault.mjs` (:191)
 - `commands/eval.md`, `commands/prune.md`, `docs/optional-integrations.md` (:65 sentinels),
   `docs/decisions/2026-08-19-orchestrated-change.md`

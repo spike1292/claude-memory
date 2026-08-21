@@ -28,7 +28,8 @@ import { CARD, bm25, lexTokens } from '../../scripts/lib/lexical.mjs';
 export const MAX_NOTES = 4;
 export const MAX_CHARS = 900; // ~250 tokens
 // Below this the top hit is not worth the reader's attention. Swept 2026-08-19 on the synthetic
-// bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 100/300/1000 notes), using the
+// bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 120/300/1000 notes — `--notes 100`
+// built 120 before #49 made that flag a ceiling), using the
 // `cases-paraphrase.jsonl` + `cases-keyword.jsonl` that script emits: 80 on-topic prompts whose
 // gold note is known by construction and which nobody wrote for this sweep. The off-topic control
 // is the 28 questions in `$CLAUDE_MEMORY_HOME/eval/eval-cases-authored.jsonl` — they ask about
@@ -46,7 +47,7 @@ export const MAX_CHARS = 900; // ~250 tokens
 // it scores whole notes, and on these same cases puts gold at rank 1 for 50% (paraphrase) and
 // 25% (keyword) against keywordArm's 100% on both.
 //
-//   gate   on-topic answered (of 80)   off-topic false-fire (of 28)   at 100/300/1000 notes
+//   gate   on-topic answered (of 80)   off-topic false-fire (of 28)   at 120/300/1000 notes
 //    6.0   80  80  80                  17  19  28
 //   10.0   80  80  80                   9  11  13
 //   14.0   80  80  80                   8   8  10

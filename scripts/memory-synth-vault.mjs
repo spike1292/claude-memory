@@ -5,7 +5,7 @@
 // formatter live in lib/memory-synth-vault.mjs, with their tests beside them.
 //
 // Usage:
-//   node scripts/memory-synth-vault.mjs --out /tmp/synthvault [--notes 300] [--seed 7]
+//   node scripts/memory-synth-vault.mjs --out /tmp/synthvault [--notes 300] [--seed 7] [--echoes 2]
 //   node scripts/memory-semantic.mjs --vault /tmp/synthvault --slug bench --index --rebuild
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,14 +31,45 @@ const val = (n, d) => {
   return i >= 0 ? argv[i + 1] : d;
 };
 const OUT = val('--out', /** @type {string | null} */ (null));
-const TOTAL = Number(val('--notes', 300));
-const SEED = Number(val('--seed', 7));
-const ECHOES_PER_GOLD = Number(val('--echoes', 2));
+const RAW_NOTES = val('--notes', 300);
+const TOTAL = Number(RAW_NOTES);
+const RAW_SEED = val('--seed', 7);
+const SEED = Number(RAW_SEED);
+const RAW_ECHOES = val('--echoes', 2);
+const ECHOES_PER_GOLD = Number(RAW_ECHOES);
 
 if (!OUT) {
-  console.log('usage: --out <dir> [--notes 300] [--seed 7]');
+  console.log('usage: --out <dir> [--notes 300] [--seed 7] [--echoes 2]');
   process.exit(1);
 }
+
+// --notes is a CEILING on the whole vault, and gold+echoes are written first. Below one gold
+// note plus its echoes there is nothing to measure, so refuse rather than write an empty case
+// set; above it, MAX_GOLD scales the gold cases down so the printed total is the real one.
+// Silently ignoring --notes is what #49 was.
+if (!Number.isInteger(SEED)) {
+  // mulberry32 coerces with |0, so --seed abc silently generated the seed-0 vault under a
+  // MANIFEST claiming "seed NaN" — a stated parameter nobody can regenerate from.
+  console.error(`--seed must be a whole number, got ${RAW_SEED}`);
+  process.exit(1);
+}
+if (!(Number.isInteger(ECHOES_PER_GOLD) && ECHOES_PER_GOLD >= 0)) {
+  console.error(`--echoes must be a whole number >= 0, got ${RAW_ECHOES}`);
+  process.exit(1);
+}
+const PER_GOLD = 1 + ECHOES_PER_GOLD;
+// Number.isInteger, not `TOTAL < PER_GOLD`: it is the one predicate that also rejects NaN (a
+// non-numeric --notes), Infinity, and a fraction (--notes 60 --echoes 0.5 wrote 80). Each of
+// those was #49 again through a different door. It does NOT bound the filler loop from above —
+// --notes 1e21 is an integer and runs until you kill it, as it did before this.
+// ponytail: no upper bound; add one if anyone ever asks for a vault they did not mean.
+if (!(Number.isInteger(TOTAL) && TOTAL >= PER_GOLD)) {
+  console.error(
+    `--notes ${RAW_NOTES} must be a whole number >= the minimum ${PER_GOLD} (one gold note plus ${ECHOES_PER_GOLD} echoes)`,
+  );
+  process.exit(1);
+}
+const MAX_GOLD = Math.floor(TOTAL / PER_GOLD);
 
 const rand = mulberry32(SEED);
 const SLUG = 'bench';
@@ -60,43 +91,61 @@ const allNames = [];
 const cases = { paraphrase: [], keyword: [], dutch: [] };
 
 // gold notes — spread across layers so layer scoping is exercised, not assumed
-let i = 0;
-for (const d of DOMAINS) {
-  for (const c of d.cases) {
-    const name = `${d.product.toLowerCase()}-${c.title}`;
-    const layer = layers[i % layers.length];
-    const description = c.title.replace(/-/g, ' ');
+// Truncation is round-robin across domains, then written back in the original order: taking the
+// first MAX_GOLD of a domain-major walk gave CI's --notes 60 twenty gold cases from four of the
+// eight domains, while filler kept coming from all eight — a case set whose vocabulary coverage
+// changed silently with --notes. The second sort is what keeps the ORDER of cases-*.jsonl
+// identical to an untruncated run, which is half of byte-identity at --notes 300.
+//
+// `i` below is the position in the SELECTED list, not the original index, and that is the other
+// half of the same lesson: every domain has as many cases as there are layers, so the original
+// index modulo layers.length IS the round-robin key — slicing it sliced whole layers, and CI's
+// --notes 60 got no gold at all in Decisions or permanent. By position, the 20 survivors land
+// 4-4-4-4-4. Untruncated the two are the same number, so 300 is unmoved.
+const gold = DOMAINS.flatMap((d, di) => d.cases.map((c, ci) => ({ d, c, di, ci })))
+  .map((g, idx) => ({ ...g, idx }))
+  .sort((a, b) => a.ci - b.ci || a.di - b.di)
+  .slice(0, MAX_GOLD)
+  .sort((a, b) => a.idx - b.idx);
+
+for (const [i, { d, c }] of gold.entries()) {
+  const name = `${d.product.toLowerCase()}-${c.title}`;
+  const layer = layers[i % layers.length];
+  const description = c.title.replace(/-/g, ' ');
+  fs.writeFileSync(
+    path.join(dirs[layer], `${name}.md`),
+    noteText(name, `${d.product}: ${description}`, c.body, [c.ask, c.key], []),
+  );
+  allNames.push(name);
+  // two echoes per gold note, same domain, same symptom, different cause
+  for (let e = 0; e < ECHOES_PER_GOLD; e++) {
+    const [cause, fix] = ECHO_CAUSES[(i + e) % ECHO_CAUSES.length];
+    const symptom = c.body.split('. ')[0];
+    const en = `${d.product.toLowerCase()}-similar-${e + 1}-${c.title}`;
+    const el = layers[(i + e + 1) % layers.length];
     fs.writeFileSync(
-      path.join(dirs[layer], `${name}.md`),
-      noteText(name, `${d.product}: ${description}`, c.body, [c.ask, c.key], []),
+      path.join(dirs[el], `${en}.md`),
+      noteText(
+        en,
+        `${d.product}: a similar-looking ${d.name} symptom with a different cause (${e + 1})`,
+        `${symptom}. It looks like the better known problem in this area, but here the cause is ${cause}, ` +
+          `which is unrelated. The fix is to ${fix}. Confirm which one you have before changing anything.`,
+        [`${d.name} symptom with an unrelated cause ${e + 1}`],
+        [],
+      ),
     );
-    allNames.push(name);
-    // two echoes per gold note, same domain, same symptom, different cause
-    for (let e = 0; e < ECHOES_PER_GOLD; e++) {
-      const [cause, fix] = ECHO_CAUSES[(i + e) % ECHO_CAUSES.length];
-      const symptom = c.body.split('. ')[0];
-      const en = `${d.product.toLowerCase()}-similar-${e + 1}-${c.title}`;
-      const el = layers[(i + e + 1) % layers.length];
-      fs.writeFileSync(
-        path.join(dirs[el], `${en}.md`),
-        noteText(
-          en,
-          `${d.product}: a similar-looking ${d.name} symptom with a different cause (${e + 1})`,
-          `${symptom}. It looks like the better known problem in this area, but here the cause is ${cause}, ` +
-            `which is unrelated. The fix is to ${fix}. Confirm which one you have before changing anything.`,
-          [`${d.name} symptom with an unrelated cause ${e + 1}`],
-          [],
-        ),
-      );
-      allNames.push(en);
-    }
-    cases.paraphrase.push({ q: c.ask, gold: [name], style: 'synthetic-paraphrase' });
-    cases.keyword.push({ q: c.key, gold: [name], style: 'synthetic-keyword' });
-    cases.dutch.push({ q: c.nl, gold: [name], style: 'synthetic-dutch' });
-    i++;
+    allNames.push(en);
   }
+  cases.paraphrase.push({ q: c.ask, gold: [name], style: 'synthetic-paraphrase' });
+  cases.keyword.push({ q: c.key, gold: [name], style: 'synthetic-keyword' });
+  cases.dutch.push({ q: c.nl, gold: [name], style: 'synthetic-dutch' });
 }
 const goldCount = cases.paraphrase.length; // gold cases, NOT files: echoes are distractors
+const availableGold = DOMAINS.reduce((n, d) => n + d.cases.length, 0);
+if (goldCount < availableGold)
+  console.log(
+    `--notes ${TOTAL} fits ${goldCount} of ${availableGold} gold cases (${PER_GOLD} note${PER_GOLD === 1 ? '' : 's'} each)`,
+  );
 
 // filler notes — same subject areas, so they compete rather than pad
 let f = 0;
