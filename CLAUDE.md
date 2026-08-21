@@ -260,7 +260,9 @@ pass in 15 trials of nine hooks, and **zero** when `logs/` is read-only, which i
 those unlinks would fail too. The claim is taken before the pass and is swept by the next day's.
 **A pass that deleted anything says so** — `pruned: n` after the caller's own fields, omitted when
 it deleted nothing, and summed by `/memory:doctor --hooks`, which reports history it may have
-deleted. **The cutoff is built in UTC**, by the same `toISOString()` that
+deleted. **That sum is the one figure in that report which is NOT scoped to the project you run it
+from**, and it is deliberate: one pass deletes every project's files, so scoping it told the
+project that lost 300 files that it had lost none. **The cutoff is built in UTC**, by the same `toISOString()` that
 names the files; the vault pruner's `cutoffDate()` is LOCAL by design and using it here deleted the
 live file of the other family on every append, east of Greenwich, at a retention of 0. `/memory:doctor` prints the window and the oldest dated file, which is what shows a
 machine that stopped writing logs and therefore stopped pruning them.

@@ -110,7 +110,7 @@ const CLAIM_PREFIX = '.retention-';
 // Anchored on a DATE, not on the prefix, for the same reason `DATED_LOG` is anchored on the two
 // families: `.retention-notes.md` is not ours to delete, and `.startsWith()` alone deleted a bare
 // `.retention-` and anything sorting below today.
-const CLAIM = new RegExp(`^\\${CLAIM_PREFIX}(\\d{4}-\\d{2}-\\d{2})$`);
+const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
 
 /**
  * Claim today's retention pass, machine-wide. True for exactly one caller per day.

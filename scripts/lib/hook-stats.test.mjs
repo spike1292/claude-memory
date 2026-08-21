@@ -518,3 +518,43 @@ test('a pass recorded on a recall line still reaches the hooks report', () => {
     /deleted 7 dated/,
   );
 });
+
+test('a project whose own lines were deleted is still told they were', () => {
+  // The no-invocations arm is exactly what retention produces for a project it pruned, and it used
+  // to answer "no hook has run for this project yet" while a pass had just deleted its history.
+  const out = render(
+    summarize([line({ hook: 'x', ms: 1, slug: 'other', pruned: 300 })], 'mine'),
+    new Map(),
+  );
+  assert.match(out, /not measured/);
+  assert.match(out, /retention deleted 300 dated log file\(s\)/);
+});
+
+test('the pruned sum is bounded by the window the report prints, not by a second file count', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-window-'));
+  const w = (/** @type {string} */ n, /** @type {object} */ o) =>
+    fs.writeFileSync(path.join(dir, n), JSON.stringify(o) + '\n');
+  // The recall family is sparser — it logs only when armed — so its newest N files reach back
+  // months further than the newest N hook files. A pass recorded in January is not "while this
+  // window was being logged" over last week's dates.
+  w('hooks-2026-08-20.jsonl', {
+    t: '2026-08-20T10:00:00Z',
+    hook: 'x',
+    event: 'e',
+    ms: 1,
+    outcome: 'ran',
+  });
+  w('hooks-2026-08-21.jsonl', {
+    t: '2026-08-21T10:00:00Z',
+    hook: 'x',
+    event: 'e',
+    ms: 1,
+    outcome: 'ran',
+  });
+  w('recall-2026-01-01.jsonl', { t: '2026-01-01T10:00:00Z', pruned: 500 });
+  w('recall-2026-08-21.jsonl', { t: '2026-08-21T10:00:00Z', pruned: 7 });
+
+  const out = report({ logDir: dir, manifest: MANIFEST, days: 2 });
+  assert.match(out, /retention deleted 7 dated log file\(s\)/);
+  assert.doesNotMatch(out, /507|500 dated/);
+});
