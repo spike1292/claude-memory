@@ -234,6 +234,10 @@ if [ -d "$VAULT" ]; then
     ok "vault holds $n notes"
   else
     other=""
+    # ponytail: the CloudStorage glob is macOS-only and matches nothing on Linux, where the
+    # recorded previous vault ($STATE/vault) is the only candidate that carries. Add a Linux
+    # sync path when someone runs this on Linux and can name a real one — guessing produces
+    # candidates that are never hit and never noticed.
     for cand in "$HOME/Documents/ClaudeVault" \
                 "$(head -n1 "$STATE/vault" 2>/dev/null)" \
                 "$HOME/Library/CloudStorage"/*/*/Claude; do

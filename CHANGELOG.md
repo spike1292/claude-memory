@@ -120,6 +120,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
   rather than zero — and `--stats` reads exactly what it read before. Recall additionally writes a
   hook line, but only when it is armed: an inert feature must not cost every prompt a file append.
 
+### Fixed
+
+- **`findClaude()` looked for Homebrew only where Apple Silicon puts it, so every hook that shells
+  out was a no-op on the Linux installs the README claims to support.** The fallback list — used
+  when a GUI-launched session has no `claude` on `PATH` — held `/opt/homebrew/bin/claude` and
+  nothing for Linux. It now also probes `/home/linuxbrew/.linuxbrew/bin/claude` and
+  `~/.local/bin/claude`. The failure it caused was silent by construction: the distiller and the
+  graph-report refresh both degrade to no-ops when the CLI is missing, which is indistinguishable
+  from a hook that had nothing to do, so nothing reported it. `/memory:doctor` already warns when
+  `claude` is off `PATH`, and that warning was the only signal.
+- **`doctor.sh`'s search for a populated vault names its macOS-only candidate as such.** The
+  `$HOME/Library/CloudStorage/*/*/Claude` glob matches nothing on Linux, where the recorded previous
+  vault is the only candidate that carries. Marked rather than padded with guessed Linux sync paths,
+  which would be candidates that are never hit and never noticed.
+
 ## [0.5.0] - 2026-08-20
 
 ### Added

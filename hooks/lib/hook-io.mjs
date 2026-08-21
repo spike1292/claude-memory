@@ -310,14 +310,20 @@ export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
 /**
  * Locate the `claude` CLI.
  *
- * PATH first, then the three install locations a GUI-launched session may not have on PATH. One
- * list, because two lists drift and the failure is silent: the hook simply stops doing its job.
+ * PATH first, then the install locations a GUI-launched session may not have on PATH. One list,
+ * because two lists drift and the failure is silent: the hook simply stops doing its job.
+ *
+ * Both Homebrew prefixes are here because the list was Apple-Silicon-only until 2026-08-21, which
+ * made every hook a no-op on a Linux install that README claims to support — silently, since a
+ * missing `claude` is indistinguishable from a hook that had nothing to do.
  */
 export function findClaude() {
   for (const cand of [
     which('claude'),
     path.join(os.homedir(), '.claude/local/claude'),
+    path.join(os.homedir(), '.local/bin/claude'),
     '/opt/homebrew/bin/claude',
+    '/home/linuxbrew/.linuxbrew/bin/claude',
     '/usr/local/bin/claude',
   ]) {
     if (cand && fs.existsSync(cand)) return cand;
