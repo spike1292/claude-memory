@@ -35,6 +35,7 @@ export function configFile() {
  * @property {string} [model]
  * @property {number} [modelIdleMs]
  * @property {number} [serveIdleMs]
+ * @property {number} [logRetentionDays]
  */
 
 /** @type {MemoryConfig|undefined} */
@@ -116,6 +117,18 @@ export function modelIdleMs() {
  */
 export function serveIdleMs() {
   return positiveMs('MEMORY_SERVE_IDLE_MS', 'serveIdleMs', 30 * 60 * 1000);
+}
+
+/**
+ * How many days of dated JSONL logs (`recall-<date>`, `hooks-<date>`) are kept under `logs/`.
+ *
+ * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard. Anything
+ * else unparseable falls back to the default, because a typo must never widen a retention window
+ * to "everything" nor narrow it to nothing.
+ */
+export function logRetentionDays() {
+  const n = Number(process.env.MEMORY_LOG_RETENTION_DAYS ?? config().logRetentionDays);
+  return Number.isInteger(n) && n >= 0 ? n : 30;
 }
 
 /**
