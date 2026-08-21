@@ -3,9 +3,10 @@
 //
 // This module exists because three hooks were three bash scripts that had each grown their own
 // copy of the same four things — stdin parsing, a timestamp debounce marker, locating the `claude`
-// CLI, and detaching a child. The copies had already drifted: graph-staleness-check.sh probed four
-// candidate `claude` paths in shell while distill-session.mjs probed the same four in Node, and
-// nothing kept the lists in step.
+// CLI, and detaching a child. The copies had already drifted: graph-staleness-check.sh probed a
+// list of candidate `claude` paths in shell while distill-session.mjs probed its own in Node, and
+// nothing kept the two in step. No count here on purpose — the list grew on 2026-08-21 and a
+// number written into prose is the next thing to drift.
 //
 // Everything here is either pure (and tested) or a three-line wrapper over one node: API. The
 // split is deliberate: the decisions are pure functions the tests can drive with plain values, and
