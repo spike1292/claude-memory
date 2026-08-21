@@ -325,9 +325,17 @@ export function extractJson(raw) {
  * @returns {{ text: string, isError: boolean, usage: Record<string, number> | null } | null}
  */
 export function parseEnvelope(raw) {
+  // First brace to last, exactly as extractJson does, so a warning line printed before the envelope
+  // does not hide it. Without this a prefixed envelope lost its cost figure AND handed the raw
+  // envelope object back as "insights" — junk that only writeNotes' shape check discarded, having
+  // first suppressed the retry by looking non-empty.
+  const text = String(raw ?? '').trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end < start) return null;
   let env;
   try {
-    env = JSON.parse(String(raw ?? '').trim());
+    env = JSON.parse(text.slice(start, end + 1));
   } catch {
     return null;
   }
@@ -510,12 +518,16 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
       false,
     );
   } catch (e) {
-    const err = /** @type {NodeJS.ErrnoException & { stdout?: string, signal?: string }} */ (e);
+    const err =
+      /** @type {NodeJS.ErrnoException & { stdout?: string, stderr?: string, signal?: string }} */ (
+        e
+      );
     console.error(`distill: extractor failed: ${err.message}`);
 
     // Whatever it managed to print, first: an envelope on a non-zero exit carries both the cost and
     // the answer, and even plain text may hold the JSON.
     const out = String(err.stdout ?? '');
+    const envelope = parseEnvelope(out);
     const salvaged = readAttempt(out, true);
     if (Object.keys(salvaged).length) return salvaged;
 
@@ -529,7 +541,14 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
     // What remains is the case the retry is for: a CLI old enough not to know `--output-format`,
     // which exits on the unknown argument before doing any work — and without the retry, adding
     // the flag would silently end distillation there, notes gone and the hook still exiting 0.
-    if (parseEnvelope(out)) return {};
+    // A PARSED envelope is the strongest proof. `total_cost_usd` anywhere in what it printed is the
+    // weaker one, and it is the one that matters: a truncated envelope, or an envelope written to
+    // stderr, does not parse — and retrying those made a second billed call recording nothing.
+    // Reproduced with stubs: two invocations, no cost line. An unknown-argument rejection prints
+    // neither.
+    const billed =
+      envelope || /total_cost_usd/.test(out) || /total_cost_usd/.test(String(err.stderr ?? ''));
+    if (billed) return {};
     if (err.code === 'ETIMEDOUT' || err.signal) return {};
     try {
       console.error('distill: retrying without --output-format (no cost figure for this run)');

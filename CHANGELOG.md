@@ -81,7 +81,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
     than counted as free.
   - **The distiller's bill, measured.** Its headless run now asks for `--output-format json`, so
     its own usage figures are available: input, cache-creation, cache-read and output tokens plus
-    the dollar cost, recorded on an `event: extract` line and reported per run and per day, with each column averaged
+    the dollar cost, recorded on an `event: extract` line and reported per run and per log day (the denominator is
+    printed, since a day nothing was logged has no file to count), with each column averaged
     over only the runs that carried it — the API omits cache-creation when nothing was cached, and
     counting that absence as zero halved the figure for the run that was measured. An extract line
     is a cost record rather than a hook invocation, so it is kept out of the invocation table where

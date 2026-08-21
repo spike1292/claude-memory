@@ -427,15 +427,32 @@ test('a column no run reported says so, rather than claiming an averaging', () =
   assert.doesNotMatch(out, /missing from SOME runs/);
 });
 
-test('the per-day rate names the denominator it used', () => {
+test('the per-day rate divides by the log days read, and names the denominator', () => {
+  const lines = [
+    { t: '2026-08-19T10:00:00Z', slug: 'proj', hook: 'x', event: 'SessionStart', outcome: 'ran' },
+    line({ hook: 'distill-session', event: 'extract', usd: 0.07, t: '2026-08-21T10:00:00Z' }),
+  ];
+  // The window is counted in FILES, and a day nothing was logged has no file — so the denominator
+  // has to come from the files that were read, not from the days the surviving lines happen to
+  // mention. A fortnight's spend over the one day the distiller ran is not a daily rate, and the
+  // reader cannot tell which was used unless the report says.
+  assert.match(render(summarize(lines, null, 7), new Map()), /per day \(÷7 log day\(s\)\)/);
+  // With nothing passed it falls back to the days the lines cover, rather than dividing by zero.
+  assert.match(render(summarize(lines), new Map()), /per day \(÷2 log day\(s\)\)/);
+});
+
+test('a window with only recall measured never prints a zero for the injectors', () => {
   const out = render(
-    summarize([
-      { t: '2026-08-19T10:00:00Z', slug: 'proj', hook: 'x', event: 'SessionStart', outcome: 'ran' },
-      line({ hook: 'distill-session', event: 'extract', usd: 0.07, t: '2026-08-21T10:00:00Z' }),
-    ]),
+    summarize([line({ hook: 'validate-note', ms: 20, session: 'a' })]),
     new Map(),
+    [{ chars: 1200, abstained: false }],
   );
-  // A fortnight's spend divided by the one day it happened to run is not a daily rate, and the
-  // reader cannot tell which denominator was used unless the report says.
-  assert.match(out, /per day \(÷2\)/);
+  // Round 2 guarded the table against exactly this and left the summary line printing from the
+  // other branch: "not measured", and four lines later "~0 tokens per session across 0
+  // injector(s)". In a report whose thesis is that a measured zero and an unmeasured one must
+  // never look alike, that sentence is the failure.
+  assert.match(out, /SessionStart injectors: not measured/);
+  assert.doesNotMatch(out, /~0 estimated tokens/);
+  assert.doesNotMatch(out, /across 0 injector/);
+  assert.match(out, /recall injected ~300 tok/);
 });

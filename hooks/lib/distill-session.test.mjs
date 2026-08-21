@@ -744,3 +744,35 @@ test('a run that was billed and then failed records the money, marked error', (t
   assert.strictEqual(extract.outcome, 'error');
   assert.strictEqual(notes.length, 0, 'an error envelope yields no insights');
 });
+
+test('a failure that already cost money is never retried, whatever shape it printed', (t) => {
+  // The round-2 guard proved the CLI understood the flag by PARSING the envelope, so any failure
+  // that mangled stdout fell through to a second billed call recording nothing. Reproduced with
+  // both shapes below: two invocations, no cost line.
+  for (const [name, body] of [
+    ['truncated', `printf '%s' '{"type":"result","total_cost_usd":0.02,"usage":{"input_tokens":9'`],
+    [
+      'on stderr',
+      `printf '%s' '{"type":"result","total_cost_usd":0.02,"usage":{"input_tokens":9}}' >&2`,
+    ],
+  ]) {
+    const root = withStubClaude(`#!/bin/sh\ncat > /dev/null\n${body}\nexit 1\n`);
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    assert.strictEqual(runWorker(root).calls, 1, `${name}: billed once, called once`);
+  }
+});
+
+test('an envelope behind a prefix keeps both its cost and its insights', (t) => {
+  // Whole-string JSON.parse missed it, so the cost was lost AND the raw envelope came back as
+  // "insights" — junk that only writeNotes' shape check discarded, having first looked non-empty
+  // enough to suppress the retry.
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf 'Warning: noise\\n%s' '{"type":"result","is_error":false,"result":"{\\"patterns\\":[{\\"title\\":\\"Prefixed\\",\\"description\\":\\"d\\",\\"aliases\\":[\\"a\\",\\"b\\"]}],\\"mistakes\\":[],\\"decisions\\":[]}","total_cost_usd":0.03,"usage":{"input_tokens":9}}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes, calls } = runWorker(root);
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(notes.length, 1, 'the insights are read out of the envelope, not the noise');
+  assert.strictEqual(lines.find((l) => l.event === 'extract')?.usd, 0.03);
+});

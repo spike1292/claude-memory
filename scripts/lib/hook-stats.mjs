@@ -131,8 +131,10 @@ export function timeouts(manifest) {
  *
  * @param {readonly HookLine[]} lines
  * @param {string | null} [slug]
+ * @param {number} [logDays] how many daily log files the window read — the honest denominator for
+ *   a per-day rate, since a day nothing was logged has no file and cannot be counted from lines
  */
-export function summarize(lines, slug = null) {
+export function summarize(lines, slug = null, logDays = 0) {
   const seen = lines.length;
   lines = slug ? lines.filter((l) => l.slug === slug) : lines;
   /** @type {Map<string, HookRow>} */
@@ -162,6 +164,8 @@ export function summarize(lines, slug = null) {
     // A headless run's session id is not a person's session, and counting it would inflate the
     // denominator of every per-session figure below.
     if (l.session && !l.child) sessions.add(l.session);
+    // NOT used as the per-day denominator any more — see `logDays`, which report() passes in from
+    // the files it actually read. Kept only because a day with lines is still a day the log covers.
     if (l.t) days.add(l.t.slice(0, 10));
     const worker = l.event === 'worker';
     const name = l.hook || '(unnamed)';
@@ -251,7 +255,7 @@ export function summarize(lines, slug = null) {
       .reduce((a, [, n]) => a + n, 0),
     extracts,
     sessions: sessions.size,
-    days: days.size,
+    days: logDays || days.size,
     slug,
     otherProjects: seen - lines.length,
   };
@@ -508,9 +512,10 @@ function injectedSection(s, recall) {
   if (s.unsized)
     body.push(
       '',
-      `${s.unsized} line(s) above carry no size and are counted as injected-nothing, because the`,
-      'record format has one encoding for both. Lines written before this field existed are in',
-      'there, so the figures are an UNDER-statement until they age out of the window.',
+      `${s.unsized} line(s) above carry no size and are counted as injecting nothing. One encoding`,
+      'covers two meanings — a hook that really injected nothing, and a line written before this',
+      'field existed — and nothing can tell them apart. The first is correct data; to whatever',
+      'extent the second is in there, these figures are an under-statement.',
     );
 
   if (recallToks.length) {
@@ -543,12 +548,16 @@ function injectedSection(s, recall) {
   // different subsets this is a sum over populations that do not coincide. Both fire at every
   // SessionStart today, so they do; the label says "on AVERAGE" rather than claiming more.
   const perSession = rows.reduce((a, r) => a + (mean(r.toks) ?? 0), 0);
-  body.push(
-    '',
-    `~${perSession} estimated tokens of SessionStart context per session on AVERAGE, across ` +
-      `${rows.length} injector(s).`,
-  );
-  if (perSession > INJECTED_TOKEN_BUDGET)
+  // Inside the same guard as the table. Round 2 added that guard against exactly this sentence and
+  // then left it printing from the other branch: with only recall measured the report said
+  // "not measured" and, four lines later, "~0 tokens per session across 0 injector(s)".
+  if (rows.length)
+    body.push(
+      '',
+      `~${perSession} estimated tokens of SessionStart context per session on AVERAGE, across ` +
+        `${rows.length} injector(s).`,
+    );
+  if (rows.length && perSession > INJECTED_TOKEN_BUDGET)
     body.push(
       `WARNING: that is over the ${INJECTED_TOKEN_BUDGET}-token line this report draws. Read the`,
       'p50 column before acting on it: one hook that injects a great deal rarely moves this mean a',
@@ -620,11 +629,13 @@ function costSection(s) {
       [
         ['total', ...cols.map((c) => (c.n ? c.total : '-')), usd.n ? usd.total.toFixed(4) : '-'],
         ['per run', ...cols.map((c) => per(c)), per(usd, 4)],
-        // Averaged over the days this window HOLDS, not the days the distiller ran, and named that
-        // way: a fortnight's spend divided by the one day it happened to run is not a daily rate.
+        // Divided by the number of DAILY LOG FILES the window read, which is the number of days
+        // anything was logged at all — not the days the distiller happened to run, and not a
+        // calendar span. A fortnight's spend over the one day it ran is not a daily rate, and the
+        // denominator is printed so nobody has to guess which one was used.
         s.days
           ? [
-              `per day (÷${s.days})`,
+              `per day (÷${s.days} log day(s))`,
               ...cols.map((c) => (c.n ? Math.round(c.total / s.days) : '-')),
               usd.n ? (usd.total / s.days).toFixed(4) : '-',
             ]
@@ -664,6 +675,7 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   const summary = summarize(
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
+    files.length,
   );
   // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
   // is not given a `bytes` field, because one number with two sources is one number that will
