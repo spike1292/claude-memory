@@ -70,9 +70,11 @@ are about to file an issue with it, say so and offer the rates without the note 
 
 `--hooks` appends the hook analytics report, read from the daily `hooks-*.jsonl` logs (the last 7
 days a hook ran; `--hooks=30` widens the window) plus `hooks.json` for the declared timeouts. It
-reports per-hook invocation counts, p50/p95/max duration, the outcome breakdown, and how many
-invocations ran at or past half their timeout. Read it with three things in mind: **`ms` is the
-whole process**, node startup included, because that is what the timeout applies to; a `(worker)`
+reports invocation counts, p50/p95/max duration, the outcome breakdown, and how many invocations ran
+at or past half their timeout — **one row per hook AND event**, so `distill-session · Stop` (a cheap
+decision fired every assistant turn) and `distill-session · SessionEnd` (the run that reads the
+transcript) are separate rows with separate budgets. Read it with three things in mind: **`ms` is the
+whole process**, node startup included, because that is what the timeout applies to; a `· worker`
 row is the detached background run and has no timeout, so never read it as a slow hook; and the
 outcome column is the point — `noop-missing-dep` means a hook is doing nothing at all and needs
 `/memory:doctor` proper. `debounced` and `child-guard` are deliberate skips, but read the SHARE, not

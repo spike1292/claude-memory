@@ -38,7 +38,7 @@ test('timeouts come from the real manifest, and are never written down twice', (
   for (const [, secs] of t) assert.ok(declared.includes(secs), `${secs} is a declared timeout`);
 });
 
-test('a hook declared under two events is held to the tighter limit', () => {
+test('each event gets its own declared limit, with the tighter one as the fallback', () => {
   // distill-session is on SessionEnd and Stop. If those ever differ, the one it can actually
   // breach is the smaller — a max would report near-misses that are really breaches. Proved
   // against a SYNTHETIC manifest: asserting the real 15 here would put a timeout in a second
@@ -54,7 +54,12 @@ test('a hook declared under two events is held to the tighter limit', () => {
       },
     }),
   );
+  // The per-hook key stays the tighter of the two, for a line whose event is missing — but a row
+  // that knows its event must be judged against ITS budget, or a 4 s Stop reads as a near-miss of
+  // a limit that belongs to SessionEnd.
   assert.strictEqual(timeouts(file).get('a'), 5);
+  assert.strictEqual(timeouts(file).get('a · Stop'), 30);
+  assert.strictEqual(timeouts(file).get('a · SessionEnd'), 5);
 });
 
 test('an unreadable manifest costs the timeout column, not the report', () => {
@@ -206,6 +211,12 @@ test('a reason never publishes a path, because the report invites a paste', () =
     "ENOENT: no such file, open '<path>'",
   );
   assert.strictEqual(redact('~/.claude/projects/x/y.jsonl'), '<path>');
+  // A vault under `~/My Vault` or `~/Google Drive` is the common case, not an edge one, and the
+  // one-pass rule leaked the directory name out of the middle: `<path> Vault<path>`.
+  assert.strictEqual(
+    redact("ENOENT: open '/Users/bob/My Vault/Memory/proj/secret.md'"),
+    "ENOENT: open '<path>'",
+  );
   // And it leaves the reasons that are the whole point of the column alone.
   for (const kept of [
     'transcript missing',

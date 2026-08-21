@@ -665,6 +665,8 @@ export const GATE_REASONS = {
   stopActive: 'stop_hook_active',
   debounced: 'stop: debounced',
   stopShort: 'stop: session too short',
+  trivial: 'trivial session',
+  notAFile: 'transcript not a file',
   noTranscript: 'no transcript path',
   badTranscript: 'transcript missing',
 };
@@ -691,19 +693,19 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   const transcript = p?.transcript_path;
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
-    if (!fs.statSync(transcript).isFile()) return { run: false, reason: 'transcript not a file' };
+    if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };
   } catch {
     return { run: false, reason: GATE_REASONS.badTranscript };
   }
 
   const lines = countLines(transcript);
-  if (lines < MIN_MESSAGES) return { run: false, reason: 'trivial session', lines };
+  if (lines < MIN_MESSAGES) return { run: false, reason: GATE_REASONS.trivial, lines };
 
   const sid = p?.session_id || 'nosession';
   const marker = markerPath(`distill-${sid}`);
 
   if (p?.hook_event_name !== 'SessionEnd') {
-    if (lines < STOP_MIN_MESSAGES) return { run: false, reason: 'stop: session too short', lines };
+    if (lines < STOP_MIN_MESSAGES) return { run: false, reason: GATE_REASONS.stopShort, lines };
     if (withinDebounce(readMarker(marker), STOP_DEBOUNCE_SECONDS, now))
       return { run: false, reason: GATE_REASONS.debounced, lines };
   }
@@ -758,15 +760,23 @@ export function gateOutcome(plan) {
   if (plan.run) return plan.spawned ? 'spawned' : 'error';
   if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
     return 'child-guard';
-  // Both Stop stand-downs are `debounced`. The short-session one fires on nearly every assistant
-  // turn, and as `ran` — "did its work" — it made the busiest hook in the log look like the most
-  // productive one, while burying the SessionEnd run that does the work.
-  if (plan.reason === GATE_REASONS.debounced || plan.reason === GATE_REASONS.stopShort)
+  // Every stand-down on a line count or a timer is `debounced`. They fire on nearly every assistant
+  // turn, and as `ran` — "did its work" — they made the busiest hook in the log look like the most
+  // productive one while burying the SessionEnd run that does the work.
+  if (
+    plan.reason === GATE_REASONS.debounced ||
+    plan.reason === GATE_REASONS.stopShort ||
+    plan.reason === GATE_REASONS.trivial
+  )
     return 'debounced';
   // A transcript that is absent or unreadable is this hook's missing dependency: Claude Code hands
   // it the path, and if that stops arriving the distiller is permanently dead while exiting 0 and
   // printing nothing. Reporting it as `ran` would hide exactly the outage worth seeing.
-  if (plan.reason === GATE_REASONS.noTranscript || plan.reason === GATE_REASONS.badTranscript)
+  if (
+    plan.reason === GATE_REASONS.noTranscript ||
+    plan.reason === GATE_REASONS.badTranscript ||
+    plan.reason === GATE_REASONS.notAFile
+  )
     return 'noop-missing-dep';
   return 'ran';
 }

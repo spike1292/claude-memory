@@ -59,8 +59,10 @@ export const NO_WORKER_LINE = 'graph-staleness-check (its background run is time
  * The limits are never copied into a log line or into this file: a duplicated timeout drifts
  * silently, and the drift would show up as near-misses that are not, or as none where there are.
  *
- * A hook declared under two events (distill-session is on SessionEnd and Stop) is reported against
- * the TIGHTER of them — the one it can actually breach.
+ * Keyed by `<hook>` AND by `<hook> · <event>`, because the manifest declares a limit per event and
+ * the report now has a row per event. The per-hook key is the tighter of them, kept as the fallback
+ * for a line whose event is missing; a row that knows its event reads its own budget, so a Stop at
+ * 5 s and a SessionEnd at 15 s are never judged against each other's.
  *
  * @param {string} manifest
  * @returns {Map<string, number>}
@@ -74,12 +76,13 @@ export function timeouts(manifest) {
   } catch {
     return out; // no manifest, no timeout column — never a throw
   }
-  for (const group of Object.values(json?.hooks ?? {})) {
+  for (const [event, group] of Object.entries(json?.hooks ?? {})) {
     for (const matcher of Array.isArray(group) ? group : []) {
       for (const h of matcher?.hooks ?? []) {
         const m = /hooks\/([\w.-]+)\.(?:mjs|sh)/.exec(String(h?.command ?? ''));
         const secs = Number(h?.timeout);
         if (!m || !Number.isFinite(secs)) continue;
+        out.set(`${m[1]} · ${event}`, secs);
         const prev = out.get(m[1]);
         out.set(m[1], prev === undefined ? secs : Math.min(prev, secs));
       }
@@ -183,11 +186,20 @@ const num = (v, digits = 0) => (v === null ? '-' : v.toFixed(digits));
 // redaction has to happen before it is printed. The log file on disk keeps the full message — it is
 // local, and it is what someone debugging their own machine actually needs.
 //
-// A path is anything with a slash in it. Deliberately blunt: over-redacting a reason costs a word,
-// under-redacting it publishes a private file path.
+// Two passes, because a path with a SPACE in it is the common case here, not an edge case: vaults
+// live under `~/My Vault`, `~/Google Drive`, `Library/Mobile Documents/…`. The unquoted rule alone
+// turned `open '/Users/bob/My Vault/notes/x.md'` into `<path> Vault<path>`, publishing the vault
+// directory's name — so quoted paths are taken whole, first, and only then is the bare rule applied
+// to what is left.
+//
+// Deliberately blunt: over-redacting a reason costs a word, under-redacting it publishes a private
+// file path. Windows paths are not matched, and are not reachable — these messages come from Node's
+// `fs` errors on paths these hooks pass in as absolute POSIX.
 /** @param {string} text @returns {string} */
 export function redact(text) {
-  return String(text).replace(/(?:~|\.{0,2})?\/[^\s'"`)\]]*/g, '<path>');
+  return String(text)
+    .replace(/(['"`])(?:~|\.{0,2})?\/[^'"`]*\1/g, '$1<path>$1')
+    .replace(/(?:~|\.{0,2})?\/[^\s'"`)\]]*/g, '<path>');
 }
 
 /**
@@ -231,9 +243,9 @@ export function render(s, limits) {
     table(
       ['hook', 'n', 'p50 ms', 'p95 ms', 'max ms', 'timeout', `≥${NEAR_FRACTION * 100}% of it`],
       s.hooks.map(([name, r]) => {
-        // By HOOK, never by the row key: the manifest declares a timeout per hook, and the row is
-        // now per hook-and-event.
-        const limit = r.worker ? undefined : limits.get(r.hook);
+        // The row's own event first — the manifest declares a limit per event — then the per-hook
+        // fallback for a line whose event is missing. A worker row is not the hook and has none.
+        const limit = r.worker ? undefined : (limits.get(name) ?? limits.get(r.hook));
         const near = nearTimeout(r.latencies, limit);
         return [
           name,

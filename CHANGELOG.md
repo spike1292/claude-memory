@@ -17,7 +17,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Every Node hook now appends one line per invocation to a daily-dated `hooks-*.jsonl` beside the
   recall logs — hook, event, elapsed ms, an outcome from a closed set (`ran`, `spawned`,
   `debounced`, `child-guard`, `noop-missing-dep`, `error`), a short reason, and the session id. The
-  new flag aggregates the last 7 files and reports invocation counts, p50/p95/max duration per hook,
+  new flag aggregates the last 7 files and reports invocation counts and p50/p95/max duration per
+  hook AND event — `distill-session · Stop` fires every assistant turn and stands down, while
+  `distill-session · SessionEnd` is the run that reads the transcript, and merging them let the
+  cheap one bury the only path that can breach a timeout —
   the outcome breakdown, and how many invocations ran at or past **half** their declared timeout.
   The timeouts are read from `hooks/hooks.json` at run time and are written down nowhere else, so
   they cannot drift. `--hooks=30` widens the window. Read-only in the same hard sense as `--perf`

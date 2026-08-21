@@ -480,7 +480,7 @@ test('gateOutcome tells a guard from a decision from a debounce', () => {
   } finally {
     delete process.env.CLAUDE_DISTILL_CHILD;
   }
-  assert.strictEqual(gateOutcome({ run: false, reason: 'trivial session' }), 'ran');
+
   // A transcript that never arrives is this hook's missing dependency, not a quiet decision: if
   // Claude Code stopped sending the path, distillation would stop forever while every line said
   // `ran`.
@@ -547,4 +547,29 @@ test('the distill WORKER really writes its own line, outcome and reason and all'
   assert.match(String(rec.reason), /^wrote \d+, merged \d+$/);
   // The duration has to be the WORK. A gate decides in ~40 ms; this process did the distillation.
   assert.ok(rec.ms > 0);
+});
+
+test('every reason gatePlan can return is one gateOutcome actually recognises', () => {
+  // The round trip, not the two halves separately. Round 5 added `stopShort` to the mapper and left
+  // the plan emitting the literal, so the branch it shipped to fix never fired — with both existing
+  // tests green, because one asserts the literal and the other only ever feeds in constants.
+  const seen = new Set(Object.values(GATE_REASONS));
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'distill-session.mjs'),
+    'utf8',
+  );
+  const planBody = src.slice(
+    src.indexOf('export function gatePlan'),
+    src.indexOf('export function gate('),
+  );
+  for (const m of planBody.matchAll(/reason: '([^']+)'/g))
+    assert.fail(`gatePlan returns the literal ${JSON.stringify(m[1])} — use GATE_REASONS`);
+
+  // And the stand-downs really do map away from `ran`, which is documented as "did its work".
+  for (const r of [GATE_REASONS.stopShort, GATE_REASONS.trivial, GATE_REASONS.debounced])
+    assert.strictEqual(gateOutcome({ run: false, reason: r }), 'debounced', r);
+  // A transcript that is absent, unreadable, or not a file at all is the same outage.
+  for (const r of [GATE_REASONS.noTranscript, GATE_REASONS.badTranscript, GATE_REASONS.notAFile])
+    assert.strictEqual(gateOutcome({ run: false, reason: r }), 'noop-missing-dep', r);
+  assert.ok(seen.size >= 6, 'the constant table still covers every branch');
 });
