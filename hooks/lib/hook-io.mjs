@@ -541,6 +541,7 @@ export function appendJsonl(family, cwd, record) {
  *   session?: string,
  *   outcome: HookOutcome,
  *   reason?: unknown,
+ *   extra?: Record<string, unknown>,
  * }} HookLogInput
  */
 
@@ -554,7 +555,7 @@ export function appendJsonl(family, cwd, record) {
  *
  * @param {HookLogInput} input
  */
-export function logHook({ hook, event = '', cwd, session, outcome, reason }) {
+export function logHook({ hook, event = '', cwd, session, outcome, reason, extra }) {
   // The heavy hooks spawn a headless `claude`, which fires SessionStart and so runs FOUR of these
   // hooks again, plus validate-note per write it makes. Their `*_CHILD` guards suppress only their
   // own hook, so without this flag a distillation's four extra lines are indistinguishable from a
@@ -572,6 +573,11 @@ export function logHook({ hook, event = '', cwd, session, outcome, reason }) {
     // empty" — the same omission rule recall's records already follow.
     ...(reason == null || reason === '' ? {} : { reason: String(reason).slice(0, 200) }),
     ...(session ? { session } : {}),
+    // One generic slot rather than a named parameter per measurement. Everything through it is
+    // OPTIONAL and omitted when not measured — never written as zero — because a reader has to be
+    // able to tell "this hook injected nothing" from "nobody was counting yet", and the log files
+    // predating each field stay in the window for a week.
+    ...(extra ?? {}),
   });
 }
 

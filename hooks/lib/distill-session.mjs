@@ -25,6 +25,7 @@ import * as paths from './paths.mjs';
 import {
   countLines,
   detach,
+  logHook,
   findClaude,
   markerPath,
   nowSeconds,
@@ -308,6 +309,48 @@ export function extractJson(raw) {
 }
 
 /**
+ * Pull the result text and the usage figures out of a `--output-format json` envelope.
+ *
+ * Returns null for anything that is not an envelope, which is the FALLBACK signal: an older or
+ * differently-configured CLI prints the model's answer as plain text, and losing every insight
+ * because the wrapper shape changed would be a far worse trade than losing a cost figure.
+ *
+ * Cost is not estimated from the transcript, and this is why the issue's own estimation approach
+ * was dropped: measured 2026-08-20, a headless run whose entire prompt was "Reply with only the
+ * word ok." reported 9 input tokens but 18,078 cache-creation and 22,363 cache-read tokens, at
+ * $0.0389. The bill is a near-fixed overhead of the headless session, so a character heuristic
+ * over the transcript would have been wrong by orders of magnitude rather than merely imprecise.
+ *
+ * @param {string} raw
+ * @returns {{ text: string, usage: Record<string, number> | null } | null}
+ */
+export function parseEnvelope(raw) {
+  let env;
+  try {
+    env = JSON.parse(String(raw ?? '').trim());
+  } catch {
+    return null;
+  }
+  // `result` must be a STRING. The model's own answer is JSON too, so a bare object here is much
+  // more likely to be the answer itself than an envelope, and treating it as one would hand the
+  // brace extractor an empty string.
+  if (!env || typeof env !== 'object' || typeof env.result !== 'string') return null;
+
+  const u = env.usage;
+  /** @type {Record<string, number>} */
+  const usage = {};
+  const put = (/** @type {string} */ k, /** @type {unknown} */ v) => {
+    if (typeof v === 'number' && Number.isFinite(v)) usage[k] = v;
+  };
+  put('inTok', u?.input_tokens);
+  put('cacheWriteTok', u?.cache_creation_input_tokens);
+  put('cacheReadTok', u?.cache_read_input_tokens);
+  put('outTok', u?.output_tokens);
+  put('usd', env.total_cost_usd);
+  return { text: env.result, usage: Object.keys(usage).length ? usage : null };
+}
+
+/**
  * Flatten a JSONL transcript to role-tagged text + tool names.
  *
  * @param {string} file
@@ -383,10 +426,27 @@ export function projectKey(cwd) {
 }
 
 /**
+ * Run the headless extractor, and record what it cost.
+ *
+ * `--output-format json` is asked for so the usage figures exist at all; the model's own answer is
+ * then the envelope's `result` string, which the same brace extractor reads as before. An envelope
+ * that does not parse falls back to reading raw stdout — the insights are the point, the cost line
+ * is not, and a CLI that stops wrapping its output must not cost a night's distillation.
+ *
+ * The usage is logged as its OWN line (`event: 'extract'`) rather than being folded into the worker
+ * line the entry writes on exit. The two measure two different things: the worker line is the whole
+ * background run — extraction, note writing and the re-index after it — while this one is the single
+ * API call inside it, which is the only part that costs money. A run that never reaches the call —
+ * no CLI, a throw, a dry run — writes no line at all, so a cost field is never a zero standing in
+ * for "not measured".
+ *
  * @param {string} convo
+ * @param {string} [cwd]
+ * @param {string} [session] defaults to MEMORY_HOOK_SESSION, which the gate exports, so this line
+ *   and the worker line around it read as one background run
  * @returns {Insights}
  */
-function runExtractor(convo) {
+function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
   if (process.env.DISTILL_DRYRUN) {
     return {
       patterns: [{ title: 'Dry run pattern', description: 'canned' }],
@@ -400,14 +460,24 @@ function runExtractor(convo) {
     return {};
   }
   try {
-    const stdout = execFileSync(claude, ['-p', '--model', 'haiku'], {
+    const stdout = execFileSync(claude, ['-p', '--model', 'haiku', '--output-format', 'json'], {
       input: EXTRACT_PROMPT + convo,
       encoding: 'utf8',
       timeout: 150_000,
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
     });
-    return extractJson(stdout);
+    const envelope = parseEnvelope(stdout);
+    if (envelope?.usage)
+      logHook({
+        hook: 'distill-session',
+        event: 'extract',
+        cwd,
+        session,
+        outcome: 'ran',
+        extra: envelope.usage,
+      });
+    return extractJson(envelope ? envelope.text : stdout);
   } catch (e) {
     console.error(`distill: extractor failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`);
     return {};
@@ -632,7 +702,7 @@ export function distill(transcript, cwd) {
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
-  const insights = runExtractor(convo);
+  const insights = runExtractor(convo, cwd);
   const { written, merged } = writeNotes(insights, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.

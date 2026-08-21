@@ -13,6 +13,9 @@ import {
   report,
   redact,
   NEAR_FRACTION,
+  estTokens,
+  BYTES_PER_TOKEN,
+  INJECTED_TOKEN_BUDGET,
 } from './hook-stats.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -253,4 +256,94 @@ test('Stop and SessionEnd are separate rows, and Stop keeps its own timeout', ()
   const sessionEnd = out.split('\n').find((l) => l.includes('distill-session · SessionEnd'));
   assert.match(String(sessionEnd), /15s/);
   assert.match(String(sessionEnd), /\s1$/, 'and 9 s of a 15 s budget counts as a near miss');
+});
+
+test('estTokens keeps "injected nothing" apart from "never measured"', () => {
+  assert.strictEqual(estTokens(4000), 4000 / BYTES_PER_TOKEN);
+  assert.strictEqual(estTokens(0), 0, 'a measured zero is a number');
+  // Anything unmeasured stays null all the way to the "-" it prints, so it can never average in.
+  assert.strictEqual(estTokens(undefined), null);
+  assert.strictEqual(estTokens(null), null);
+  assert.strictEqual(estTokens(NaN), null);
+});
+
+test('an injector run that logged no bytes is not averaged in as a zero', () => {
+  const s = summarize([
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'a' }),
+    line({ hook: 'insights-surface', ms: 40, session: 'b' }),
+  ]);
+  const out = render(s, new Map());
+  // Two runs, one of which injected. Counting the silent one as 0 would halve the mean and make a
+  // hook that injects 1000 tokens every time it fires look like one that injects 500.
+  assert.match(out, /insights-surface\s+1\s+1000\s+1000\s+1000/);
+});
+
+test('the injected section labels itself an estimate and the cost section a measurement', () => {
+  const out = render(
+    summarize([
+      line({ hook: 'insights-surface', ms: 40, bytes: 400, session: 'a' }),
+      line({ hook: 'distill-session', event: 'extract', usd: 0.04, inTok: 9, outTok: 90 }),
+    ]),
+    new Map(),
+  );
+  // The two must never read alike: one is bytes divided by a rule of thumb, the other is what the
+  // CLI itself reported.
+  assert.match(out, /ESTIMATED tokens/);
+  assert.match(out, /MEASURED, from the CLI/);
+});
+
+test('the budget warning fires on the per-session total, not on one hook', () => {
+  const big = INJECTED_TOKEN_BUDGET * BYTES_PER_TOKEN;
+  const under = render(summarize([line({ hook: 'a', bytes: big / 2, session: 's' })]), new Map());
+  assert.doesNotMatch(under, /WARNING/);
+  const over = render(
+    summarize([
+      line({ hook: 'a', bytes: big * 0.6, session: 's' }),
+      line({ hook: 'b', bytes: big * 0.6, session: 's' }),
+    ]),
+    new Map(),
+  );
+  // Neither hook is over on its own; what the session pays is. That sum is the number a user feels.
+  assert.match(over, new RegExp(`over the ${INJECTED_TOKEN_BUDGET}-token line`));
+});
+
+test('recall is folded in from its own family, and named as an average', () => {
+  const out = render(
+    summarize([line({ hook: 'insights-surface', bytes: 400, session: 's1' })]),
+    new Map(),
+    [{ chars: 1200, abstained: false }, { abstained: true }],
+  );
+  assert.match(out, /recall injected ~300 tok/);
+  assert.match(out, /average over sessions, not a per-session figure/);
+  // An abstention injected nothing and must not be counted as a prompt that did.
+  assert.match(out, /across 1 prompt/);
+});
+
+test('no measurements at all reads as "not measured", never as free', () => {
+  const out = render(summarize([line({ hook: 'validate-note', ms: 20 })]), new Map());
+  assert.match(out, /injected context: not measured/);
+  assert.match(out, /distiller cost: not measured/);
+  // The distiller line has to say WHY nothing is there, or a debounced night reads as a broken one.
+  assert.match(out, /debounced, found no CLI, or failed before the call/);
+});
+
+test('a log file written before these fields existed still renders', () => {
+  const dir = tmp();
+  fs.writeFileSync(
+    path.join(dir, 'hooks-2026-08-20.jsonl'),
+    JSON.stringify({
+      t: '2026-08-20T10:00:00Z',
+      slug: 'proj',
+      hook: 'insights-surface',
+      ms: 40,
+      outcome: 'ran',
+    }) + '\n',
+  );
+  const out = report({ logDir: dir, manifest: MANIFEST, slug: 'proj' });
+  assert.match(out, /1 invocations for proj/);
+  assert.match(
+    out,
+    /injected context: not measured/,
+    'and the new metrics say so rather than lying',
+  );
 });

@@ -85,7 +85,11 @@ jobs:
                literal copied into the mapper — the copy drifts silently and its test
                stays green. A gate that detaches decides its outcome on `detach()`'s
                pid: `spawned` for a run that never started is the failure this log
-               exists to end.
+               exists to end. Cost and size fields on those lines are optional and are
+               OMITTED when not measured, never written as zero; flag an estimate
+               printed without being labelled one, and any attempt to estimate the
+               distiller's cost from transcript length (its bill is near-fixed cache
+               overhead, measured, not proportional to input).
             5. Config resolution drift. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
                then the built-in default, and it must be read when the hook runs.
                `hooks/lib/vault-env.sh` is the source of truth and `hooks/lib/paths.mjs`

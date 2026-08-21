@@ -66,6 +66,27 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Write/Edit forks git, measured at 14.6 ms in a worktree of this repo on 2026-08-21. The bench
   numbers above were taken in an ordinary clone and do not include it.
 
+- **`/memory:doctor --hooks` now answers what the hooks COST, not just what they did**
+  ([#47](https://github.com/spike1292/claude-memory/issues/47)). Two costs, kept visibly apart:
+  - **Injected context, estimated.** The insights surfacer and the link lint record the byte size
+    of what they put in the context window; recall's existing character count is folded in from its
+    own log family rather than duplicated. The report gives mean/p50/p95 estimated tokens per
+    injector, the per-session total, and a warning line when that total crosses 2000 tokens. The
+    estimate is `bytes / 4` with no tokeniser and no new dependency, and every figure derived from
+    it is labelled an estimate. A run that injected nothing omits the field rather than logging a
+    zero, so it can never be averaged in.
+  - **The distiller's bill, measured.** Its headless run now asks for `--output-format json`, so
+    its own usage figures are available: input, cache-creation, cache-read and output tokens plus
+    the dollar cost, recorded on an `event: extract` line and reported per run and per day.
+    Estimation was rejected on evidence — a throwaway prompt measured 9 input tokens against 18,078
+    cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed overhead of the
+    headless session and a length heuristic would have been wrong by orders of magnitude. If the
+    envelope does not parse, the existing extractor runs on raw stdout exactly as before: a CLI that
+    stops wrapping its output costs a cost figure, never a night's insights.
+  The one injector that stays unmeasured is the bash session-sync hook, which is under a
+  do-not-port fence. Its block was measured by hand instead — ~1.5 KB, roughly 470 estimated
+  tokens — and the report prints that number beside the ones it measured rather than omitting it.
+
 ### Changed
 
 - **Recall's inline JSONL appender is gone; it writes through the shared one.** Its records are

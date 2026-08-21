@@ -22,6 +22,7 @@ import {
   bodyTokens,
   reconcile,
   transcriptToText,
+  parseEnvelope,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -581,4 +582,62 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
   for (const r of [GATE_REASONS.noTranscript, GATE_REASONS.badTranscript, GATE_REASONS.notAFile])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'noop-missing-dep', r);
   assert.ok(seen.size >= 6, 'the constant table still covers every branch');
+});
+
+test('parseEnvelope reads the JSON output envelope, usage and all', () => {
+  const env = parseEnvelope(
+    JSON.stringify({
+      type: 'result',
+      is_error: false,
+      result: '{"patterns":[],"mistakes":[],"decisions":[]}',
+      total_cost_usd: 0.0389,
+      usage: {
+        input_tokens: 9,
+        cache_creation_input_tokens: 18078,
+        cache_read_input_tokens: 22363,
+        output_tokens: 90,
+      },
+    }),
+  );
+  assert.deepStrictEqual(env?.usage, {
+    inTok: 9,
+    cacheWriteTok: 18078,
+    cacheReadTok: 22363,
+    outTok: 90,
+    usd: 0.0389,
+  });
+  // The model's own answer is the `result` STRING, and the existing brace extractor reads it.
+  assert.deepStrictEqual(extractJson(/** @type {string} */ (env?.text)), {
+    patterns: [],
+    mistakes: [],
+    decisions: [],
+  });
+});
+
+test('parseEnvelope returns null for plain stdout, which is the fallback signal', () => {
+  // A CLI that does not wrap its output must cost a cost figure, never a night's insights. Null
+  // here is what makes runExtractor hand the raw text to the brace extractor instead.
+  assert.strictEqual(parseEnvelope('Here you go:\n```json\n{"patterns":[]}\n```'), null);
+  assert.strictEqual(parseEnvelope(''), null);
+  assert.strictEqual(parseEnvelope('not json at all'), null);
+  // And the fallback really does still parse that stdout.
+  assert.deepStrictEqual(extractJson('Here you go:\n```json\n{"patterns":[]}\n```'), {
+    patterns: [],
+  });
+});
+
+test('the model answering with a bare object is not mistaken for an envelope', () => {
+  // The answer is itself JSON. Without the `typeof result === "string"` test, an answer that
+  // happened to carry a `result` key would be read as a wrapper and the extractor handed nothing.
+  const answer = '{"patterns":[{"title":"t","description":"d"}],"result":42}';
+  assert.strictEqual(parseEnvelope(answer), null);
+  assert.strictEqual(extractJson(answer).patterns?.length, 1);
+});
+
+test('an envelope with no usage block still yields its text', () => {
+  // Insights first: a wrapper whose usage shape changed must not lose the notes, and a cost of
+  // zero must never be invented for it.
+  const env = parseEnvelope(JSON.stringify({ result: '{"mistakes":[]}' }));
+  assert.strictEqual(env?.usage, null);
+  assert.deepStrictEqual(extractJson(/** @type {string} */ (env?.text)), { mistakes: [] });
 });

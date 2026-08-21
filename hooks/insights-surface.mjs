@@ -21,10 +21,16 @@ const cwd = hookCwd(p);
 let outcome = 'ran';
 /** @type {string | undefined} */
 let reason;
+/** @type {Record<string, number> | undefined} */
+let extra;
 try {
   const text = surface(cwd);
   if (text) console.log(text);
   reason = text ? 'surfaced' : 'nothing to surface';
+  // What this hook COSTS the session, in bytes of context window. Omitted rather than logged as 0
+  // when it injects nothing, so "injected nothing" and "was not measuring yet" stay distinguishable
+  // — a week of older log files sits in the reader's window.
+  if (text) extra = { bytes: Buffer.byteLength(text) };
 } catch (e) {
   outcome = 'error';
   reason = String(/** @type {Error} */ (e)?.message ?? e);
@@ -39,4 +45,5 @@ logHook({
   session: /** @type {string|undefined} */ (p.session_id),
   outcome,
   reason,
+  extra,
 });
