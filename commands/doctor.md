@@ -86,9 +86,12 @@ writes no line, so a real breach never appears — the near-timeout column count
 survivors ran. Read a hook whose count drops, or that stops appearing at all, as the breach. Say
 this if the user is reading the column as proof that nothing times out.
 
-Unlike `--stats`, this section prints no note names. It does print the **project slug**, which is
-the normalised git remote — so for a private or work repo it names the repo. Say so before the user
-pastes it anywhere public; the numbers themselves carry nothing else identifying.
+Unlike `--stats`, this section prints no note names, and paths inside a failure reason are redacted
+to `<path>` before they are printed — a raw `ENOENT` carries the vault root, a note filename and the
+OS username, and this report is the one someone pastes into an issue. It does still print the
+**project slug**, which is the normalised git remote, so for a private or work repo it names the
+repo. Say that before the user pastes it anywhere public. The full, unredacted message stays in
+`$CLAUDE_MEMORY_HOME/logs/hooks-*.jsonl` on their own machine, which is where it is useful.
 
 Do not offer to retune a gate, a timeout or a debounce window from what any of this prints unless
 the user asks — moving a gate is a

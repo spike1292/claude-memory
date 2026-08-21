@@ -25,8 +25,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   "not measured".
   The `logs/` directory is machine-wide, so the report is **scoped to the project it is run from**
   and says how many invocations in the window belonged to others. Unlike `--stats` it prints no note
-  names, though it does print the project slug — the normalised git remote — which names a private
-  repo.
+  names, and it redacts paths out of failure reasons — a raw `ENOENT` carries the vault root, a note
+  filename and the OS username, and this is the report people paste into issues. The full message
+  stays in the log file on the machine that wrote it. It does still print the project slug, the
+  normalised git remote, which names a private repo.
   Two limits it states in its own output rather than leaving to be discovered: a hook killed at its
   timeout is killed by a signal and writes no line, so **a real breach is invisible** and the
   near-timeout column counts only how close the survivors ran; and a headless `claude` run fires
@@ -37,8 +39,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `semantic-index-refresh` decide in milliseconds and hand the real work to a detached child, so
   their own elapsed time measures a gate and never the work. Each background run now writes its own
   line — same session id, `event: worker` — carrying its real duration and whether it failed. The
-  session id travels in `MEMORY_HOOK_SESSION`, which the gate exports; the indexer's line is guarded
-  by that variable, so a manual `/memory:prune` never appears in a per-hook report.
+  session id travels in `MEMORY_HOOK_SESSION`, which the gate exports. The indexer's line is guarded
+  by a SECOND variable, `MEMORY_INDEX_HOOK`, and the difference is load-bearing: a session id is
+  inherited down the process tree, and the distiller runs an indexer of its own at the end of every
+  distillation, so guarding on the session id alone filed that SessionEnd re-index under
+  SessionStart. The marker also keeps a manual `/memory:prune` out of a per-hook report.
   **`graph-staleness-check` deliberately gets none.** The pid written into `graphgen.lock` has to
   belong to a process that lives exactly as long as the work does, because `lockHolder()` frees a
   lock whose pid is dead — so nothing may sit between the hook and the headless `claude` it starts.

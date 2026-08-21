@@ -27,6 +27,7 @@ export { DEFAULT_DAYS };
  */
 /**
  * @typedef {{
+ *   hook: string,
  *   n: number,
  *   latencies: number[],
  *   outcomes: Map<string, number>,
@@ -112,10 +113,16 @@ export function summarize(lines, slug = null) {
     if (l.child) childLines++;
     const worker = l.event === 'worker';
     const name = l.hook || '(unnamed)';
-    const key = worker ? `${name} (worker)` : name;
+    // Keyed by hook AND EVENT. distill-session runs on both Stop and SessionEnd, and they are not
+    // the same measurement: Stop fires at the end of every assistant turn and is gated hard, so
+    // hundreds of cheap decisions were burying the one SessionEnd run per session that reads the
+    // transcript and forks. Merged, the p95 and the near-timeout share for the only hook with a
+    // 15 s timeout described the path that cannot breach it.
+    const key = `${name} · ${l.event || '(no event)'}`;
     const row =
       hooks.get(key) ??
       /** @type {HookRow} */ ({
+        hook: name,
         n: 0,
         latencies: [],
         outcomes: new Map(),
@@ -170,6 +177,19 @@ export function nearTimeout(latencies, timeoutSeconds) {
 /** @param {number | null} v @param {number} [digits] @returns {string} */
 const num = (v, digits = 0) => (v === null ? '-' : v.toFixed(digits));
 
+// Reasons are often raw exception messages, and an ENOENT carries an absolute path: the vault
+// root, the NOTE FILENAME, and the OS username inside it. This report tells the reader it holds
+// nothing identifying but the project slug and invites them to paste it into an issue, so the
+// redaction has to happen before it is printed. The log file on disk keeps the full message — it is
+// local, and it is what someone debugging their own machine actually needs.
+//
+// A path is anything with a slash in it. Deliberately blunt: over-redacting a reason costs a word,
+// under-redacting it publishes a private file path.
+/** @param {string} text @returns {string} */
+export function redact(text) {
+  return String(text).replace(/(?:~|\.{0,2})?\/[^\s'"`)\]]*/g, '<path>');
+}
+
 /**
  * The commonest reason behind one (hook, outcome) row, and how many others there were.
  *
@@ -182,7 +202,7 @@ function reasonFor(row, outcome) {
   if (!by.length) return '-';
   const [text] = by[0];
   const others = by.slice(1).reduce((a, [, c]) => a + c, 0);
-  return others ? `${text} (+${others} other)` : `${text}`;
+  return others ? `${redact(text)} (+${others} other)` : redact(text);
 }
 
 /**
@@ -211,7 +231,9 @@ export function render(s, limits) {
     table(
       ['hook', 'n', 'p50 ms', 'p95 ms', 'max ms', 'timeout', `≥${NEAR_FRACTION * 100}% of it`],
       s.hooks.map(([name, r]) => {
-        const limit = r.worker ? undefined : limits.get(name);
+        // By HOOK, never by the row key: the manifest declares a timeout per hook, and the row is
+        // now per hook-and-event.
+        const limit = r.worker ? undefined : limits.get(r.hook);
         const near = nearTimeout(r.latencies, limit);
         return [
           name,
@@ -226,8 +248,10 @@ export function render(s, limits) {
     ),
     '',
     'ms is the WHOLE process, from node startup, because that is what the timeout applies to.',
-    'A "(worker)" row is the detached background run, not the hook: it has no timeout, and its',
-    'duration is the distillation or the re-index rather than the gate decision that started it.',
+    'One row per hook AND EVENT: distill-session on Stop is a cheap decision fired every assistant',
+    'turn, and on SessionEnd it is the run that reads the transcript — merged, the cheap one buries',
+    'the one that can breach a timeout. A "· worker" row is the detached background run rather than',
+    'the hook, so it has no timeout and its duration is the distillation or the re-index itself.',
     '',
     'THE SAMPLE IS CENSORED AT THE TIMEOUT. A hook killed at its limit is killed by a signal and',
     'writes no line, so a real breach is INVISIBLE here and the last column counts only how close',

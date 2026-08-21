@@ -5,7 +5,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { timeouts, summarize, nearTimeout, render, report, NEAR_FRACTION } from './hook-stats.mjs';
+import {
+  timeouts,
+  summarize,
+  nearTimeout,
+  render,
+  report,
+  redact,
+  NEAR_FRACTION,
+} from './hook-stats.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST = path.join(here, '../../hooks/hooks.json');
@@ -62,8 +70,11 @@ test('summarize keeps a gate and its worker apart', () => {
   const names = s.hooks.map(([n]) => n);
   // Averaging a 40 ms gate decision with a 90-second distillation would describe neither. They are
   // two measurements of two different things that happen to carry the same hook name.
-  assert.deepStrictEqual(names.sort(), ['distill-session', 'distill-session (worker)']);
-  const worker = s.hooks.find(([n]) => n.endsWith('(worker)'));
+  assert.deepStrictEqual(names.sort(), [
+    'distill-session · SessionEnd',
+    'distill-session · worker',
+  ]);
+  const worker = s.hooks.find(([n]) => n.endsWith('· worker'));
   assert.strictEqual(worker?.[1].worker, true);
 });
 
@@ -184,4 +195,43 @@ test('every hook name an entry logs is a name the manifest declares', () => {
   assert.ok(logged.size >= 7, `found only ${logged.size} logged hook names — the scan broke`);
   for (const name of logged)
     assert.ok(declared.has(name), `"${name}" is logged but hooks.json declares no such hook`);
+});
+
+test('a reason never publishes a path, because the report invites a paste', () => {
+  // The doc tells the user everything here but the slug is safe to put in a public issue. Raw
+  // exception messages are not: an ENOENT carries the vault root, the NOTE FILENAME inside it, and
+  // the OS username. The log file on disk keeps the whole message; the report does not.
+  assert.strictEqual(
+    redact("ENOENT: no such file, open '/Users/someone/Vault/Memory/proj/private-note.md'"),
+    "ENOENT: no such file, open '<path>'",
+  );
+  assert.strictEqual(redact('~/.claude/projects/x/y.jsonl'), '<path>');
+  // And it leaves the reasons that are the whole point of the column alone.
+  for (const kept of [
+    'transcript missing',
+    'wrote 3, merged 0',
+    'no index at semantic-proj-bge-m3.db',
+    'another --index holds the lock',
+  ])
+    assert.strictEqual(redact(kept), kept);
+});
+
+test('Stop and SessionEnd are separate rows, and Stop keeps its own timeout', () => {
+  const s = summarize([
+    line({ hook: 'distill-session', event: 'Stop', ms: 37, outcome: 'debounced' }),
+    line({ hook: 'distill-session', event: 'Stop', ms: 38, outcome: 'debounced' }),
+    line({ hook: 'distill-session', event: 'SessionEnd', ms: 9000, outcome: 'spawned' }),
+  ]);
+  // Stop fires every assistant turn and does nothing; SessionEnd is the run that reads the
+  // transcript. Merged, dozens of 37 ms decisions hid the one invocation that can breach 15 s.
+  const rows = Object.fromEntries(s.hooks.map(([n, r]) => [n, r]));
+  assert.strictEqual(rows['distill-session · Stop'].n, 2);
+  assert.strictEqual(rows['distill-session · SessionEnd'].n, 1);
+
+  const out = render(s, timeouts(MANIFEST));
+  // The timeout is declared per HOOK, so both rows still carry it — the row key must not be used
+  // to look it up.
+  const sessionEnd = out.split('\n').find((l) => l.includes('distill-session · SessionEnd'));
+  assert.match(String(sessionEnd), /15s/);
+  assert.match(String(sessionEnd), /\s1$/, 'and 9 s of a 15 s budget counts as a near miss');
 });

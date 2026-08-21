@@ -664,6 +664,7 @@ export const GATE_REASONS = {
   child: 'child run',
   stopActive: 'stop_hook_active',
   debounced: 'stop: debounced',
+  stopShort: 'stop: session too short',
   noTranscript: 'no transcript path',
   badTranscript: 'transcript missing',
 };
@@ -757,7 +758,11 @@ export function gateOutcome(plan) {
   if (plan.run) return plan.spawned ? 'spawned' : 'error';
   if (plan.reason === GATE_REASONS.child || plan.reason === GATE_REASONS.stopActive)
     return 'child-guard';
-  if (plan.reason === GATE_REASONS.debounced) return 'debounced';
+  // Both Stop stand-downs are `debounced`. The short-session one fires on nearly every assistant
+  // turn, and as `ran` — "did its work" — it made the busiest hook in the log look like the most
+  // productive one, while burying the SessionEnd run that does the work.
+  if (plan.reason === GATE_REASONS.debounced || plan.reason === GATE_REASONS.stopShort)
+    return 'debounced';
   // A transcript that is absent or unreadable is this hook's missing dependency: Claude Code hands
   // it the path, and if that stops arriving the distiller is permanently dead while exiting 0 and
   // printing nothing. Reporting it as `ran` would hide exactly the outage worth seeing.
