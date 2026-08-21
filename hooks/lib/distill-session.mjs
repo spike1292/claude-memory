@@ -25,6 +25,7 @@ import * as paths from './paths.mjs';
 import {
   countLines,
   detach,
+  logHook,
   findClaude,
   markerPath,
   nowSeconds,
@@ -308,6 +309,63 @@ export function extractJson(raw) {
 }
 
 /**
+ * Pull the result text and the usage figures out of a `--output-format json` envelope.
+ *
+ * Returns null for anything that is not an envelope, which is the FALLBACK signal: an older or
+ * differently-configured CLI prints the model's answer as plain text, and losing every insight
+ * because the wrapper shape changed would be a far worse trade than losing a cost figure.
+ *
+ * Cost is not estimated from the transcript, and this is why the issue's own estimation approach
+ * was dropped: measured 2026-08-20, a headless run whose entire prompt was "Reply with only the
+ * word ok." reported 9 input tokens but 18,078 cache-creation and 22,363 cache-read tokens, at
+ * $0.0389. The bill is a near-fixed overhead of the headless session, so a character heuristic
+ * over the transcript would have been wrong by orders of magnitude rather than merely imprecise.
+ *
+ * @param {string} raw
+ * @returns {{ text: string, isError: boolean, usage: Record<string, number> | null } | null}
+ */
+export function parseEnvelope(raw) {
+  // First brace to last, exactly as extractJson does, so a warning line printed before the envelope
+  // does not hide it. Without this a prefixed envelope lost its cost figure AND handed the raw
+  // envelope object back as "insights" — junk that only writeNotes' shape check discarded, having
+  // first suppressed the retry by looking non-empty.
+  const text = String(raw ?? '').trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end < start) return null;
+  let env;
+  try {
+    env = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  // `result` must be a STRING. The model's own answer is JSON too, so a bare object here is much
+  // more likely to be the answer itself than an envelope, and treating it as one would hand the
+  // brace extractor an empty string.
+  if (!env || typeof env !== 'object' || typeof env.result !== 'string') return null;
+
+  const u = env.usage;
+  /** @type {Record<string, number>} */
+  const usage = {};
+  const put = (/** @type {string} */ k, /** @type {unknown} */ v) => {
+    if (typeof v === 'number' && Number.isFinite(v)) usage[k] = v;
+  };
+  put('inTok', u?.input_tokens);
+  put('cacheWriteTok', u?.cache_creation_input_tokens);
+  put('cacheReadTok', u?.cache_read_input_tokens);
+  put('outTok', u?.output_tokens);
+  put('usd', env.total_cost_usd);
+  // `is_error` is the CLI saying the run failed while still exiting 0 and still billing for it.
+  // Reported so the cost line can say `error`: the money is real, the insights are not, and folding
+  // it into the average of successful extractions would flatter both numbers.
+  return {
+    text: env.result,
+    isError: env.is_error === true,
+    usage: Object.keys(usage).length ? usage : null,
+  };
+}
+
+/**
  * Flatten a JSONL transcript to role-tagged text + tool names.
  *
  * @param {string} file
@@ -383,10 +441,27 @@ export function projectKey(cwd) {
 }
 
 /**
+ * Run the headless extractor, and record what it cost.
+ *
+ * `--output-format json` is asked for so the usage figures exist at all; the model's own answer is
+ * then the envelope's `result` string, which the same brace extractor reads as before. An envelope
+ * that does not parse falls back to reading raw stdout — the insights are the point, the cost line
+ * is not, and a CLI that stops wrapping its output must not cost a night's distillation.
+ *
+ * The usage is logged as its OWN line (`event: 'extract'`) rather than being folded into the worker
+ * line the entry writes on exit. The two measure two different things: the worker line is the whole
+ * background run — extraction, note writing and the re-index after it — while this one is the single
+ * API call inside it, which is the only part that costs money. A run that never reaches the call —
+ * no CLI, a throw, a dry run — writes no line at all, so a cost field is never a zero standing in
+ * for "not measured".
+ *
  * @param {string} convo
+ * @param {string} [cwd]
+ * @param {string} [session] defaults to MEMORY_HOOK_SESSION, which the gate exports, so this line
+ *   and the worker line around it read as one background run
  * @returns {Insights}
  */
-function runExtractor(convo) {
+function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
   if (process.env.DISTILL_DRYRUN) {
     return {
       patterns: [{ title: 'Dry run pattern', description: 'canned' }],
@@ -399,18 +474,97 @@ function runExtractor(convo) {
     console.error('distill: claude CLI not found');
     return {};
   }
+
+  /**
+   * Read one attempt's stdout: log what it cost, and hand back the insights in it.
+   *
+   * Called for a FAILED attempt too, and deliberately. A `--output-format json` run that hits an
+   * execution error still prints its whole envelope, usage and dollars included, and then exits
+   * non-zero — `execFileSync` throws with that envelope sitting on `e.stdout`. Discarding it meant
+   * the report under-reported the bill by exactly the runs that failed, which are the ones anyone
+   * would most want to find.
+   *
+   * @param {string} out
+   * @param {boolean} failed
+   * @returns {Insights}
+   */
+  const readAttempt = (out, failed) => {
+    const envelope = parseEnvelope(out);
+    if (envelope?.usage)
+      logHook({
+        hook: 'distill-session',
+        event: 'extract',
+        cwd,
+        session,
+        // The money was spent either way, so the line is written either way — but an envelope that
+        // says `is_error`, or an attempt that threw, is not a run that produced insights, and
+        // `ran` beside a cost would fold it into the average of the ones that did.
+        outcome: failed || envelope.isError ? 'error' : 'ran',
+        extra: envelope.usage,
+      });
+    return extractJson(envelope ? envelope.text : out);
+  };
+
+  const args = ['-p', '--model', 'haiku'];
   try {
-    const stdout = execFileSync(claude, ['-p', '--model', 'haiku'], {
-      input: EXTRACT_PROMPT + convo,
-      encoding: 'utf8',
-      timeout: 150_000,
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
-    });
-    return extractJson(stdout);
+    return readAttempt(
+      execFileSync(claude, [...args, '--output-format', 'json'], {
+        input: EXTRACT_PROMPT + convo,
+        encoding: 'utf8',
+        timeout: 150_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
+      }),
+      false,
+    );
   } catch (e) {
-    console.error(`distill: extractor failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`);
-    return {};
+    const err =
+      /** @type {NodeJS.ErrnoException & { stdout?: string, stderr?: string, signal?: string }} */ (
+        e
+      );
+    console.error(`distill: extractor failed: ${err.message}`);
+
+    // Whatever it managed to print, first: an envelope on a non-zero exit carries both the cost and
+    // the answer, and even plain text may hold the JSON.
+    const out = String(err.stdout ?? '');
+    const envelope = parseEnvelope(out);
+    const salvaged = readAttempt(out, true);
+    if (Object.keys(salvaged).length) return salvaged;
+
+    // Then, once, WITHOUT the flag — but ONLY when the first attempt produced no envelope. An
+    // envelope is proof the CLI understands the flag, so a failure that printed one is a rate
+    // limit or an overload, not an unsupported argument, and retrying it makes a SECOND billed
+    // call whose cost this code cannot record. Measured on a stub: two CLI invocations, one extract
+    // line. That falsifies the very section the cost is reported in, and it does so on exactly the
+    // failing runs the section exists to surface.
+    //
+    // What remains is the case the retry is for: a CLI old enough not to know `--output-format`,
+    // which exits on the unknown argument before doing any work — and without the retry, adding
+    // the flag would silently end distillation there, notes gone and the hook still exiting 0.
+    // A PARSED envelope is the strongest proof. `total_cost_usd` anywhere in what it printed is the
+    // weaker one, and it is the one that matters: a truncated envelope, or an envelope written to
+    // stderr, does not parse — and retrying those made a second billed call recording nothing.
+    // Reproduced with stubs: two invocations, no cost line. An unknown-argument rejection prints
+    // neither.
+    const billed =
+      envelope || /total_cost_usd/.test(out) || /total_cost_usd/.test(String(err.stderr ?? ''));
+    if (billed) return {};
+    if (err.code === 'ETIMEDOUT' || err.signal) return {};
+    try {
+      console.error('distill: retrying without --output-format (no cost figure for this run)');
+      return extractJson(
+        execFileSync(claude, args, {
+          input: EXTRACT_PROMPT + convo,
+          encoding: 'utf8',
+          timeout: 150_000,
+          maxBuffer: 16 * 1024 * 1024,
+          env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' },
+        }),
+      );
+    } catch (e2) {
+      console.error(`distill: retry failed: ${/** @type {NodeJS.ErrnoException} */ (e2).message}`);
+      return {};
+    }
   }
 }
 
@@ -632,7 +786,7 @@ export function distill(transcript, cwd) {
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
-  const insights = runExtractor(convo);
+  const insights = runExtractor(convo, cwd);
   const { written, merged } = writeNotes(insights, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.

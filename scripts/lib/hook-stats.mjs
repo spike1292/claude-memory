@@ -23,8 +23,11 @@ export { DEFAULT_DAYS };
  * @typedef {{
  *   t?: string, slug?: string | null, hook?: string, event?: string,
  *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean,
+ *   bytes?: number,
+ *   inTok?: number, cacheWriteTok?: number, cacheReadTok?: number, outTok?: number, usd?: number,
  * }} HookLine
  */
+/** @typedef {{ chars?: number, abstained?: boolean, t?: string, slug?: string }} RecallSize */
 /**
  * @typedef {{
  *   hook: string,
@@ -46,6 +49,31 @@ export const NEAR_FRACTION = 0.5;
 // the difference between "this hook is not measured" and "this hook did not run", which is exactly
 // the distinction the outcome column exists to make everywhere else.
 export const UNLOGGED = 'vault-memory-sync (bash, not instrumented)';
+
+// Bytes per token. A rule of thumb, not a tokeniser: adding one would mean a dependency shipped
+// into every user's plugin cache to put a second decimal on a number nobody acts on at that
+// precision. 4 is the conventional English figure and these strings are English prose with a few
+// wikilinks. Everything derived from it is LABELLED an estimate, everywhere it is printed — the
+// distiller's figures beside them are measured, and the two must never read alike.
+export const BYTES_PER_TOKEN = 4;
+
+// Injected context is spent before the user has typed anything: it is the session's opening cost.
+// The threshold only produces a warning line — nothing here caps a list or changes a budget, which
+// is deliberately somebody else's ticket.
+export const INJECTED_TOKEN_BUDGET = 2000;
+
+/**
+ * Estimated tokens for a byte count. Null in, null out — a hook that injected nothing must not
+ * average in as a zero beside hooks that were never measured.
+ *
+ * @param {number | null | undefined} bytes
+ * @returns {number | null}
+ */
+export function estTokens(bytes) {
+  return typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0
+    ? Math.round(bytes / BYTES_PER_TOKEN)
+    : null;
+}
 
 // graph-staleness-check is observed at its gate only. Its background run is the `claude` binary,
 // which cannot log for itself, and nothing may be put in front of it to do so: graphgen.lock holds
@@ -103,19 +131,80 @@ export function timeouts(manifest) {
  *
  * @param {readonly HookLine[]} lines
  * @param {string | null} [slug]
+ * @param {number} [logDays] how many daily log files the window read — the honest denominator for
+ *   a per-day rate, since a day nothing was logged has no file and cannot be counted from lines
  */
-export function summarize(lines, slug = null) {
+export function summarize(lines, slug = null, logDays = 0) {
   const seen = lines.length;
   lines = slug ? lines.filter((l) => l.slug === slug) : lines;
   /** @type {Map<string, HookRow>} */
   const hooks = new Map();
   let untimed = 0;
   let childLines = 0;
+  // Counted in the loop, not taken from `lines.length`: an extract line is a cost record for one
+  // API call and is not an invocation of anything.
+  let invocations = 0;
+  // hook -> session -> bytes injected in that session. Not a flat list of runs: the report's
+  // headline is what a SESSION pays, and a hook that fires twice in one session pays twice.
+  /** @type {Map<string, Map<string, number>>} */
+  const perSession = new Map();
+  /** @type {Set<string>} */
+  const measured = new Set();
+  /** @type {Map<string, number>} */
+  const unsized = new Map();
+  /** @type {HookLine[]} */
+  const extracts = [];
+  /** @type {Set<string>} */
+  const sessions = new Set();
+  /** @type {Set<string>} */
+  const days = new Set();
 
   for (const l of lines) {
     if (l.child) childLines++;
+    // A headless run's session id is not a person's session, and counting it would inflate the
+    // denominator of every per-session figure below.
+    if (l.session && !l.child) sessions.add(l.session);
+    // NOT used as the per-day denominator any more — see `logDays`, which report() passes in from
+    // the files it actually read. Kept only because a day with lines is still a day the log covers.
+    if (l.t) days.add(l.t.slice(0, 10));
     const worker = l.event === 'worker';
     const name = l.hook || '(unnamed)';
+
+    // Injected context is measured PER SESSION, because that is the unit a user pays it in — and
+    // only over REAL sessions. A headless `claude` run fires SessionStart itself, so its injector
+    // lines are a second population with nothing to do with what a person's session cost; folded
+    // in they roughly doubled every count here (measured on a synthetic 12-session log: an injector
+    // that fired in 3 sessions reported 15 runs).
+    //
+    // A session where the hook RAN and injected nothing is a real zero and counts as one. That is
+    // the difference between a hook costing 400 tokens every session and one costing 400 tokens a
+    // quarter of the time — and averaging only over the runs that injected reported the second as
+    // the first.
+    //
+    // The cost of that: an absent `bytes` means "injected nothing" AND "written before this field
+    // existed", and the two cannot be told apart, because the record format forbids writing a zero.
+    // So a hook that has carried the field at least once reads every older line as an injected
+    // zero, understating it until those files age out of the window — a week. Counted below and
+    // reported, rather than left for someone to discover in the numbers. A hook that has NEVER
+    // carried it stays out of the table entirely.
+    if (!l.child && l.session && !worker && l.event !== 'extract') {
+      const by = perSession.get(name) ?? new Map();
+      by.set(l.session, (by.get(l.session) ?? 0) + (typeof l.bytes === 'number' ? l.bytes : 0));
+      perSession.set(name, by);
+      if (typeof l.bytes === 'number') measured.add(name);
+      else unsized.set(name, (unsized.get(name) ?? 0) + 1);
+    }
+
+    // An `extract` line is a COST RECORD for one API call, not a hook invocation: it belongs to the
+    // cost section and nowhere else. Counted as an invocation it took distill-session's 15 s
+    // timeout with it and reported every 40-second API call as a near-breach of a limit it is not
+    // subject to — inside a worker that is already detached.
+    if (l.event === 'extract') {
+      extracts.push(l);
+      continue;
+    }
+    invocations++;
+
     // Keyed by hook AND EVENT. distill-session runs on both Stop and SessionEnd, and they are not
     // the same measurement: Stop fires at the end of every assistant turn and is gated hard, so
     // hundreds of cheap decisions were burying the one SessionEnd run per session that reads the
@@ -146,12 +235,27 @@ export function summarize(lines, slug = null) {
   }
 
   return {
-    invocations: lines.length,
+    invocations,
     untimed,
     childLines,
     first: lines.find((l) => l.t)?.t ?? null,
     last: [...lines].reverse().find((l) => l.t)?.t ?? null,
     hooks: [...hooks.entries()].sort((a, b) => b[1].n - a[1].n),
+    injected: [...perSession.entries()]
+      .filter(([name]) => measured.has(name))
+      .map((/** @type {[string, Map<string, number>]} */ [name, by]) => ({
+        name,
+        sessions: [...by.values()],
+      }))
+      .sort((a, b) => b.sessions.length - a.sessions.length),
+    // Lines for a measured hook that carried no `bytes`. Indistinguishable from "injected nothing",
+    // so they are counted as zeros and their number is printed beside the figures they drag down.
+    unsized: [...unsized.entries()]
+      .filter(([name]) => measured.has(name))
+      .reduce((a, [, n]) => a + n, 0),
+    extracts,
+    sessions: sessions.size,
+    days: logDays || days.size,
     slug,
     otherProjects: seen - lines.length,
   };
@@ -235,14 +339,22 @@ function reasonFor(row, outcome) {
  *
  * @param {ReturnType<typeof summarize>} s
  * @param {Map<string, number>} limits
+ * @param {readonly RecallSize[]} [recall] injecting recall decisions, from the recall log family
  * @returns {string}
  */
-export function render(s, limits) {
+export function render(s, limits, recall = []) {
+  // No invocations does not mean no report: extract lines are cost records rather than invocations,
+  // so a window can hold real spend and no gate lines at all. Say so, then let the sections below
+  // print what they do have.
   if (!s.invocations)
-    return s.otherProjects
-      ? `not measured: none of the ${s.otherProjects} logged invocations in this window belong to ` +
-          `${s.slug}. The log is machine-wide; no hook has run for this project yet.`
-      : 'not measured: no hook invocations logged in this window.';
+    return [
+      s.otherProjects
+        ? `not measured: none of the ${s.otherProjects} logged invocations in this window belong ` +
+          `to ${s.slug}. The log is machine-wide; no hook has run for this project yet.`
+        : 'not measured: no hook invocations logged in this window.',
+      ...injectedSection(s, recall),
+      ...costSection(s),
+    ].join('\n');
 
   const window = s.first && s.last ? ` (${s.first.slice(0, 10)} … ${s.last.slice(0, 10)})` : '';
   const out = [
@@ -323,7 +435,238 @@ export function render(s, limits) {
     );
 
   out.push('', `not in this table: ${UNLOGGED}, and ${NO_WORKER_LINE}.`);
+  out.push(...injectedSection(s, recall));
+  out.push(...costSection(s));
   return out.join('\n');
+}
+
+/**
+ * What the hooks put INTO the context window, before the user has typed anything.
+ *
+ * Estimated, and said so on every line: bytes / BYTES_PER_TOKEN, no tokeniser. Recall is folded in
+ * from its OWN log family, which already records injected characters — it gains no `bytes` field,
+ * because two sources for one number is how they come to disagree.
+ *
+ * Recall's records carry no session id (they never have), so its column is a per-session AVERAGE
+ * over the sessions the hook log saw, not a per-session breakdown. Named as an average rather than
+ * quietly presented as one.
+ *
+ * @param {ReturnType<typeof summarize>} s
+ * @param {readonly RecallSize[]} recall
+ * @returns {string[]}
+ */
+function injectedSection(s, recall) {
+  const rows = s.injected.map(({ name, sessions }) => {
+    const toks = sessions.map((b) => /** @type {number} */ (estTokens(b)));
+    return {
+      name,
+      sessions: toks.length,
+      injecting: toks.filter((t) => t > 0).length,
+      p50: percentile(toks, 50),
+      p95: percentile(toks, 95),
+      toks,
+    };
+  });
+
+  const recallChars = recall
+    .filter((r) => !r.abstained && typeof r.chars === 'number')
+    .map((r) => /** @type {number} */ (r.chars));
+  const recallToks = recallChars.map((c) => /** @type {number} */ (estTokens(c)));
+
+  if (!rows.length && !recallToks.length)
+    return [
+      '',
+      'injected context: not measured — no hook in this window recorded what it injected.',
+    ];
+
+  const mean = (/** @type {readonly number[]} */ v) =>
+    v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+
+  /** @type {string[]} */
+  const body = [''];
+  // Only when there is something to put in it. A bare header over an empty table, followed by
+  // "~0 tokens across 0 injector(s)", reads as a measured zero — in a report whose whole thesis is
+  // that a measured zero and an unmeasured one must never look alike.
+  if (rows.length)
+    body.push(
+      'injected context (ESTIMATED tokens, bytes / ' + BYTES_PER_TOKEN + ' — no tokeniser)',
+      // Both numbers, always. "injected in 2 of 40 sessions, mean 380" and "40 of 40, mean 380"
+      // are different findings, and a mean with no denominator cannot tell them apart — which is
+      // how the per-session total below came to assert a cost most sessions never paid.
+      table(
+        ['hook', 'sessions', 'injected in', 'mean tok', 'p50 tok', 'p95 tok'],
+        rows.map((r) => [
+          r.name,
+          r.sessions,
+          r.injecting,
+          num(mean(r.toks)),
+          num(r.p50),
+          num(r.p95),
+        ]),
+      ),
+      'Averaged over every session the hook RAN in, including the ones where it injected nothing —',
+      'so this is what a session actually pays, not what it pays on the sessions where it fires.',
+    );
+  else body.push('SessionStart injectors: not measured in this window.');
+
+  if (s.unsized)
+    body.push(
+      '',
+      `${s.unsized} line(s) above carry no size and are counted as injecting nothing. One encoding`,
+      'covers two meanings — a hook that really injected nothing, and a line written before this',
+      'field existed — and nothing can tell them apart. The first is correct data; to whatever',
+      'extent the second is in there, these figures are an under-statement.',
+    );
+
+  if (recallToks.length) {
+    const total = recallToks.reduce((a, b) => a + b, 0);
+    body.push(
+      '',
+      `recall injected ~${total} tok across ${recallToks.length} prompt(s) in this window` +
+        (s.sessions
+          ? `, ~${Math.round(total / s.sessions)} per session averaged over the ${s.sessions} ` +
+            'session(s) the hook log saw'
+          : ''),
+      'Recall is read from its own recall-*.jsonl records, which carry no session id — so that is',
+      'an average over sessions, not a per-session figure.',
+    );
+  } else {
+    body.push('', 'recall: not measured — no injecting recall decisions in this window.');
+  }
+
+  // The per-SESSION sum is what a user actually pays at startup, so it is summed across hooks
+  // rather than compared hook by hook. Each term is now a mean over every session the hook RAN in,
+  // not over the subset where it injected — the old form billed an occasional injector to every
+  // session, and on a synthetic log where link-lint injected 30 KB twice in forty sessions it
+  // reported 7600 tokens per session against a true 100 for thirty-eight of them, over a threshold
+  // that then printed a warning.
+  //
+  // Recall is excluded: it is per prompt, not per session, and adding it would double-count a long
+  // session.
+  //
+  // ponytail: each term is a mean over the sessions ITS OWN hook ran in, so if two injectors ran in
+  // different subsets this is a sum over populations that do not coincide. Both fire at every
+  // SessionStart today, so they do; the label says "on AVERAGE" rather than claiming more.
+  const perSession = rows.reduce((a, r) => a + (mean(r.toks) ?? 0), 0);
+  // Inside the same guard as the table. Round 2 added that guard against exactly this sentence and
+  // then left it printing from the other branch: with only recall measured the report said
+  // "not measured" and, four lines later, "~0 tokens per session across 0 injector(s)".
+  if (rows.length)
+    body.push(
+      '',
+      `~${perSession} estimated tokens of SessionStart context per session on AVERAGE, across ` +
+        `${rows.length} injector(s).`,
+    );
+  if (rows.length && perSession > INJECTED_TOKEN_BUDGET)
+    body.push(
+      `WARNING: that is over the ${INJECTED_TOKEN_BUDGET}-token line this report draws. Read the`,
+      'p50 column before acting on it: one hook that injects a great deal rarely moves this mean a',
+      'long way while most sessions pay far less. Capping a list is a separate change — this only',
+      'says the number.',
+    );
+  // Measured once, by hand, because logging it needs a second appender written in shell and that
+  // hook is under a do-not-port fence: its heredoc is 1546 bytes of template before variable
+  // expansion — the body INCLUDING the newline that ends its last line, which is what the hook
+  // actually prints — and a further 342 ONLY when context-mode is absent. Both numbers are printed rather
+  // than the worst case alone, because adding the conditional one unconditionally overstates the
+  // common install. Near-fixed, which is why measuring once is enough — but it is a 2026-08-21
+  // measurement of a template and it moves when the template is edited.
+  body.push(
+    '',
+    `Not counted: ${UNLOGGED} injects a near-fixed memory block — measured by hand at 1546 B,`,
+    `about ${estTokens(1546)} more estimated tokens per session, rising to ${estTokens(1546 + 342)}` +
+      ' when context-mode is not installed.',
+  );
+  return body;
+}
+
+/**
+ * What the distiller's headless run really cost — MEASURED, not estimated, and labelled so.
+ *
+ * The figures come from the CLI's own JSON envelope. They are dominated by cache traffic rather
+ * than by the transcript: a throwaway prompt measured 9 input tokens against 18,078 cache-creation
+ * and 22,363 cache-read, at $0.0389 (2026-08-20). That is why nothing here is derived from length.
+ *
+ * @param {ReturnType<typeof summarize>} s
+ * @returns {string[]}
+ */
+function costSection(s) {
+  if (!s.extracts.length)
+    return [
+      '',
+      'distiller cost: not measured — no extract line in this window. A distillation that was',
+      'debounced, found no CLI, or failed before the call writes no cost at all, by design.',
+    ];
+
+  // PER FIELD, counting only the lines that carry it. parseEnvelope writes the finite figures it
+  // found and omits the rest — the API drops `cache_creation_input_tokens` when nothing was cached
+  // — so treating an absent key as 0 while still counting the run halved the per-run figure for the
+  // one run that WAS measured, under a heading that says MEASURED. Same rule the rest of this
+  // reader follows: absent is not zero.
+  /** @param {keyof HookLine} k @returns {{ total: number, n: number }} */
+  const col = (k) => {
+    /** @type {number[]} */
+    const v = [];
+    for (const l of s.extracts) {
+      const x = l[k];
+      if (typeof x === 'number' && Number.isFinite(x)) v.push(x);
+    }
+    return { total: v.reduce((a, b) => a + b, 0), n: v.length };
+  };
+  const cols = /** @type {const} */ (['inTok', 'cacheWriteTok', 'cacheReadTok', 'outTok']).map(col);
+  const usd = col('usd');
+  /** @param {{ total: number, n: number }} c @param {number} [digits] */
+  const per = (c, digits = 0) => (c.n ? (c.total / c.n).toFixed(digits) : '-');
+  const runs = s.extracts.length;
+  const partial = [...cols, usd].filter((c) => c.n && c.n < runs).length;
+  const absent = [...cols, usd].filter((c) => !c.n).length;
+
+  // A run that was billed and then failed is IN these totals, and must be: the money was spent.
+  // But it wrote no notes, so folding it silently into "per run" prices a distillation using runs
+  // that did not distil — the exact fold the extract line's `outcome` was added to prevent, one
+  // level down. The log tells them apart; so must the report.
+  const errored = s.extracts.filter((l) => l.outcome === 'error').length;
+
+  return [
+    '',
+    `distiller cost (MEASURED, from the CLI's own usage figures) — ${runs} run(s)` +
+      (errored ? `, ${errored} of which failed after being billed` : ''),
+    table(
+      ['', 'in', 'cache write', 'cache read', 'out', 'USD'],
+      [
+        ['total', ...cols.map((c) => (c.n ? c.total : '-')), usd.n ? usd.total.toFixed(4) : '-'],
+        ['per run', ...cols.map((c) => per(c)), per(usd, 4)],
+        // Divided by the number of DAILY LOG FILES the window read, which is the number of days
+        // anything was logged at all — not the days the distiller happened to run, and not a
+        // calendar span. A fortnight's spend over the one day it ran is not a daily rate, and the
+        // denominator is printed so nobody has to guess which one was used.
+        s.days
+          ? [
+              `per day (÷${s.days} log day(s))`,
+              ...cols.map((c) => (c.n ? Math.round(c.total / s.days) : '-')),
+              usd.n ? (usd.total / s.days).toFixed(4) : '-',
+            ]
+          : ['per day', '-', '-', '-', '-', '-'],
+      ],
+    ),
+    ...(partial
+      ? [
+          `${partial} column(s) are missing from SOME runs and are averaged over only the runs that`,
+          'carried them — an absent figure is never counted as a zero.',
+        ]
+      : []),
+    ...(absent
+      ? [`${absent} column(s) print "-": no run in this window reported that figure at all.`]
+      : []),
+    ...(errored
+      ? [
+          'The failed runs are included: they cost money. They wrote no notes, so "per run" is not',
+          'the price of a distillation while any are in the window.',
+        ]
+      : []),
+    'Cache traffic dominates, and it is a near-fixed cost of the headless session rather than a',
+    'function of transcript length — a longer session is not a proportionally dearer distillation.',
+  ];
 }
 
 /**
@@ -345,6 +688,13 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   const summary = summarize(
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
+    files.length,
+  );
+  // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
+  // is not given a `bytes` field, because one number with two sources is one number that will
+  // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
+  const recall = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall'))).filter(
+    (r) => !slug || r.slug === slug,
   );
   const head = files.length
     ? `${files.length} log file(s), most recent first: ${files
@@ -355,5 +705,5 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
     : `no hook logs in ${logDir} — nothing has been logged there in this window. That is a` +
       ' session that has not run yet, a cleared logs/, a window too narrow, or a directory the' +
       ' hooks cannot write (they swallow exactly that).';
-  return `\nhook analytics\n${`${head}\n\n${render(summary, timeouts(manifest))}`.replace(/^(?=.)/gm, '  ')}\n`;
+  return `\nhook analytics\n${`${head}\n\n${render(summary, timeouts(manifest), recall)}`.replace(/^(?=.)/gm, '  ')}\n`;
 }

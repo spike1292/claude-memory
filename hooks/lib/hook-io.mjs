@@ -541,11 +541,17 @@ export function appendJsonl(family, cwd, record) {
  *   session?: string,
  *   outcome: HookOutcome,
  *   reason?: unknown,
+ *   extra?: Record<string, unknown>,
  * }} HookLogInput
  */
 
 /**
  * One line per hook invocation.
+ *
+ * `extra` is one generic slot rather than a named parameter per measurement. Everything through it
+ * is OPTIONAL and omitted when not measured — never written as zero — because a reader must be able
+ * to tell "this hook injected nothing" from "nobody was counting yet", and log files predating each
+ * field stay in the window for a week.
  *
  * `ms` is `performance.now()`, which is measured from PROCESS START and not from the top of the
  * hook — the same reasoning recall's own line documents. A hook's timeout in `hooks.json` applies
@@ -554,7 +560,7 @@ export function appendJsonl(family, cwd, record) {
  *
  * @param {HookLogInput} input
  */
-export function logHook({ hook, event = '', cwd, session, outcome, reason }) {
+export function logHook({ hook, event = '', cwd, session, outcome, reason, extra }) {
   // The heavy hooks spawn a headless `claude`, which fires SessionStart and so runs FOUR of these
   // hooks again, plus validate-note per write it makes. Their `*_CHILD` guards suppress only their
   // own hook, so without this flag a distillation's four extra lines are indistinguishable from a
@@ -563,6 +569,10 @@ export function logHook({ hook, event = '', cwd, session, outcome, reason }) {
   // costs inside a background run is a real number, it is just not the same number.
   const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
   appendJsonl('hooks', cwd, {
+    // `extra` FIRST, so the named fields below always win. Spread last, a caller could overwrite
+    // `outcome`, `ms`, `session` or `hook` — the four the reader groups, filters and judges by —
+    // and the log would be corrupt in exactly the way nothing downstream could detect.
+    ...(extra ?? {}),
     hook,
     event,
     ms: +performance.now().toFixed(1),

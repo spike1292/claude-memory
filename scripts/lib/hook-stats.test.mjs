@@ -13,6 +13,9 @@ import {
   report,
   redact,
   NEAR_FRACTION,
+  estTokens,
+  BYTES_PER_TOKEN,
+  INJECTED_TOKEN_BUDGET,
 } from './hook-stats.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -253,4 +256,224 @@ test('Stop and SessionEnd are separate rows, and Stop keeps its own timeout', ()
   const sessionEnd = out.split('\n').find((l) => l.includes('distill-session · SessionEnd'));
   assert.match(String(sessionEnd), /15s/);
   assert.match(String(sessionEnd), /\s1$/, 'and 9 s of a 15 s budget counts as a near miss');
+});
+
+test('estTokens keeps "injected nothing" apart from "never measured"', () => {
+  assert.strictEqual(estTokens(4000), 4000 / BYTES_PER_TOKEN);
+  assert.strictEqual(estTokens(0), 0, 'a measured zero is a number');
+  // Anything unmeasured stays null all the way to the "-" it prints, so it can never average in.
+  assert.strictEqual(estTokens(undefined), null);
+  assert.strictEqual(estTokens(null), null);
+  assert.strictEqual(estTokens(NaN), null);
+});
+
+test('a session where the hook ran and injected nothing is a real zero', () => {
+  const s = summarize([
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'a' }),
+    line({ hook: 'insights-surface', ms: 40, session: 'b' }),
+  ]);
+  const out = render(s, new Map());
+  // It RAN in both sessions and injected in one, so a session costs 500 tokens on average, not the
+  // 1000 it costs on the sessions where it fires. Averaging only over the injecting runs is how
+  // an occasional injector came to be billed to every session — and how the per-session total
+  // below it overstated by 2.7x on a realistic log.
+  assert.match(out, /insights-surface\s+2\s+1\s+500\s/);
+  assert.match(out, /~500 estimated tokens of SessionStart context per session/);
+});
+
+test('a hook that never recorded bytes is left out, not counted as free', () => {
+  // The difference between "injected nothing" and "was not measuring yet". A week of log files
+  // written before this field existed sits in the reader's window.
+  const out = render(summarize([line({ hook: 'validate-note', ms: 20, session: 'a' })]), new Map());
+  assert.match(out, /injected context: not measured/);
+});
+
+test('lines from a headless claude run never enter the injected figures', () => {
+  const s = summarize([
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'real' }),
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'child-1', child: true }),
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'child-2', child: true }),
+  ]);
+  // Every distillation fires SessionStart again, so on a real install the child population is
+  // roughly one per session — folded in, it doubled every count in this table and the total under
+  // it. Those runs are real, they are just not what a person's session cost.
+  assert.match(render(s, new Map()), /insights-surface\s+1\s+1\s+1000\s/);
+});
+
+test('the injected section labels itself an estimate and the cost section a measurement', () => {
+  const out = render(
+    summarize([
+      line({ hook: 'insights-surface', ms: 40, bytes: 400, session: 'a' }),
+      line({ hook: 'distill-session', event: 'extract', usd: 0.04, inTok: 9, outTok: 90 }),
+    ]),
+    new Map(),
+  );
+  // The two must never read alike: one is bytes divided by a rule of thumb, the other is what the
+  // CLI itself reported.
+  assert.match(out, /ESTIMATED tokens/);
+  assert.match(out, /MEASURED, from the CLI/);
+});
+
+test('the budget warning fires on the per-session total, not on one hook', () => {
+  const big = INJECTED_TOKEN_BUDGET * BYTES_PER_TOKEN;
+  const under = render(summarize([line({ hook: 'a', bytes: big / 2, session: 's' })]), new Map());
+  assert.doesNotMatch(under, /WARNING/);
+  const over = render(
+    summarize([
+      line({ hook: 'a', bytes: big * 0.6, session: 's' }),
+      line({ hook: 'b', bytes: big * 0.6, session: 's' }),
+    ]),
+    new Map(),
+  );
+  // Neither hook is over on its own; what the session pays is. That sum is the number a user feels.
+  assert.match(over, new RegExp(`over the ${INJECTED_TOKEN_BUDGET}-token line`));
+});
+
+test('recall is folded in from its own family, and named as an average', () => {
+  const out = render(
+    summarize([line({ hook: 'insights-surface', bytes: 400, session: 's1' })]),
+    new Map(),
+    [{ chars: 1200, abstained: false }, { abstained: true }],
+  );
+  assert.match(out, /recall injected ~300 tok/);
+  assert.match(out, /average over sessions, not a per-session figure/);
+  // An abstention injected nothing and must not be counted as a prompt that did.
+  assert.match(out, /across 1 prompt/);
+});
+
+test('no measurements at all reads as "not measured", never as free', () => {
+  const out = render(summarize([line({ hook: 'validate-note', ms: 20 })]), new Map());
+  assert.match(out, /injected context: not measured/);
+  assert.match(out, /distiller cost: not measured/);
+  // The distiller line has to say WHY nothing is there, or a debounced night reads as a broken one.
+  assert.match(out, /debounced, found no CLI, or failed before the call/);
+});
+
+test('a log file written before these fields existed still renders', () => {
+  const dir = tmp();
+  fs.writeFileSync(
+    path.join(dir, 'hooks-2026-08-20.jsonl'),
+    JSON.stringify({
+      t: '2026-08-20T10:00:00Z',
+      slug: 'proj',
+      hook: 'insights-surface',
+      ms: 40,
+      outcome: 'ran',
+    }) + '\n',
+  );
+  const out = report({ logDir: dir, manifest: MANIFEST, slug: 'proj' });
+  assert.match(out, /1 invocations for proj/);
+  assert.match(
+    out,
+    /injected context: not measured/,
+    'and the new metrics say so rather than lying',
+  );
+});
+
+test('an extract line is a cost record, not a hook invocation', () => {
+  const s = summarize([
+    line({
+      hook: 'distill-session',
+      event: 'SessionEnd',
+      ms: 40,
+      outcome: 'spawned',
+      session: 'a',
+    }),
+    line({ hook: 'distill-session', event: 'extract', ms: 92_000, usd: 0.04, session: 'a' }),
+  ]);
+  // Counted as an invocation it took distill-session's 15 s timeout with it, and reported a 92 s
+  // API call — inside a worker that is already detached — as a breach of a limit it is not subject
+  // to, in the one column the report tells the reader to read as an outage.
+  assert.strictEqual(s.invocations, 1);
+  assert.deepStrictEqual(
+    s.hooks.map(([n]) => n),
+    ['distill-session · SessionEnd'],
+  );
+  const out = render(s, timeouts(MANIFEST));
+  assert.doesNotMatch(out, /extract\s+1\s+92000/);
+  assert.match(out, /distiller cost \(MEASURED/);
+});
+
+test('a usage field missing from some runs is averaged over the runs that had it', () => {
+  const out = render(
+    summarize([
+      line({
+        hook: 'distill-session',
+        event: 'extract',
+        inTok: 9,
+        cacheWriteTok: 18078,
+        usd: 0.04,
+      }),
+      line({ hook: 'distill-session', event: 'extract', inTok: 9, usd: 0.04 }),
+    ]),
+    new Map(),
+  );
+  // The API omits cache-creation when nothing was cached. Counting that absence as 0 while still
+  // counting the run halved the per-run figure for the run that WAS measured — under a heading
+  // that says MEASURED, in a PR whose own rule is that absent is never zero.
+  const perRun = out.split('\n').find((l) => l.trim().startsWith('per run'));
+  assert.match(String(perRun), /18078/, 'averaged over the one run that carried it, not both');
+  assert.match(out, /column\(s\) are missing from SOME runs/);
+});
+
+test('a column no run reported says so, rather than claiming an averaging', () => {
+  const out = render(
+    summarize([line({ hook: 'distill-session', event: 'extract', inTok: 9, usd: 0.04 })]),
+    new Map(),
+  );
+  // "3 columns are missing from SOME runs and are averaged over the runs that carried them"
+  // describes an averaging that never happened when no run carried them at all.
+  assert.match(out, /column\(s\) print "-": no run in this window reported that figure at all/);
+  assert.doesNotMatch(out, /missing from SOME runs/);
+});
+
+test('the per-day rate divides by the log days read, and names the denominator', () => {
+  const lines = [
+    { t: '2026-08-19T10:00:00Z', slug: 'proj', hook: 'x', event: 'SessionStart', outcome: 'ran' },
+    line({ hook: 'distill-session', event: 'extract', usd: 0.07, t: '2026-08-21T10:00:00Z' }),
+  ];
+  // The window is counted in FILES, and a day nothing was logged has no file — so the denominator
+  // has to come from the files that were read, not from the days the surviving lines happen to
+  // mention. A fortnight's spend over the one day the distiller ran is not a daily rate, and the
+  // reader cannot tell which was used unless the report says.
+  assert.match(render(summarize(lines, null, 7), new Map()), /per day \(÷7 log day\(s\)\)/);
+  // With nothing passed it falls back to the days the lines cover, rather than dividing by zero.
+  assert.match(render(summarize(lines), new Map()), /per day \(÷2 log day\(s\)\)/);
+});
+
+test('a window with only recall measured never prints a zero for the injectors', () => {
+  const out = render(
+    summarize([line({ hook: 'validate-note', ms: 20, session: 'a' })]),
+    new Map(),
+    [{ chars: 1200, abstained: false }],
+  );
+  // Round 2 guarded the table against exactly this and left the summary line printing from the
+  // other branch: "not measured", and four lines later "~0 tokens per session across 0
+  // injector(s)". In a report whose thesis is that a measured zero and an unmeasured one must
+  // never look alike, that sentence is the failure.
+  assert.match(out, /SessionStart injectors: not measured/);
+  assert.doesNotMatch(out, /~0 estimated tokens/);
+  assert.doesNotMatch(out, /across 0 injector/);
+  assert.match(out, /recall injected ~300 tok/);
+});
+
+test('a billed-but-failed run is counted, and named, in the cost section', () => {
+  const out = render(
+    summarize([
+      line({ hook: 'distill-session', event: 'extract', usd: 0.0389 }),
+      line({ hook: 'distill-session', event: 'extract', usd: 0.0412, outcome: 'error' }),
+    ]),
+    new Map(),
+  );
+  // Including it is right — the money was spent. Saying nothing is not: it wrote no notes, so
+  // "per run" would price a distillation using a run that did not distil, which is the very fold
+  // the extract line's outcome field exists to prevent.
+  assert.match(out, /2 run\(s\), 1 of which failed after being billed/);
+  assert.match(out, /"per run" is not\n.*the price of a distillation/s);
+  // And a clean window says nothing about failures at all.
+  const clean = render(
+    summarize([line({ hook: 'distill-session', event: 'extract', usd: 0.0389 })]),
+    new Map(),
+  );
+  assert.doesNotMatch(clean, /failed after being billed/);
 });

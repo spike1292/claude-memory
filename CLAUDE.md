@@ -263,6 +263,15 @@ background run is therefore timed by nothing, and the report says so rather than
 a null pid is the only signal there is; logging `spawned` for a run that never started is the
 healthy-looking lie this whole log exists to end.
 
+**Cost fields are optional and omitted, never zero, and an estimate is never printed like a
+measurement.** Injected context is `bytes / BYTES_PER_TOKEN` (4, no tokeniser — a dependency for a
+second decimal is not worth shipping into every plugin cache); the distiller's tokens and dollars
+come from `--output-format json` and are real. **Do not estimate the distiller's cost from
+transcript length**: measured 2026-08-20, a one-sentence prompt cost 9 input tokens against 18,078
+cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed overhead of the
+headless session. Envelope parsing falls back to the old raw-stdout path — insights outrank a cost
+figure.
+
 **A reason string that an outcome mapper decides on is a constant, not a literal** (`GATE_REASONS`,
 `REASONS`) — a literal in the plan and a copy in the mapper drift apart in silence, and every test
 written against the copy stays green while a dead dependency starts reporting as `ran`.

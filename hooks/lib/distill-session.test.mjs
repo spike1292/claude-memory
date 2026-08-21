@@ -22,6 +22,7 @@ import {
   bodyTokens,
   reconcile,
   transcriptToText,
+  parseEnvelope,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -581,4 +582,197 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
   for (const r of [GATE_REASONS.noTranscript, GATE_REASONS.badTranscript, GATE_REASONS.notAFile])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'noop-missing-dep', r);
   assert.ok(seen.size >= 6, 'the constant table still covers every branch');
+});
+
+test('parseEnvelope reads the JSON output envelope, usage and all', () => {
+  const env = parseEnvelope(
+    JSON.stringify({
+      type: 'result',
+      is_error: false,
+      result: '{"patterns":[],"mistakes":[],"decisions":[]}',
+      total_cost_usd: 0.0389,
+      usage: {
+        input_tokens: 9,
+        cache_creation_input_tokens: 18078,
+        cache_read_input_tokens: 22363,
+        output_tokens: 90,
+      },
+    }),
+  );
+  assert.deepStrictEqual(env?.usage, {
+    inTok: 9,
+    cacheWriteTok: 18078,
+    cacheReadTok: 22363,
+    outTok: 90,
+    usd: 0.0389,
+  });
+  // The model's own answer is the `result` STRING, and the existing brace extractor reads it.
+  assert.deepStrictEqual(extractJson(/** @type {string} */ (env?.text)), {
+    patterns: [],
+    mistakes: [],
+    decisions: [],
+  });
+});
+
+test('parseEnvelope returns null for plain stdout, which is the fallback signal', () => {
+  // A CLI that does not wrap its output must cost a cost figure, never a night's insights. Null
+  // here is what makes runExtractor hand the raw text to the brace extractor instead.
+  assert.strictEqual(parseEnvelope('Here you go:\n```json\n{"patterns":[]}\n```'), null);
+  assert.strictEqual(parseEnvelope(''), null);
+  assert.strictEqual(parseEnvelope('not json at all'), null);
+  // And the fallback really does still parse that stdout.
+  assert.deepStrictEqual(extractJson('Here you go:\n```json\n{"patterns":[]}\n```'), {
+    patterns: [],
+  });
+});
+
+test('the model answering with a bare object is not mistaken for an envelope', () => {
+  // The answer is itself JSON. Without the `typeof result === "string"` test, an answer that
+  // happened to carry a `result` key would be read as a wrapper and the extractor handed nothing.
+  const answer = '{"patterns":[{"title":"t","description":"d"}],"result":42}';
+  assert.strictEqual(parseEnvelope(answer), null);
+  assert.strictEqual(extractJson(answer).patterns?.length, 1);
+});
+
+test('an envelope with no usage block still yields its text', () => {
+  // Insights first: a wrapper whose usage shape changed must not lose the notes, and a cost of
+  // zero must never be invented for it.
+  const env = parseEnvelope(JSON.stringify({ result: '{"mistakes":[]}' }));
+  assert.strictEqual(env?.usage, null);
+  assert.deepStrictEqual(extractJson(/** @type {string} */ (env?.text)), { mistakes: [] });
+});
+
+/** A stand-in `claude` on PATH, so the extractor path can be driven end to end. */
+const withStubClaude = (/** @type {string} */ script) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillcli-'));
+  fs.mkdirSync(path.join(root, 'bin'));
+  // Every stub records that it was called. A second call is a second BILLED call, and the test
+  // that should have caught one could not see it: it asserted only on the log line, which is
+  // identical whether the CLI ran once or twice.
+  fs.writeFileSync(
+    path.join(root, 'bin', 'claude'),
+    script.replace('#!/bin/sh\n', `#!/bin/sh\necho x >> ${path.join(root, 'calls')}\n`),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(root, 't.jsonl'),
+    Array.from({ length: 80 }, (_, i) =>
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: `sentence ${i} about it` },
+      }),
+    ).join('\n') + '\n',
+  );
+  return root;
+};
+
+/** @param {string} root */
+const runWorker = (root) => {
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  execFileSync(process.execPath, [entry, path.join(root, 't.jsonl'), process.cwd()], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-cli',
+      DISTILL_DRYRUN: '',
+    },
+  });
+  const logDir = path.join(root, 'state', 'logs');
+  const files = fs.existsSync(logDir)
+    ? fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'))
+    : [];
+  const lines = files.flatMap((f) =>
+    fs
+      .readFileSync(path.join(logDir, f), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l)),
+  );
+  const notes = fs.existsSync(path.join(root, 'vault'))
+    ? fs
+        .readdirSync(path.join(root, 'vault'), { recursive: true })
+        .filter((f) => String(f).endsWith('.md'))
+    : [];
+  const calls = fs.existsSync(path.join(root, 'calls'))
+    ? fs.readFileSync(path.join(root, 'calls'), 'utf8').trim().split('\n').length
+    : 0;
+  return { lines, notes, calls };
+};
+
+test('a CLI too old for --output-format still produces notes', (t) => {
+  // The fallback in parseEnvelope covers a CLI that stops WRAPPING its output. This covers the
+  // other half — a CLI that does not know the flag exits on the unknown argument before doing any
+  // work — and without the retry, adding the flag would have silently ended distillation on such
+  // an install: notes stop appearing and the hook still exits 0.
+  const root = withStubClaude(
+    '#!/bin/sh\n' +
+      'for a in "$@"; do [ "$a" = "--output-format" ] && { echo "unknown option" >&2; exit 2; }; done\n' +
+      'cat > /dev/null\n' +
+      `printf '%s' '{"patterns":[{"title":"Old CLI pattern","description":"d","aliases":["a","b"]}],"mistakes":[],"decisions":[]}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes, calls } = runWorker(root);
+  assert.strictEqual(notes.length, 1, 'the insights survive a CLI that rejects the flag');
+  assert.strictEqual(calls, 2, 'the flagged attempt, then the retry without it');
+  // No cost figure is available on that path, and none is invented.
+  assert.ok(!lines.some((l) => l.event === 'extract'));
+});
+
+test('a run that was billed and then failed records the money, marked error', (t) => {
+  // `--output-format json` prints the whole envelope, usage and dollars included, and THEN exits
+  // non-zero. Discarding it under-reported the bill by exactly the runs that failed — the ones
+  // anyone would most want to find.
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"type":"result","is_error":true,"result":"Error: rate limited","total_cost_usd":0.02,"usage":{"input_tokens":9,"output_tokens":3}}'\nexit 1\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes, calls } = runWorker(root);
+  // ONE call. An envelope proves the CLI understands the flag, so retrying a run it already billed
+  // for would buy a second bill this code cannot record — and would do it on exactly the failing
+  // runs the cost section exists to surface.
+  assert.strictEqual(calls, 1, 'a billed failure is never retried');
+  const extract = lines.find((l) => l.event === 'extract');
+  assert.ok(extract, 'the cost is recorded even though the run failed');
+  assert.strictEqual(extract.usd, 0.02);
+  // And it is NOT `ran`: folding a failed run into the average of successful ones flatters both.
+  assert.strictEqual(extract.outcome, 'error');
+  assert.strictEqual(notes.length, 0, 'an error envelope yields no insights');
+});
+
+test('a failure that already cost money is never retried, whatever shape it printed', (t) => {
+  // The round-2 guard proved the CLI understood the flag by PARSING the envelope, so any failure
+  // that mangled stdout fell through to a second billed call recording nothing. Reproduced with
+  // both shapes below: two invocations, no cost line.
+  for (const [name, body] of [
+    ['truncated', `printf '%s' '{"type":"result","total_cost_usd":0.02,"usage":{"input_tokens":9'`],
+    [
+      'on stderr',
+      `printf '%s' '{"type":"result","total_cost_usd":0.02,"usage":{"input_tokens":9}}' >&2`,
+    ],
+  ]) {
+    const root = withStubClaude(`#!/bin/sh\ncat > /dev/null\n${body}\nexit 1\n`);
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    assert.strictEqual(runWorker(root).calls, 1, `${name}: billed once, called once`);
+  }
+});
+
+test('an envelope behind a prefix keeps both its cost and its insights', (t) => {
+  // Whole-string JSON.parse missed it, so the cost was lost AND the raw envelope came back as
+  // "insights" — junk that only writeNotes' shape check discarded, having first looked non-empty
+  // enough to suppress the retry.
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf 'Warning: noise\\n%s' '{"type":"result","is_error":false,"result":"{\\"patterns\\":[{\\"title\\":\\"Prefixed\\",\\"description\\":\\"d\\",\\"aliases\\":[\\"a\\",\\"b\\"]}],\\"mistakes\\":[],\\"decisions\\":[]}","total_cost_usd":0.03,"usage":{"input_tokens":9}}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes, calls } = runWorker(root);
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(notes.length, 1, 'the insights are read out of the envelope, not the noise');
+  assert.strictEqual(lines.find((l) => l.event === 'extract')?.usd, 0.03);
 });
