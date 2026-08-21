@@ -223,7 +223,7 @@ a self-test with real cases.
 - **Secret redaction is opt-in** (`<private>…</private>`), not automatic.
 - **Promotion to `permanent/` is still mostly unrun.** `--clusters` reports dozens of topics with no
   consolidated note. The tooling finds them; writing them is judgement and takes time.
-- **No Windows support.** bash, python3, and POSIX paths throughout.
+- **No Windows support.** bash and POSIX paths throughout.
 
 ## Retrieval
 
