@@ -443,13 +443,22 @@ manifest where one declares a licence. Repo metadata read 2026-08-21.
 
 **Needs re-wording, because the repo does not say what #42 says:**
 
-5. **"macOS-shaped assumptions" is not what the code shows; "POSIX-shaped, no Windows" is.**
-   Grepping `hooks/` and `scripts/` for `darwin`, `macos`, `sw_vers`, `/Library/`, `osascript`,
-   `pbcopy`, `stat -f`, Homebrew: the only hits are `slim-install.mjs`'s platform *table*
-   (`darwin`/`linux`/`win32`, correctly parameterised and tested for all three) and one BSD-sed
-   comment in `doctor.sh:200`. The real loss is Windows: bash hooks, POSIX paths, and a unix-socket
-   serve process. `README.md` already states "macOS / Linux — bash + node; no Windows support".
-   **Say "no Windows", and say the sed dialect is the one macOS-specific detail.**
+5. **"macOS-shaped assumptions" is partly right, and the bigger loss is Windows.** An earlier draft
+   of this note claimed the same grep turned up nothing but a platform table and a comment. That was
+   wrong, and review caught it — a claim that a search found *only* X is a claim of exhaustiveness,
+   and this one had not earned it. Two real macOS-specific assumptions live in code, not comments:
+
+   - `scripts/doctor.sh:239` — `"$HOME/Library/CloudStorage"/*/*/Claude`, a macOS-only candidate
+     vault path.
+   - `hooks/lib/hook-io.mjs:320` — `/opt/homebrew/bin/claude` in `findClaude()`'s fallback list,
+     an Apple-Silicon-specific install path.
+
+   Alongside them: the BSD-sed comment at `doctor.sh:200`, and `slim-install.mjs`'s platform table,
+   which is correctly parameterised over `darwin`/`linux`/`win32` and tested for all three.
+
+   So the comparison page says **both**: those are the macOS-shaped bits, and the categorical loss
+   is Windows — bash hooks, POSIX paths, and a unix-socket serve process. Neither claim replaces the
+   other. `README.md` already states "macOS / Linux — bash + node; no Windows support".
 6. **Our own README Known-gaps line is stale and must not be copied onto the comparison page.**
    `README.md:227` reads "**No Windows support.** bash, python3, and POSIX paths throughout" —
    but there is no Python; it was removed on 2026-08-16 and CI fails if a `.py` file reappears
