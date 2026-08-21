@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { stateDir, projectKey } from './paths.mjs';
+import { stateDir, projectKey, logRetentionDays } from './paths.mjs';
 
 /** Claude Code sends hook input as one JSON object on stdin. A hook must never die on bad input. */
 export function readStdin() {
@@ -101,6 +101,36 @@ export function writeMarker(file, seconds) {
     fs.writeFileSync(file, `${seconds}\n`);
   } catch {
     /* a marker we cannot write means we run again next session — never a reason to fail the hook */
+  }
+}
+
+// The day-claim marker `logs/.retention-<day>`: written by `claimDay()`, swept by
+// `pruneDatedLogs()`. Anchored on a DATE — `.startsWith('.retention-')` also matched
+// `.retention-notes.md` and a bare `.retention-`, which are not ours to delete.
+const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
+
+/**
+ * Claim today's retention pass, machine-wide. True for exactly one caller per day.
+ *
+ * `wx` is the whole mechanism: create-if-absent is one syscall and one atomic decision, where a
+ * read-then-write stamp is two and loses the race between them. EEXIST means someone else has
+ * today; ANY other error means we could not claim it and therefore must not prune — a read-only
+ * `logs/` cannot be pruned either, so declining is the honest answer rather than a pass that
+ * unlinks nothing and repeats on the next append.
+ *
+ * The marker is named by the day, so the sweep it authorises removes yesterday's along with the
+ * logs (`pruneDatedLogs()` below). Nothing else in `logs/` starts with a dot.
+ *
+ * @param {string} dir
+ * @param {string} day  `YYYY-MM-DD`
+ * @returns {boolean}
+ */
+function claimDay(dir, day) {
+  try {
+    fs.closeSync(fs.openSync(path.join(dir, `.retention-${day}`), 'wx'));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -456,6 +486,8 @@ export function logBanner(file, label, iso) {
 //
 // Dated filenames ARE the rotation. A size cap would be the second mechanism for the same job, and
 // the recall logs have settled the question already: a day is the unit anyone reads these in.
+// Retention is therefore also counted in days, by `pruneDatedLogs()` below, and runs from here on
+// the first append of a new day — the whole `logs/` policy is those two mechanisms and no third.
 //
 // Nothing here is allowed to throw, and nothing here is allowed to be slow — every call sits on a
 // path that must exit in milliseconds, and one of them is per-prompt.
@@ -513,13 +545,127 @@ export function appendJsonl(family, cwd, record) {
     } catch {
       /* no repo, or a key we cannot resolve — the line is still worth writing */
     }
+    const dir = stateDir('logs');
+    const file = path.join(dir, `${family}-${t.slice(0, 10)}.jsonl`);
+    // ONE ATOMIC CLAIM PER DAY, not a stamp anyone can read as stale.
+    //
+    // Three guards were tried here and the first two each had a herd. `!existsSync(today's file)`
+    // is check-then-act across PROCESSES — logs/ is machine-wide, five SessionStart hooks fire at
+    // once, and each family has its own file: measured 2026-08-21, NINE of nine concurrent hooks
+    // each ran a full pass. A read-then-write date stamp took the median to one but left a window
+    // (up to eight of nine in 15 trials) and, worse, INVERTED when the stamp could not be written:
+    // read never returned today, so every append pruned — 20 of 20, 146 ms each, forever.
+    //
+    // Measured after the change, 15 trials of nine concurrent hooks over a 300-file backlog:
+    // EXACTLY ONE pass every trial, and zero passes when logs/ is read-only.
+    //
+    // `wx` has neither failure. The create either succeeds for exactly one process or throws
+    // EEXIST, and a claim that cannot be created at all (read-only logs/, EACCES) means we do not
+    // prune — which is right, because the unlinks would fail for the same reason. Fail-closed here
+    // is a directory that keeps growing; fail-open was a full readdir on every prompt.
+    //
+    // The claim is taken BEFORE the pass, so a process killed mid-pass leaves the rest of the
+    // backlog until tomorrow. Bounded, and the alternative is a lock this path must not wait on.
+    const day = t.slice(0, 10);
+    /** @type {number | undefined} */
+    let pruned;
+    if (claimDay(dir, day)) {
+      pruned = pruneDatedLogs(new Date(t)).length;
+    }
+    // Deleting is work, so it logs itself — on the line the caller was already writing, AFTER the
+    // caller's own fields, because their order is a contract this must not reach into. Omitted
+    // when nothing was deleted, never zero, like the cost fields. `/memory:doctor --hooks` sums it
+    // over the window, so the deletion is visible where the logs it deleted are read.
     fs.appendFileSync(
-      path.join(stateDir('logs'), `${family}-${t.slice(0, 10)}.jsonl`),
-      JSON.stringify({ t, slug, ...record }) + '\n',
+      file,
+      JSON.stringify({ t, slug, ...record, ...(pruned && { pruned }) }) + '\n',
     );
   } catch {
     /* a log that cannot be written must never fail or delay a hook */
   }
+}
+
+// The dated families, and the only basenames retention may delete. `scripts/doctor.sh` names the
+// same two in a `sed -E` — a shell cannot import this, so keep them in step. A wildcard prefix
+// deleted `backup-2026-01-01.jsonl` here and misread one there (2026-08-21).
+const DATED_LOG = /^(recall|hooks)-(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+/**
+ * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
+ *
+ * DELETES, where the vault's log prune only ever moves. These are machine-local debug lines that
+ * no release replaces and nothing else reads — the same class of file `trimLog()` already
+ * truncates in place. An Archive/ here would be the unbounded directory again under another name.
+ *
+ * The date comes from the FILENAME, and the cutoff is built in UTC by the SAME producer that
+ * writes those names — `toISOString()`. The vault pruner's `cutoffDate()` was used here first and
+ * was wrong for it: that one is local by design (vault note filenames are local-dated), and these
+ * names are UTC. East of Greenwich, between local and UTC midnight, the two disagree by a day —
+ * measured 2026-08-21, `TZ=Pacific/Kiritimati` with a retention of 0 deleted the file the OTHER
+ * family was appending to, on every single append, because the guard below never held either.
+ * Sharing the comparison was worth less than sharing the clock.
+ *
+ * First run after a long gap is the slow one and it is synchronous inside a hook: measured
+ * 2026-08-21, macOS/APFS, 150 ms to unlink 1095 stale files and 882 ms for 4686, against the 10 s
+ * timeout `hooks.json` declares for the hooks that append. Steady state is free — 300 appends into
+ * an already-pruned directory ran at 5.96 ms each here against 6.51 ms on `main`, i.e. inside the
+ * noise of `appendFileSync` itself.
+ * ponytail: uncapped. Cap the pass at N unlinks and let the next day finish it if a machine ever
+ * arrives with a backlog big enough to be felt.
+ *
+ * Best effort, like everything on this path: a file we cannot unlink is one that stays.
+ *
+ * @param {Date} [now]
+ * @returns {string[]} the basenames removed
+ */
+export function pruneDatedLogs(now = new Date()) {
+  /** @type {string[]} */
+  const removed = [];
+  try {
+    const dir = stateDir('logs');
+    const days = logRetentionDays();
+    // Date arithmetic, not `now - days * 86400`: only the day count is meaningful here, and UTC
+    // days are all the same length anyway. An out-of-range `days` makes an Invalid Date, whose
+    // `toISOString()` THROWS — caught below, so the failure keeps every file rather than ranking
+    // them against a `NaN-NaN-NaN` string that sorts above every real date and deletes the lot.
+    // (That is not hypothetical: it is what `cutoffDate()`'s own comment records costing it.)
+    const cutoff = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days),
+    )
+      .toISOString()
+      .slice(0, 10);
+    const today = now.toISOString().slice(0, 10);
+    for (const name of fs.readdirSync(dir)) {
+      // Anchored on the two families BY NAME. An `[a-z-]+` prefix was not the same thing: it
+      // matched `backup-2026-01-01.jsonl` and `my-notes-export-2026-01-01.jsonl` and unlinked
+      // both without trace (measured 2026-08-21). This directory is machine-local and a human
+      // may well have put something in it; only what we write is ours to delete.
+      // Yesterday's day-claim goes with yesterday's logs — the pass that this marker authorised
+      // is the pass that cleans it up, so the directory does not accumulate one dotfile per day
+      // in the name of not accumulating one log file per day.
+      const claim = CLAIM.exec(name);
+      if (claim) {
+        if (claim[1] >= today) continue; // today's own claim, or a future one from a wrong clock
+        try {
+          fs.unlinkSync(path.join(dir, name));
+        } catch {
+          /* best effort, same as the logs */
+        }
+        continue;
+      }
+      const m = DATED_LOG.exec(name);
+      if (!m || m[2] >= cutoff) continue;
+      try {
+        fs.unlinkSync(path.join(dir, name));
+        removed.push(name);
+      } catch {
+        /* a log we cannot delete is a log that stays */
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+  return removed;
 }
 
 /**

@@ -23,11 +23,14 @@ export { DEFAULT_DAYS };
  * @typedef {{
  *   t?: string, slug?: string | null, hook?: string, event?: string,
  *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean,
- *   bytes?: number,
+ *   bytes?: number, pruned?: number,
  *   inTok?: number, cacheWriteTok?: number, cacheReadTok?: number, outTok?: number, usd?: number,
  * }} HookLine
  */
-/** @typedef {{ chars?: number, abstained?: boolean, t?: string, slug?: string }} RecallSize */
+/** @typedef {{ chars?: number, abstained?: boolean, t?: string, slug?: string, pruned?: number }} RecallSize */
+
+// `<family>-YYYY-MM-DD.jsonl` — the window's own dates, read back off the filenames that define it.
+const DATE_IN_NAME = /-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 /**
  * @typedef {{
  *   hook: string,
@@ -134,8 +137,14 @@ export function timeouts(manifest) {
  * @param {number} [logDays] how many daily log files the window read — the honest denominator for
  *   a per-day rate, since a day nothing was logged has no file and cannot be counted from lines
  */
-export function summarize(lines, slug = null, logDays = 0) {
+export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
   const seen = lines.length;
+  // BEFORE the slug filter, deliberately, and the one figure here that is not scoped. A retention
+  // pass is machine-wide: it deletes every project's files, and the line recording it carries
+  // whichever slug happened to trigger it. Scoped, the project that LOST the history was the one
+  // told nothing — 300 deleted files reported as 0 (measured 2026-08-21).
+  const pruned =
+    lines.reduce((a, l) => a + (typeof l.pruned === 'number' ? l.pruned : 0), 0) + extraPruned;
   lines = slug ? lines.filter((l) => l.slug === slug) : lines;
   /** @type {Map<string, HookRow>} */
   const hooks = new Map();
@@ -238,6 +247,7 @@ export function summarize(lines, slug = null, logDays = 0) {
     invocations,
     untimed,
     childLines,
+    pruned,
     first: lines.find((l) => l.t)?.t ?? null,
     last: [...lines].reverse().find((l) => l.t)?.t ?? null,
     hooks: [...hooks.entries()].sort((a, b) => b[1].n - a[1].n),
@@ -259,6 +269,26 @@ export function summarize(lines, slug = null, logDays = 0) {
     slug,
     otherProjects: seen - lines.length,
   };
+}
+
+/**
+ * The retention sentence, or nothing at all.
+ *
+ * The one thing in this report that DELETED the data the report reads. Without it the only
+ * evidence is the absence of files, which reads identically to a machine that never logged — and
+ * a project whose lines were the ones deleted lands in render()'s no-invocations arm, so this has
+ * to be reachable from both.
+ *
+ * @param {{ pruned: number }} s
+ * @returns {string[]}
+ */
+function prunedSection(s) {
+  if (!s.pruned) return [];
+  return [
+    '',
+    `retention deleted ${s.pruned} dated log file(s) while this window was being logged —`,
+    'machine-wide: one pass deletes for every project and both families.',
+  ];
 }
 
 /**
@@ -346,12 +376,17 @@ export function render(s, limits, recall = []) {
   // No invocations does not mean no report: extract lines are cost records rather than invocations,
   // so a window can hold real spend and no gate lines at all. Say so, then let the sections below
   // print what they do have.
+  //
+  // The retention sentence is in BOTH arms, and this is the arm that needs it most: a window with
+  // no lines for this project is exactly what retention produces, and the early return used to
+  // answer "no hook has run for this project yet" while a pass had just deleted its history.
   if (!s.invocations)
     return [
       s.otherProjects
         ? `not measured: none of the ${s.otherProjects} logged invocations in this window belong ` +
           `to ${s.slug}. The log is machine-wide; no hook has run for this project yet.`
         : 'not measured: no hook invocations logged in this window.',
+      ...prunedSection(s),
       ...injectedSection(s, recall),
       ...costSection(s),
     ].join('\n');
@@ -433,6 +468,8 @@ export function render(s, limits, recall = []) {
       `${s.childLines} of ${s.invocations} were fired by a background \`claude\` run, not by a`,
       'session — one distillation or graph regen fires SessionStart again on its way through.',
     );
+
+  out.push(...prunedSection(s));
 
   out.push('', `not in this table: ${UNLOGGED}, and ${NO_WORKER_LINE}.`);
   out.push(...injectedSection(s, recall));
@@ -682,19 +719,37 @@ function costSection(s) {
  */
 export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   const files = logFiles(logDir, days, 'hooks');
-  // readLines() is shared with the recall reader and is typed for ITS record. The cast is the only
-  // thing telling tsc these are hook lines — without it every field below type-checks against a
+  // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
+  // is not given a `bytes` field, because one number with two sources is one number that will
+  // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
+  const recallLines = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall')));
+  const recall = recallLines.filter((r) => !slug || r.slug === slug);
+  // `pruned` rides on whichever line the day's first append happened to be, and that is a RECALL
+  // line for any session that crosses UTC midnight with recall armed — the hook family is not the
+  // one that pays. Unscoped by project, like the sum inside summarize() and for the same reason.
+  //
+  // Bounded by the HOOKS window's oldest day, though: `logFiles()` slices by file COUNT, and the
+  // recall family is sparser (it logs only when armed), so its seven newest files can reach back
+  // months further than the seven newest hook files. Unbounded, a pass from January was reported
+  // as "while this window was being logged" over last week's dates.
+  // `files[0]` is the OLDEST file in the window — logFiles() sorts and slices off the end — and it
+  // is the whole bound: a pass recorded on any earlier day belongs to a window this report is not
+  // printing. `null` when there are no hook files at all — no window, so nothing to attribute to
+  // one — the filter below says so in the same expression that bounds the window. An empty string
+  // instead would let every recall line back in and restore the unbounded sum.
+  const from = files.length
+    ? /** @type {RegExpExecArray} */ (DATE_IN_NAME.exec(path.basename(files[0])))[1]
+    : null;
+  // readLines() is shared with the recall reader and is typed for ITS record. The cast below is the
+  // only thing telling tsc these are hook lines — without it every field type-checks against a
   // shape with no `hook`, `outcome` or `event` in it, and a rename in logHook() would pass.
   const summary = summarize(
     /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files))),
     slug,
     files.length,
-  );
-  // Recall's own family, for the injected-context section only. It records injected CHARACTERS and
-  // is not given a `bytes` field, because one number with two sources is one number that will
-  // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
-  const recall = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall'))).filter(
-    (r) => !slug || r.slug === slug,
+    recallLines
+      .filter((r) => from !== null && (r.t ?? '') >= from)
+      .reduce((a, r) => a + (typeof r.pruned === 'number' ? r.pruned : 0), 0),
   );
   const head = files.length
     ? `${files.length} log file(s), most recent first: ${files

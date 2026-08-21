@@ -50,6 +50,9 @@ _memory_env_load() {
   MEMORY_ENV_RECALL=$([ "${MEMORY_RECALL_ENABLED:-}" = "1" ] && printf 1 || printf 0)
   MEMORY_ENV_RECALL_CONFIG=""
   MEMORY_ENV_MODEL=""
+  # Left EMPTY on purpose: repeating the 30-day default here would be a second place it
+  # lives. A caller prints "?" and the report already says node could not be asked.
+  MEMORY_ENV_LOG_RETENTION_DAYS=""
   MEMORY_ENV_DEGRADED=1
   _memory_env_dir="$_d"
 }
@@ -58,6 +61,7 @@ _memory_env_load() {
 # Same names and same output as before the migration, so callers did not change.
 
 config_file() { printf '%s' "$(memory_home)/config.json"; }
+log_retention_days() { _memory_env_load "$PWD"; printf '%s' "$MEMORY_ENV_LOG_RETENTION_DAYS"; }
 
 resolve_vault() { _memory_env_load "$PWD"; printf '%s' "$MEMORY_ENV_VAULT"; }
 vault_source()  { _memory_env_load "$PWD"; printf '%s' "$MEMORY_ENV_VAULT_SOURCE"; }

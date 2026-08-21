@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { logRetentionDays } from './paths.mjs';
 import {
   payload,
   hookCwd,
@@ -20,6 +21,7 @@ import {
   writeLock,
   releaseLock,
   appendJsonl,
+  pruneDatedLogs,
   logHook,
 } from './hook-io.mjs';
 
@@ -273,7 +275,8 @@ test('appendJsonl stamps t and slug FIRST, then the record verbatim', () => {
 test('appendJsonl dates the file by the same clock it stamps the line with', () => {
   withState((logs) => {
     appendJsonl('hooks', process.cwd(), { hook: 'x' });
-    const [file] = fs.readdirSync(logs);
+    // The day-claim dotfile lives here too, and sorts first — the log files are the .jsonl ones.
+    const [file] = fs.readdirSync(logs).filter((f) => f.endsWith('.jsonl'));
     const [rec] = readJsonl(path.join(logs, file));
     // A line landing in yesterday's file is how a window silently loses a day. Same ISO string for
     // both, so they cannot disagree even across a midnight boundary mid-call.
@@ -374,4 +377,216 @@ test('detach returns null when the command cannot start, and says so in the log 
   for (let i = 0; i < 100 && !/spawn failed/.test(fs.readFileSync(logFile, 'utf8')); i++)
     await new Promise((r) => setTimeout(r, 20));
   assert.match(fs.readFileSync(logFile, 'utf8'), /spawn failed/, 'and the log file records why');
+});
+
+// ---------------------------------------------------------------- retention
+
+/** @param {string} dir @param {string[]} names */
+const seed = (dir, names) => {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const n of names) fs.writeFileSync(path.join(dir, n), '{}\n');
+};
+
+/** @param {string} value @param {() => void} fn */
+const withRetention = (value, fn) => {
+  const prev = process.env.MEMORY_LOG_RETENTION_DAYS;
+  process.env.MEMORY_LOG_RETENTION_DAYS = value;
+  try {
+    fn();
+  } finally {
+    if (prev === undefined) delete process.env.MEMORY_LOG_RETENTION_DAYS;
+    else process.env.MEMORY_LOG_RETENTION_DAYS = prev;
+  }
+};
+
+test('pruneDatedLogs deletes past the window and leaves everything else alone', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, [
+        'recall-2026-01-01.jsonl', // older than the window
+        'hooks-2026-07-01.jsonl', // older than the window
+        'hooks-2026-08-20.jsonl', // inside it
+        'recall-2026-08-21.jsonl', // today
+        'distill.log', // a free-form log; trimLog's job, not this one
+        'hooks-2026-13-99.jsonl', // shaped like ours but not a date; it only sorts high
+        '2026-01-01.jsonl', // no family: not ours, whatever the date says
+        'backup-2026-01-01.jsonl', // someone else's file with a plausible prefix
+        'my-notes-export-2026-01-01.jsonl',
+        '.retention-notes.md', // shares the claim prefix, is not a claim
+        '.retention-', // the prefix and nothing else
+        '.retention-2099-01-01', // a claim from a clock that was wrong: kept until that day
+      ]);
+      const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
+      assert.deepStrictEqual(removed.sort(), ['hooks-2026-07-01.jsonl', 'recall-2026-01-01.jsonl']);
+      assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+        '.retention-',
+        '.retention-2099-01-01',
+        '.retention-notes.md',
+        '2026-01-01.jsonl',
+        'backup-2026-01-01.jsonl',
+        'distill.log',
+        'hooks-2026-08-20.jsonl',
+        'hooks-2026-13-99.jsonl',
+        'my-notes-export-2026-01-01.jsonl',
+        'recall-2026-08-21.jsonl',
+      ]);
+    });
+  });
+});
+
+test('an unparseable retention keeps the default window rather than emptying the directory', () => {
+  withState((logs) => {
+    // ' ' casts to 0 through Number() and 1e9 makes an Invalid Date — the two values that once
+    // archived a whole directory while printing a success line (scripts/lib/prune-logs.mjs).
+    for (const bad of [' ', '1e9', '-1', 'thirty']) {
+      withRetention(bad, () => {
+        seed(logs, ['hooks-2026-08-20.jsonl']);
+        pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
+        assert.deepStrictEqual(
+          fs.readdirSync(logs),
+          ['hooks-2026-08-20.jsonl'],
+          `${JSON.stringify(bad)} resolved to ${logRetentionDays()}d`,
+        );
+      });
+    }
+  });
+});
+
+test('appendJsonl prunes once a day, and says on the line how many it deleted', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, ['hooks-2000-01-01.jsonl', 'recall-2000-01-02.jsonl']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' }); // unclaimed day: this one prunes
+      const day = new Date().toISOString().slice(0, 10);
+      const [first] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+      // AFTER the caller's fields: their order is a contract (see the first test in this file),
+      // and a count injected into the middle of someone's record breaks a reader that never asked
+      // for it.
+      assert.deepStrictEqual(Object.keys(first), ['t', 'slug', 'hook', 'pruned']);
+      assert.strictEqual(
+        first.pruned,
+        2,
+        'the work logs itself, on the line already being written',
+      );
+      assert.strictEqual(fs.existsSync(path.join(logs, `.retention-${day}`)), true);
+
+      // The claim is per DIRECTORY and per DAY, so it holds across families and across processes:
+      // a stale file dropped in afterwards survives until tomorrow. The first guard asked whether
+      // today's file existed, which is per family and per process — nine of nine concurrent hooks
+      // each ran a full pass.
+      seed(logs, ['recall-2000-01-03.jsonl']);
+      appendJsonl('recall', process.cwd(), { abstained: true });
+      assert.strictEqual(fs.existsSync(path.join(logs, 'recall-2000-01-03.jsonl')), true);
+      const [second] = readJsonl(path.join(logs, `recall-${day}.jsonl`));
+      assert.ok(!('pruned' in second), 'omitted, never zero');
+    });
+  });
+});
+
+test("yesterday's claim does not hold today, and is swept with the logs it authorised", () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      const day = new Date().toISOString().slice(0, 10);
+      seed(logs, ['hooks-2000-01-01.jsonl', '.retention-2000-01-01']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' });
+      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')), false);
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, '.retention-2000-01-01')),
+        false,
+        'one dotfile per day would be the same unbounded directory under another name',
+      );
+      assert.strictEqual(fs.existsSync(path.join(logs, `.retention-${day}`)), true);
+    });
+  });
+});
+
+test('a claim that cannot be created means no prune, not a prune on every append', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      const day = new Date().toISOString().slice(0, 10);
+      seed(logs, ['hooks-2000-01-01.jsonl']);
+      // A DIRECTORY where the claim file goes: `openSync(..., 'wx')` fails with EISDIR, the same
+      // shape as a read-only logs/ (EACCES). The read-then-write stamp this replaced inverted
+      // here — it could never read today back, so it pruned on EVERY append, 146 ms apiece.
+      fs.mkdirSync(path.join(logs, `.retention-${day}`));
+      for (let i = 0; i < 3; i++) appendJsonl('hooks', process.cwd(), { hook: `h${i}` });
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')),
+        true,
+        'declining to prune is the honest answer: those unlinks would fail too',
+      );
+      assert.strictEqual(
+        readJsonl(path.join(logs, `hooks-${day}.jsonl`)).length,
+        3,
+        'lines still land',
+      );
+    });
+  });
+});
+
+test('the window is UTC, like the filenames — a timezone ahead of it deletes nothing extra', () => {
+  const prevTz = process.env.TZ;
+  // 23:30 UTC is 01:30 the NEXT local day in Amsterdam, so the local date is one ahead of the date
+  // these files are named with. A local cutoff ranked today's file as older than the window and
+  // unlinked it — at a retention of 0 that is the live file of the other family, deleted on every
+  // append, because the day-roll guard never held either (measured 2026-08-21).
+  // Both sides of the clock are pinned: TZ here, and the instant passed in. Reading the real clock
+  // would make this pass or fail by the hour, since every zone matches UTC for part of the day.
+  process.env.TZ = 'Europe/Amsterdam';
+  try {
+    withState((logs) => {
+      withRetention('0', () => {
+        // The claim marker is here for the SECOND use of the clock: the sweep compares it against
+        // today, and a LOCAL today east of Greenwich deletes the claim the pass just made — so
+        // every later append that day runs a full pass, the herd this design exists to prevent.
+        seed(logs, ['recall-2026-08-21.jsonl', 'hooks-2026-08-20.jsonl', '.retention-2026-08-21']);
+        assert.deepStrictEqual(pruneDatedLogs(new Date('2026-08-21T23:30:00Z')), [
+          'hooks-2026-08-20.jsonl',
+        ]);
+        assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+          '.retention-2026-08-21',
+          'recall-2026-08-21.jsonl',
+        ]);
+      });
+    });
+  } finally {
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  }
+});
+
+test('a pass sweeps its markers even at the largest retention there is', () => {
+  withState((logs) => {
+    withRetention('999999999999', () => {
+      // Twelve digits used to make an Invalid Date, whose toISOString() threw and abandoned the
+      // pass — logs survived, but the stale day-claims did not get swept, so logs/ grew a dotfile
+      // a day: the unbounded directory this change exists to close, in a corner of it.
+      seed(logs, ['hooks-2000-01-01.jsonl', '.retention-2000-01-01']);
+      appendJsonl('hooks', process.cwd(), { hook: 'a' });
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, 'hooks-2000-01-01.jsonl')),
+        true,
+        'a century keeps every log',
+      );
+      assert.strictEqual(
+        fs.existsSync(path.join(logs, '.retention-2000-01-01')),
+        false,
+        `and still sweeps its own markers — ${logRetentionDays()}d`,
+      );
+    });
+  });
+});
+
+test('a log that cannot be unlinked is not reported as deleted, and does not stop the pass', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, ['hooks-2000-01-01.jsonl', 'hooks-2000-01-02.jsonl']);
+      // A DIRECTORY where a log file's name is: unlinkSync throws EPERM/EISDIR on it. The pass
+      // must skip it, keep going, and not count it — "a log we cannot delete is a log that stays".
+      fs.mkdirSync(path.join(logs, 'hooks-2000-01-03.jsonl'));
+      const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
+      assert.deepStrictEqual(removed.sort(), ['hooks-2000-01-01.jsonl', 'hooks-2000-01-02.jsonl']);
+      assert.strictEqual(fs.existsSync(path.join(logs, 'hooks-2000-01-03.jsonl')), true);
+    });
+  });
 });

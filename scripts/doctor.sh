@@ -190,11 +190,29 @@ for d in db logs eval run cache; do
   [ -d "$STATE/$d" ] || continue
   ok "$d/ $(du -shL "$STATE/$d" 2>/dev/null | cut -f1 | tr -d ' ')"
 done
+# What retention actually left behind, beside the size above. The oldest date is the check: the
+# dated files are pruned when a NEW day's file is created, so a machine that stopped writing logs
+# keeps whatever it had, and the only way to see that is to print the date rather than the policy.
+# The date is read from the FILENAME, like every other date in this system.
+if [ -d "$STATE/logs" ]; then
+  # The SAME two families pruneDatedLogs() deletes, named again because a shell cannot import the
+  # constant. A `[a-z-]*` prefix here read a stray `backup-2018-05-05.jsonl` as ours and printed
+  # "oldest 2018-05-05" — retention looking eight years broken while working perfectly. `sed -E`:
+  # BSD basic regex has no alternation.
+  oldest=$(ls "$STATE/logs" 2>/dev/null |
+    sed -nE 's/^(recall|hooks)-([0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl$/\2/p' | sort | head -1)
+  # `?` and not the default: in the degraded branch vault-env.sh could not ask node — no node at
+  # all, which the runtime section above FAILs on, or a node that ran and failed, which it does not.
+  # Either way this line restates no number it did not resolve.
+  keep_days=$(log_retention_days)
+  ok "logs/ dated files: keep ${keep_days:-?}d, oldest ${oldest:-none}"
+fi
 # ~722 MB of the expected total is the ONNX weights in models/, so the threshold has to sit well
-# above that. Past 2 GB something else grew: logs/ and eval/ only append, and db/ keeps one index
-# per model PER PROJECT, so a machine with many repos accumulates indexes nothing ever deletes.
+# above that. Past 2 GB something else grew: eval/ only appends, and db/ keeps one index per model
+# PER PROJECT, so a machine with many repos accumulates indexes nothing ever deletes. logs/ is the
+# one directory that now bounds itself — by size for the free-form logs, by age for the dated ones.
 if [ "${state_mb:-0}" -gt 2048 ]; then
-  warn "state is ${state_mb} MB" "nothing prunes it automatically. Run /memory:prune, then delete db/semantic-*.db for projects you no longer index and old eval/ runs."
+  warn "state is ${state_mb} MB" "db/, models/ and eval/ are not pruned automatically (logs/ is). Run /memory:prune for the vault, then delete db/semantic-*.db for projects you no longer index and old eval/ runs."
 else
   ok "state total ${state_mb:-?} MB"
 fi

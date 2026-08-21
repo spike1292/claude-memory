@@ -238,6 +238,29 @@ that cannot be written must never fail or delay a hook. Two families use it — 
 duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
+**One retention policy covers `logs/`, in two mechanisms because there are two kinds of file.** The
+free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by SIZE —
+`trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
+`pruneDatedLogs()` deletes `<family>-<date>.jsonl` older than `logRetentionDays()` (default 30,
+`logRetentionDays` in `config.json` or `MEMORY_LOG_RETENTION_DAYS`). A day is the unit because the
+read views query a window of dated FILES, one per day a family ran — which also makes retention a
+ceiling on them: `--hooks=60` reads only what 30 days kept. It DELETES where the vault's
+`prune-logs.mjs` only moves; an `Archive/` here would be the unbounded directory under another name.
+
+**It runs on the first append of a new day, claimed with `wx`** — not from `/memory:prune`, because
+a policy that waits for a human to run a command is not one. `logs/.retention-<day>` is created
+create-if-absent, so exactly one process per machine per day runs the pass and the rest pay one
+failed `open`; a claim that cannot be created means no pass, which is right, because those unlinks
+would fail too. **Two weaker guards each caused a herd and the numbers are in `hook-io.mjs`** — do
+not replace this one without reading them. **The cutoff is UTC**, from the same `toISOString()` that
+names the files; the vault pruner's `cutoffDate()` is local by design and deleted a live log here.
+
+**A pass that deleted anything reports it**: `pruned: n` after the caller's own fields, omitted when
+it deleted nothing, summed by `/memory:doctor --hooks`. **That sum is the one figure in that report
+not scoped to your project** — one pass deletes every project's files, so scoping it told the
+project that lost 300 files it had lost none. `/memory:doctor` also prints the window and the oldest
+dated file, which is what shows a machine that stopped writing logs and so stopped pruning them.
+
 `logHook()`'s `ms` is `performance.now()` — measured from PROCESS START, because that is what
 `hooks.json`'s timeout applies to. **Those timeouts live in `hooks.json` and nowhere else**:
 `scripts/lib/hook-stats.mjs` parses the manifest at run time, and a copy anywhere would drift in

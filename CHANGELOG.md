@@ -11,6 +11,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Retention for `$CLAUDE_MEMORY_HOME/logs/`, so the directory is bounded on both of its axes.**
+  The free-form logs were capped at 1 MB; the dated JSONL families (`recall-<date>`, `hooks-<date>`)
+  accumulated one file per active day, forever, in machine-local state no release replaces. They are
+  now deleted past `logRetentionDays` — 30 days by default, settable in `config.json` or via
+  `MEMORY_LOG_RETENTION_DAYS` ([#53](https://github.com/spike1292/claude-memory/issues/53)). Size
+  for the appends, age for the dated files, because the read views (`/memory:doctor --stats`,
+  `--hooks`) query a window of days — which retention now caps. The prune runs on the first log line
+  of a new day rather than from `/memory:prune`, and a pass that deleted anything records `pruned:
+  n` on that line, which `--hooks` sums. `/memory:doctor` reports the window and the oldest dated
+  file beside the directory size.
+
 - **`/memory:doctor --hooks` — what every hook did, and how long it took.** Nine hook invocations
   fire per session and none of them recorded anything, so a hook that has been permanently dead
   since a dependency vanished looked exactly like a healthy one: both exit 0 and print nothing.
