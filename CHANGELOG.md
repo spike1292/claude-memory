@@ -88,14 +88,16 @@ what a user's setup depends on: config keys, command names, vault layout, and
     it would otherwise be judged against a timeout it is not subject to.
     A run that was billed and then failed still records what it cost, marked `error`: the money was
     spent, and the runs that fail are the ones worth finding. A CLI too old to know the flag retries
-    once without it, so adding it cannot silently end distillation.
+    once without it, so adding it cannot silently end distillation — but only when the first attempt
+    produced no envelope, since an envelope proves the CLI understood the flag and retrying a run it
+    already billed would buy a second bill nothing can record.
     Estimation was rejected on evidence — a throwaway prompt measured 9 input tokens against 18,078
     cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed overhead of the
     headless session and a length heuristic would have been wrong by orders of magnitude. If the
     envelope does not parse, the existing extractor runs on raw stdout exactly as before: a CLI that
     stops wrapping its output costs a cost figure, never a night's insights.
   The one injector that stays unmeasured is the bash session-sync hook, which is under a
-  do-not-port fence. Its block was measured by hand instead — 1545 bytes, about 386 estimated
+  do-not-port fence. Its block was measured by hand instead — 1546 bytes, about 387 estimated
   tokens, rising to 472 when context-mode is not installed — and the report prints that beside the
   figures it measured rather than omitting the injector.
 

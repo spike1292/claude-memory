@@ -515,14 +515,21 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
 
     // Whatever it managed to print, first: an envelope on a non-zero exit carries both the cost and
     // the answer, and even plain text may hold the JSON.
-    const salvaged = readAttempt(String(err.stdout ?? ''), true);
+    const out = String(err.stdout ?? '');
+    const salvaged = readAttempt(out, true);
     if (Object.keys(salvaged).length) return salvaged;
 
-    // Then, once, WITHOUT the flag. The documented fallback covers a CLI that stops WRAPPING its
-    // output; this covers the other half — a CLI old enough not to know `--output-format`, which
-    // exits on the unknown argument before doing any work. Without this, adding the flag could
-    // silently end distillation on such an install: notes stop appearing, the hook still exits 0.
-    // One extra call, only on a path that already failed, and never on a timeout.
+    // Then, once, WITHOUT the flag — but ONLY when the first attempt produced no envelope. An
+    // envelope is proof the CLI understands the flag, so a failure that printed one is a rate
+    // limit or an overload, not an unsupported argument, and retrying it makes a SECOND billed
+    // call whose cost this code cannot record. Measured on a stub: two CLI invocations, one extract
+    // line. That falsifies the very section the cost is reported in, and it does so on exactly the
+    // failing runs the section exists to surface.
+    //
+    // What remains is the case the retry is for: a CLI old enough not to know `--output-format`,
+    // which exits on the unknown argument before doing any work — and without the retry, adding
+    // the flag would silently end distillation there, notes gone and the hook still exiting 0.
+    if (parseEnvelope(out)) return {};
     if (err.code === 'ETIMEDOUT' || err.signal) return {};
     try {
       console.error('distill: retrying without --output-format (no cost figure for this run)');

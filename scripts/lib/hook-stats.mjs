@@ -148,6 +148,8 @@ export function summarize(lines, slug = null) {
   const perSession = new Map();
   /** @type {Set<string>} */
   const measured = new Set();
+  /** @type {Map<string, number>} */
+  const unsized = new Map();
   /** @type {HookLine[]} */
   const extracts = [];
   /** @type {Set<string>} */
@@ -173,13 +175,20 @@ export function summarize(lines, slug = null) {
     // A session where the hook RAN and injected nothing is a real zero and counts as one. That is
     // the difference between a hook costing 400 tokens every session and one costing 400 tokens a
     // quarter of the time — and averaging only over the runs that injected reported the second as
-    // the first. Only an ABSENT `bytes` means "not measured", and a hook that never carried one is
-    // left out of the table entirely.
+    // the first.
+    //
+    // The cost of that: an absent `bytes` means "injected nothing" AND "written before this field
+    // existed", and the two cannot be told apart, because the record format forbids writing a zero.
+    // So a hook that has carried the field at least once reads every older line as an injected
+    // zero, understating it until those files age out of the window — a week. Counted below and
+    // reported, rather than left for someone to discover in the numbers. A hook that has NEVER
+    // carried it stays out of the table entirely.
     if (!l.child && l.session && !worker && l.event !== 'extract') {
       const by = perSession.get(name) ?? new Map();
       by.set(l.session, (by.get(l.session) ?? 0) + (typeof l.bytes === 'number' ? l.bytes : 0));
       perSession.set(name, by);
       if (typeof l.bytes === 'number') measured.add(name);
+      else unsized.set(name, (unsized.get(name) ?? 0) + 1);
     }
 
     // An `extract` line is a COST RECORD for one API call, not a hook invocation: it belongs to the
@@ -235,6 +244,11 @@ export function summarize(lines, slug = null) {
         sessions: [...by.values()],
       }))
       .sort((a, b) => b.sessions.length - a.sessions.length),
+    // Lines for a measured hook that carried no `bytes`. Indistinguishable from "injected nothing",
+    // so they are counted as zeros and their number is printed beside the figures they drag down.
+    unsized: [...unsized.entries()]
+      .filter(([name]) => measured.has(name))
+      .reduce((a, [, n]) => a + n, 0),
     extracts,
     sessions: sessions.size,
     days: days.size,
@@ -464,19 +478,40 @@ function injectedSection(s, recall) {
   const mean = (/** @type {readonly number[]} */ v) =>
     v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
 
-  const body = [
-    '',
-    'injected context (ESTIMATED tokens, bytes / ' + BYTES_PER_TOKEN + ' — no tokeniser)',
-    // Both numbers, always. "injected in 2 of 40 sessions, mean 380" and "40 of 40, mean 380" are
-    // different findings, and a mean with no denominator cannot tell them apart — which is how the
-    // per-session total below came to assert a cost most sessions never paid.
-    table(
-      ['hook', 'sessions', 'injected in', 'mean tok', 'p50 tok', 'p95 tok'],
-      rows.map((r) => [r.name, r.sessions, r.injecting, num(mean(r.toks)), num(r.p50), num(r.p95)]),
-    ),
-    'Averaged over every session the hook RAN in, including the ones where it injected nothing —',
-    'so this is what a session actually pays, not what it pays on the sessions where it fires.',
-  ];
+  /** @type {string[]} */
+  const body = [''];
+  // Only when there is something to put in it. A bare header over an empty table, followed by
+  // "~0 tokens across 0 injector(s)", reads as a measured zero — in a report whose whole thesis is
+  // that a measured zero and an unmeasured one must never look alike.
+  if (rows.length)
+    body.push(
+      'injected context (ESTIMATED tokens, bytes / ' + BYTES_PER_TOKEN + ' — no tokeniser)',
+      // Both numbers, always. "injected in 2 of 40 sessions, mean 380" and "40 of 40, mean 380"
+      // are different findings, and a mean with no denominator cannot tell them apart — which is
+      // how the per-session total below came to assert a cost most sessions never paid.
+      table(
+        ['hook', 'sessions', 'injected in', 'mean tok', 'p50 tok', 'p95 tok'],
+        rows.map((r) => [
+          r.name,
+          r.sessions,
+          r.injecting,
+          num(mean(r.toks)),
+          num(r.p50),
+          num(r.p95),
+        ]),
+      ),
+      'Averaged over every session the hook RAN in, including the ones where it injected nothing —',
+      'so this is what a session actually pays, not what it pays on the sessions where it fires.',
+    );
+  else body.push('SessionStart injectors: not measured in this window.');
+
+  if (s.unsized)
+    body.push(
+      '',
+      `${s.unsized} line(s) above carry no size and are counted as injected-nothing, because the`,
+      'record format has one encoding for both. Lines written before this field existed are in',
+      'there, so the figures are an UNDER-statement until they age out of the window.',
+    );
 
   if (recallToks.length) {
     const total = recallToks.reduce((a, b) => a + b, 0);
@@ -503,6 +538,10 @@ function injectedSection(s, recall) {
   //
   // Recall is excluded: it is per prompt, not per session, and adding it would double-count a long
   // session.
+  //
+  // ponytail: each term is a mean over the sessions ITS OWN hook ran in, so if two injectors ran in
+  // different subsets this is a sum over populations that do not coincide. Both fire at every
+  // SessionStart today, so they do; the label says "on AVERAGE" rather than claiming more.
   const perSession = rows.reduce((a, r) => a + (mean(r.toks) ?? 0), 0);
   body.push(
     '',
@@ -517,15 +556,16 @@ function injectedSection(s, recall) {
       'says the number.',
     );
   // Measured once, by hand, because logging it needs a second appender written in shell and that
-  // hook is under a do-not-port fence: its heredoc is 1545 bytes of template before variable
-  // expansion, and a further 341 ONLY when context-mode is absent. Both numbers are printed rather
+  // hook is under a do-not-port fence: its heredoc is 1546 bytes of template before variable
+  // expansion — the body INCLUDING the newline that ends its last line, which is what the hook
+  // actually prints — and a further 342 ONLY when context-mode is absent. Both numbers are printed rather
   // than the worst case alone, because adding the conditional one unconditionally overstates the
   // common install. Near-fixed, which is why measuring once is enough — but it is a 2026-08-21
   // measurement of a template and it moves when the template is edited.
   body.push(
     '',
-    `Not counted: ${UNLOGGED} injects a near-fixed memory block — measured by hand at 1545 B,`,
-    `about ${estTokens(1545)} more estimated tokens per session, rising to ${estTokens(1545 + 341)}` +
+    `Not counted: ${UNLOGGED} injects a near-fixed memory block — measured by hand at 1546 B,`,
+    `about ${estTokens(1546)} more estimated tokens per session, rising to ${estTokens(1546 + 342)}` +
       ' when context-mode is not installed.',
   );
   return body;
@@ -569,7 +609,8 @@ function costSection(s) {
   /** @param {{ total: number, n: number }} c @param {number} [digits] */
   const per = (c, digits = 0) => (c.n ? (c.total / c.n).toFixed(digits) : '-');
   const runs = s.extracts.length;
-  const missing = [...cols, usd].filter((c) => c.n < runs).length;
+  const partial = [...cols, usd].filter((c) => c.n && c.n < runs).length;
+  const absent = [...cols, usd].filter((c) => !c.n).length;
 
   return [
     '',
@@ -590,11 +631,14 @@ function costSection(s) {
           : ['per day', '-', '-', '-', '-', '-'],
       ],
     ),
-    ...(missing
+    ...(partial
       ? [
-          `${missing} column(s) are missing from some runs and are averaged over only the runs that`,
+          `${partial} column(s) are missing from SOME runs and are averaged over only the runs that`,
           'carried them — an absent figure is never counted as a zero.',
         ]
+      : []),
+    ...(absent
+      ? [`${absent} column(s) print "-": no run in this window reported that figure at all.`]
       : []),
     'Cache traffic dominates, and it is a near-fixed cost of the headless session rather than a',
     'function of transcript length — a longer session is not a proportionally dearer distillation.',

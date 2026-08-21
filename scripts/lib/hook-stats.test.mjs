@@ -413,7 +413,18 @@ test('a usage field missing from some runs is averaged over the runs that had it
   // that says MEASURED, in a PR whose own rule is that absent is never zero.
   const perRun = out.split('\n').find((l) => l.trim().startsWith('per run'));
   assert.match(String(perRun), /18078/, 'averaged over the one run that carried it, not both');
-  assert.match(out, /column\(s\) are missing from some runs/);
+  assert.match(out, /column\(s\) are missing from SOME runs/);
+});
+
+test('a column no run reported says so, rather than claiming an averaging', () => {
+  const out = render(
+    summarize([line({ hook: 'distill-session', event: 'extract', inTok: 9, usd: 0.04 })]),
+    new Map(),
+  );
+  // "3 columns are missing from SOME runs and are averaged over the runs that carried them"
+  // describes an averaging that never happened when no run carried them at all.
+  assert.match(out, /column\(s\) print "-": no run in this window reported that figure at all/);
+  assert.doesNotMatch(out, /missing from SOME runs/);
 });
 
 test('the per-day rate names the denominator it used', () => {

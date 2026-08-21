@@ -646,7 +646,14 @@ test('an envelope with no usage block still yields its text', () => {
 const withStubClaude = (/** @type {string} */ script) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillcli-'));
   fs.mkdirSync(path.join(root, 'bin'));
-  fs.writeFileSync(path.join(root, 'bin', 'claude'), script, { mode: 0o755 });
+  // Every stub records that it was called. A second call is a second BILLED call, and the test
+  // that should have caught one could not see it: it asserted only on the log line, which is
+  // identical whether the CLI ran once or twice.
+  fs.writeFileSync(
+    path.join(root, 'bin', 'claude'),
+    script.replace('#!/bin/sh\n', `#!/bin/sh\necho x >> ${path.join(root, 'calls')}\n`),
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(root, 't.jsonl'),
     Array.from({ length: 80 }, (_, i) =>
@@ -691,7 +698,10 @@ const runWorker = (root) => {
         .readdirSync(path.join(root, 'vault'), { recursive: true })
         .filter((f) => String(f).endsWith('.md'))
     : [];
-  return { lines, notes };
+  const calls = fs.existsSync(path.join(root, 'calls'))
+    ? fs.readFileSync(path.join(root, 'calls'), 'utf8').trim().split('\n').length
+    : 0;
+  return { lines, notes, calls };
 };
 
 test('a CLI too old for --output-format still produces notes', (t) => {
@@ -706,8 +716,9 @@ test('a CLI too old for --output-format still produces notes', (t) => {
       `printf '%s' '{"patterns":[{"title":"Old CLI pattern","description":"d","aliases":["a","b"]}],"mistakes":[],"decisions":[]}'\n`,
   );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { lines, notes } = runWorker(root);
+  const { lines, notes, calls } = runWorker(root);
   assert.strictEqual(notes.length, 1, 'the insights survive a CLI that rejects the flag');
+  assert.strictEqual(calls, 2, 'the flagged attempt, then the retry without it');
   // No cost figure is available on that path, and none is invented.
   assert.ok(!lines.some((l) => l.event === 'extract'));
 });
@@ -721,7 +732,11 @@ test('a run that was billed and then failed records the money, marked error', (t
       `printf '%s' '{"type":"result","is_error":true,"result":"Error: rate limited","total_cost_usd":0.02,"usage":{"input_tokens":9,"output_tokens":3}}'\nexit 1\n`,
   );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { lines, notes } = runWorker(root);
+  const { lines, notes, calls } = runWorker(root);
+  // ONE call. An envelope proves the CLI understands the flag, so retrying a run it already billed
+  // for would buy a second bill this code cannot record — and would do it on exactly the failing
+  // runs the cost section exists to surface.
+  assert.strictEqual(calls, 1, 'a billed failure is never retried');
   const extract = lines.find((l) => l.event === 'extract');
   assert.ok(extract, 'the cost is recorded even though the run failed');
   assert.strictEqual(extract.usd, 0.02);
