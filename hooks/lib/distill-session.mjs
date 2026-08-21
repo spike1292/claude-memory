@@ -322,7 +322,7 @@ export function extractJson(raw) {
  * over the transcript would have been wrong by orders of magnitude rather than merely imprecise.
  *
  * @param {string} raw
- * @returns {{ text: string, usage: Record<string, number> | null } | null}
+ * @returns {{ text: string, isError: boolean, usage: Record<string, number> | null } | null}
  */
 export function parseEnvelope(raw) {
   let env;
@@ -347,7 +347,14 @@ export function parseEnvelope(raw) {
   put('cacheReadTok', u?.cache_read_input_tokens);
   put('outTok', u?.output_tokens);
   put('usd', env.total_cost_usd);
-  return { text: env.result, usage: Object.keys(usage).length ? usage : null };
+  // `is_error` is the CLI saying the run failed while still exiting 0 and still billing for it.
+  // Reported so the cost line can say `error`: the money is real, the insights are not, and folding
+  // it into the average of successful extractions would flatter both numbers.
+  return {
+    text: env.result,
+    isError: env.is_error === true,
+    usage: Object.keys(usage).length ? usage : null,
+  };
 }
 
 /**
@@ -459,28 +466,79 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
     console.error('distill: claude CLI not found');
     return {};
   }
-  try {
-    const stdout = execFileSync(claude, ['-p', '--model', 'haiku', '--output-format', 'json'], {
-      input: EXTRACT_PROMPT + convo,
-      encoding: 'utf8',
-      timeout: 150_000,
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
-    });
-    const envelope = parseEnvelope(stdout);
+
+  /**
+   * Read one attempt's stdout: log what it cost, and hand back the insights in it.
+   *
+   * Called for a FAILED attempt too, and deliberately. A `--output-format json` run that hits an
+   * execution error still prints its whole envelope, usage and dollars included, and then exits
+   * non-zero — `execFileSync` throws with that envelope sitting on `e.stdout`. Discarding it meant
+   * the report under-reported the bill by exactly the runs that failed, which are the ones anyone
+   * would most want to find.
+   *
+   * @param {string} out
+   * @param {boolean} failed
+   * @returns {Insights}
+   */
+  const readAttempt = (out, failed) => {
+    const envelope = parseEnvelope(out);
     if (envelope?.usage)
       logHook({
         hook: 'distill-session',
         event: 'extract',
         cwd,
         session,
-        outcome: 'ran',
+        // The money was spent either way, so the line is written either way — but an envelope that
+        // says `is_error`, or an attempt that threw, is not a run that produced insights, and
+        // `ran` beside a cost would fold it into the average of the ones that did.
+        outcome: failed || envelope.isError ? 'error' : 'ran',
         extra: envelope.usage,
       });
-    return extractJson(envelope ? envelope.text : stdout);
+    return extractJson(envelope ? envelope.text : out);
+  };
+
+  const args = ['-p', '--model', 'haiku'];
+  try {
+    return readAttempt(
+      execFileSync(claude, [...args, '--output-format', 'json'], {
+        input: EXTRACT_PROMPT + convo,
+        encoding: 'utf8',
+        timeout: 150_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
+      }),
+      false,
+    );
   } catch (e) {
-    console.error(`distill: extractor failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`);
-    return {};
+    const err = /** @type {NodeJS.ErrnoException & { stdout?: string, signal?: string }} */ (e);
+    console.error(`distill: extractor failed: ${err.message}`);
+
+    // Whatever it managed to print, first: an envelope on a non-zero exit carries both the cost and
+    // the answer, and even plain text may hold the JSON.
+    const salvaged = readAttempt(String(err.stdout ?? ''), true);
+    if (Object.keys(salvaged).length) return salvaged;
+
+    // Then, once, WITHOUT the flag. The documented fallback covers a CLI that stops WRAPPING its
+    // output; this covers the other half — a CLI old enough not to know `--output-format`, which
+    // exits on the unknown argument before doing any work. Without this, adding the flag could
+    // silently end distillation on such an install: notes stop appearing, the hook still exits 0.
+    // One extra call, only on a path that already failed, and never on a timeout.
+    if (err.code === 'ETIMEDOUT' || err.signal) return {};
+    try {
+      console.error('distill: retrying without --output-format (no cost figure for this run)');
+      return extractJson(
+        execFileSync(claude, args, {
+          input: EXTRACT_PROMPT + convo,
+          encoding: 'utf8',
+          timeout: 150_000,
+          maxBuffer: 16 * 1024 * 1024,
+          env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' },
+        }),
+      );
+    } catch (e2) {
+      console.error(`distill: retry failed: ${/** @type {NodeJS.ErrnoException} */ (e2).message}`);
+      return {};
+    }
   }
 }
 

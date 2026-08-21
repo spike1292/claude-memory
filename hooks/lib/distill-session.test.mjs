@@ -641,3 +641,91 @@ test('an envelope with no usage block still yields its text', () => {
   assert.strictEqual(env?.usage, null);
   assert.deepStrictEqual(extractJson(/** @type {string} */ (env?.text)), { mistakes: [] });
 });
+
+/** A stand-in `claude` on PATH, so the extractor path can be driven end to end. */
+const withStubClaude = (/** @type {string} */ script) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillcli-'));
+  fs.mkdirSync(path.join(root, 'bin'));
+  fs.writeFileSync(path.join(root, 'bin', 'claude'), script, { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(root, 't.jsonl'),
+    Array.from({ length: 80 }, (_, i) =>
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: `sentence ${i} about it` },
+      }),
+    ).join('\n') + '\n',
+  );
+  return root;
+};
+
+/** @param {string} root */
+const runWorker = (root) => {
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  execFileSync(process.execPath, [entry, path.join(root, 't.jsonl'), process.cwd()], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-cli',
+      DISTILL_DRYRUN: '',
+    },
+  });
+  const logDir = path.join(root, 'state', 'logs');
+  const files = fs.existsSync(logDir)
+    ? fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'))
+    : [];
+  const lines = files.flatMap((f) =>
+    fs
+      .readFileSync(path.join(logDir, f), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l)),
+  );
+  const notes = fs.existsSync(path.join(root, 'vault'))
+    ? fs
+        .readdirSync(path.join(root, 'vault'), { recursive: true })
+        .filter((f) => String(f).endsWith('.md'))
+    : [];
+  return { lines, notes };
+};
+
+test('a CLI too old for --output-format still produces notes', (t) => {
+  // The fallback in parseEnvelope covers a CLI that stops WRAPPING its output. This covers the
+  // other half — a CLI that does not know the flag exits on the unknown argument before doing any
+  // work — and without the retry, adding the flag would have silently ended distillation on such
+  // an install: notes stop appearing and the hook still exits 0.
+  const root = withStubClaude(
+    '#!/bin/sh\n' +
+      'for a in "$@"; do [ "$a" = "--output-format" ] && { echo "unknown option" >&2; exit 2; }; done\n' +
+      'cat > /dev/null\n' +
+      `printf '%s' '{"patterns":[{"title":"Old CLI pattern","description":"d","aliases":["a","b"]}],"mistakes":[],"decisions":[]}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes } = runWorker(root);
+  assert.strictEqual(notes.length, 1, 'the insights survive a CLI that rejects the flag');
+  // No cost figure is available on that path, and none is invented.
+  assert.ok(!lines.some((l) => l.event === 'extract'));
+});
+
+test('a run that was billed and then failed records the money, marked error', (t) => {
+  // `--output-format json` prints the whole envelope, usage and dollars included, and THEN exits
+  // non-zero. Discarding it under-reported the bill by exactly the runs that failed — the ones
+  // anyone would most want to find.
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"type":"result","is_error":true,"result":"Error: rate limited","total_cost_usd":0.02,"usage":{"input_tokens":9,"output_tokens":3}}'\nexit 1\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { lines, notes } = runWorker(root);
+  const extract = lines.find((l) => l.event === 'extract');
+  assert.ok(extract, 'the cost is recorded even though the run failed');
+  assert.strictEqual(extract.usd, 0.02);
+  // And it is NOT `ran`: folding a failed run into the average of successful ones flatters both.
+  assert.strictEqual(extract.outcome, 'error');
+  assert.strictEqual(notes.length, 0, 'an error envelope yields no insights');
+});

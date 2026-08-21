@@ -70,22 +70,34 @@ what a user's setup depends on: config keys, command names, vault layout, and
   ([#47](https://github.com/spike1292/claude-memory/issues/47)). Two costs, kept visibly apart:
   - **Injected context, estimated.** The insights surfacer and the link lint record the byte size
     of what they put in the context window; recall's existing character count is folded in from its
-    own log family rather than duplicated. The report gives mean/p50/p95 estimated tokens per
-    injector, the per-session total, and a warning line when that total crosses 2000 tokens. The
-    estimate is `bytes / 4` with no tokeniser and no new dependency, and every figure derived from
-    it is labelled an estimate. A run that injected nothing omits the field rather than logging a
-    zero, so it can never be averaged in.
+    own log family rather than duplicated. The report gives mean/p50/p95 estimated tokens **per
+    session** for each injector — averaged over every session the hook ran in, including the ones
+    where it injected nothing, so an occasional injector is not billed to every session — plus the
+    number of sessions it injected in, the per-session total across injectors, and a warning when
+    that total crosses 2000 tokens. Lines written inside a headless `claude` run are excluded: every
+    distillation fires SessionStart again, and those are real runs but not a person's session. The
+    estimate is `bytes / 4`, no tokeniser and no new dependency, and every figure derived from it is
+    labelled an estimate. A hook that never recorded a byte count is left out of the table rather
+    than counted as free.
   - **The distiller's bill, measured.** Its headless run now asks for `--output-format json`, so
     its own usage figures are available: input, cache-creation, cache-read and output tokens plus
-    the dollar cost, recorded on an `event: extract` line and reported per run and per day.
+    the dollar cost, recorded on an `event: extract` line and reported per run and per day, with each column averaged
+    over only the runs that carried it — the API omits cache-creation when nothing was cached, and
+    counting that absence as zero halved the figure for the run that was measured. An extract line
+    is a cost record rather than a hook invocation, so it is kept out of the invocation table where
+    it would otherwise be judged against a timeout it is not subject to.
+    A run that was billed and then failed still records what it cost, marked `error`: the money was
+    spent, and the runs that fail are the ones worth finding. A CLI too old to know the flag retries
+    once without it, so adding it cannot silently end distillation.
     Estimation was rejected on evidence — a throwaway prompt measured 9 input tokens against 18,078
     cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed overhead of the
     headless session and a length heuristic would have been wrong by orders of magnitude. If the
     envelope does not parse, the existing extractor runs on raw stdout exactly as before: a CLI that
     stops wrapping its output costs a cost figure, never a night's insights.
   The one injector that stays unmeasured is the bash session-sync hook, which is under a
-  do-not-port fence. Its block was measured by hand instead — ~1.5 KB, roughly 470 estimated
-  tokens — and the report prints that number beside the ones it measured rather than omitting it.
+  do-not-port fence. Its block was measured by hand instead — 1545 bytes, about 386 estimated
+  tokens, rising to 472 when context-mode is not installed — and the report prints that beside the
+  figures it measured rather than omitting the injector.
 
 ### Changed
 

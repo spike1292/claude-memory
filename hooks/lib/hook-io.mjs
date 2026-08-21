@@ -548,6 +548,11 @@ export function appendJsonl(family, cwd, record) {
 /**
  * One line per hook invocation.
  *
+ * `extra` is one generic slot rather than a named parameter per measurement. Everything through it
+ * is OPTIONAL and omitted when not measured — never written as zero — because a reader must be able
+ * to tell "this hook injected nothing" from "nobody was counting yet", and log files predating each
+ * field stay in the window for a week.
+ *
  * `ms` is `performance.now()`, which is measured from PROCESS START and not from the top of the
  * hook — the same reasoning recall's own line documents. A hook's timeout in `hooks.json` applies
  * to the whole process, so node's startup and the entry's static import graph have to be inside
@@ -564,6 +569,10 @@ export function logHook({ hook, event = '', cwd, session, outcome, reason, extra
   // costs inside a background run is a real number, it is just not the same number.
   const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
   appendJsonl('hooks', cwd, {
+    // `extra` FIRST, so the named fields below always win. Spread last, a caller could overwrite
+    // `outcome`, `ms`, `session` or `hook` — the four the reader groups, filters and judges by —
+    // and the log would be corrupt in exactly the way nothing downstream could detect.
+    ...(extra ?? {}),
     hook,
     event,
     ms: +performance.now().toFixed(1),
@@ -573,11 +582,6 @@ export function logHook({ hook, event = '', cwd, session, outcome, reason, extra
     // empty" — the same omission rule recall's records already follow.
     ...(reason == null || reason === '' ? {} : { reason: String(reason).slice(0, 200) }),
     ...(session ? { session } : {}),
-    // One generic slot rather than a named parameter per measurement. Everything through it is
-    // OPTIONAL and omitted when not measured — never written as zero — because a reader has to be
-    // able to tell "this hook injected nothing" from "nobody was counting yet", and the log files
-    // predating each field stay in the window for a week.
-    ...(extra ?? {}),
   });
 }
 

@@ -267,15 +267,37 @@ test('estTokens keeps "injected nothing" apart from "never measured"', () => {
   assert.strictEqual(estTokens(NaN), null);
 });
 
-test('an injector run that logged no bytes is not averaged in as a zero', () => {
+test('a session where the hook ran and injected nothing is a real zero', () => {
   const s = summarize([
     line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'a' }),
     line({ hook: 'insights-surface', ms: 40, session: 'b' }),
   ]);
   const out = render(s, new Map());
-  // Two runs, one of which injected. Counting the silent one as 0 would halve the mean and make a
-  // hook that injects 1000 tokens every time it fires look like one that injects 500.
-  assert.match(out, /insights-surface\s+1\s+1000\s+1000\s+1000/);
+  // It RAN in both sessions and injected in one, so a session costs 500 tokens on average, not the
+  // 1000 it costs on the sessions where it fires. Averaging only over the injecting runs is how
+  // an occasional injector came to be billed to every session — and how the per-session total
+  // below it overstated by 2.7x on a realistic log.
+  assert.match(out, /insights-surface\s+2\s+1\s+500\s/);
+  assert.match(out, /~500 estimated tokens of SessionStart context per session/);
+});
+
+test('a hook that never recorded bytes is left out, not counted as free', () => {
+  // The difference between "injected nothing" and "was not measuring yet". A week of log files
+  // written before this field existed sits in the reader's window.
+  const out = render(summarize([line({ hook: 'validate-note', ms: 20, session: 'a' })]), new Map());
+  assert.match(out, /injected context: not measured/);
+});
+
+test('lines from a headless claude run never enter the injected figures', () => {
+  const s = summarize([
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'real' }),
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'child-1', child: true }),
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'child-2', child: true }),
+  ]);
+  // Every distillation fires SessionStart again, so on a real install the child population is
+  // roughly one per session — folded in, it doubled every count in this table and the total under
+  // it. Those runs are real, they are just not what a person's session cost.
+  assert.match(render(s, new Map()), /insights-surface\s+1\s+1\s+1000\s/);
 });
 
 test('the injected section labels itself an estimate and the cost section a measurement', () => {
@@ -346,4 +368,63 @@ test('a log file written before these fields existed still renders', () => {
     /injected context: not measured/,
     'and the new metrics say so rather than lying',
   );
+});
+
+test('an extract line is a cost record, not a hook invocation', () => {
+  const s = summarize([
+    line({
+      hook: 'distill-session',
+      event: 'SessionEnd',
+      ms: 40,
+      outcome: 'spawned',
+      session: 'a',
+    }),
+    line({ hook: 'distill-session', event: 'extract', ms: 92_000, usd: 0.04, session: 'a' }),
+  ]);
+  // Counted as an invocation it took distill-session's 15 s timeout with it, and reported a 92 s
+  // API call — inside a worker that is already detached — as a breach of a limit it is not subject
+  // to, in the one column the report tells the reader to read as an outage.
+  assert.strictEqual(s.invocations, 1);
+  assert.deepStrictEqual(
+    s.hooks.map(([n]) => n),
+    ['distill-session · SessionEnd'],
+  );
+  const out = render(s, timeouts(MANIFEST));
+  assert.doesNotMatch(out, /extract\s+1\s+92000/);
+  assert.match(out, /distiller cost \(MEASURED/);
+});
+
+test('a usage field missing from some runs is averaged over the runs that had it', () => {
+  const out = render(
+    summarize([
+      line({
+        hook: 'distill-session',
+        event: 'extract',
+        inTok: 9,
+        cacheWriteTok: 18078,
+        usd: 0.04,
+      }),
+      line({ hook: 'distill-session', event: 'extract', inTok: 9, usd: 0.04 }),
+    ]),
+    new Map(),
+  );
+  // The API omits cache-creation when nothing was cached. Counting that absence as 0 while still
+  // counting the run halved the per-run figure for the run that WAS measured — under a heading
+  // that says MEASURED, in a PR whose own rule is that absent is never zero.
+  const perRun = out.split('\n').find((l) => l.trim().startsWith('per run'));
+  assert.match(String(perRun), /18078/, 'averaged over the one run that carried it, not both');
+  assert.match(out, /column\(s\) are missing from some runs/);
+});
+
+test('the per-day rate names the denominator it used', () => {
+  const out = render(
+    summarize([
+      { t: '2026-08-19T10:00:00Z', slug: 'proj', hook: 'x', event: 'SessionStart', outcome: 'ran' },
+      line({ hook: 'distill-session', event: 'extract', usd: 0.07, t: '2026-08-21T10:00:00Z' }),
+    ]),
+    new Map(),
+  );
+  // A fortnight's spend divided by the one day it happened to run is not a daily rate, and the
+  // reader cannot tell which denominator was used unless the report says.
+  assert.match(out, /per day \(÷2\)/);
 });

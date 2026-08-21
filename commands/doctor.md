@@ -89,7 +89,9 @@ is timed by nothing; the report names both, so their absence is not a hook that 
 
 It also reports **what the hooks cost the context window**. Two numbers that must not be read as
 one: injected context is an **estimate** (recorded bytes ÷ 4, no tokeniser), while the distiller's
-tokens and dollars are **measured** from the CLI's own usage figures. The report labels each. A
+tokens and dollars are **measured** from the CLI's own usage figures. The report labels each. Injected
+figures are per SESSION and averaged over every session the hook ran in, so a hook that injects
+rarely is not reported as if it injected always; lines from headless `claude` runs are excluded. A
 warning line appears when the per-session injected total crosses 2000 estimated tokens — say what it
 means (every session pays that before the first prompt) and stop there; capping any of those lists
 is a separate change that nobody has asked for.
