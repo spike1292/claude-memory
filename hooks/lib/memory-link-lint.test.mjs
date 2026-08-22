@@ -112,6 +112,13 @@ test('mocSize counts bytes, and lines ignoring a trailing newline', () => {
 test('findOversize warns near the cap and reports crossing it', () => {
   assert.strictEqual(findOversize('- [[a]] tiny'), '', 'well under: nothing to say');
 
+  // AT the threshold, both sides of it. Without these the 80% could be moved anywhere in
+  // (0.5, 0.9] and every other assertion here stays green — the constant would be pinned by
+  // nothing, which is how a report quietly stops firing until it is too late.
+  const bytesAt = (/** @type {number} */ r) => 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * r));
+  assert.match(findOversize(bytesAt(0.8)), /80% of/, 'exactly at 80%: reports');
+  assert.strictEqual(findOversize(bytesAt(0.8).slice(1)), '', 'one byte under 80%: silent');
+
   const near = 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.85));
   const nearText = findOversize(near);
   assert.match(nearText, /85% of/, 'names the percentage');
@@ -168,6 +175,18 @@ test('capReport names only this project, and gives every other MOC its percentag
   write('mine', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));
   const near = capReport(vault, 'mine');
   assert.match(near[0], /^warn\tthis project's MEMORY\.md is near the load cap: .* — 90% of/);
+
+  // The three boundaries, so neither threshold can move without a test saying so.
+  write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes * 0.8));
+  assert.match(capReport(vault, 'mine')[0], /^warn\t.* near the load cap/, 'exactly 80%: warns');
+  write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes * 0.8 - 1));
+  assert.match(capReport(vault, 'mine')[0], /^ok\t/, 'one byte under 80%: still just fits');
+  write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes));
+  assert.match(
+    capReport(vault, 'mine')[0],
+    /^warn\t.* near the load cap/,
+    'exactly at the cap nothing is dropped yet — a warning, never a failure',
+  );
   write('other-private-repo', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));
   assert.match(
     capReport(vault, 'mine')[1],
