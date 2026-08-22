@@ -200,6 +200,17 @@ test('capReport names only this project, and gives every other MOC its percentag
     /^warn\t.* near the load cap/,
     'exactly at the cap nothing is dropped yet — a warning, never a failure',
   );
+  // The LINE arm, which every fixture above leaves dormant because one long line is all bytes.
+  // A real MOC is one line per note, so this is the likelier way to cross the cap: 250 short lines
+  // are 125% of the line cap and 9% of the byte cap, and taking only the byte arm would report
+  // "fits" while Claude Code drops fifty notes.
+  write('mine', '- [[note]] a short hook\n'.repeat(250));
+  assert.match(
+    capReport(vault, 'mine')[0],
+    /^fail\tthis project's MEMORY\.md is over the load cap: 6,000 bytes \/ 250 lines — 125% of/,
+    'lines can breach the cap while the byte count is nowhere near it',
+  );
+
   // Three others, one per band, so the aggregate's own boundaries are pinned too — and so the
   // "largest first" ordering has something to order.
   write('other-private-repo', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));

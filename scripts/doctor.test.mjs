@@ -71,6 +71,15 @@ test('doctor reports an oversize MEMORY.md through capReport', () => {
       !section.includes('someone-elses-private-repo'),
       'other projects must not be named — this report is pasted into issues',
     );
+
+    // The WARN arm of doctor's own case statement, which the two runs above never reach: delete it
+    // and the near-cap band — the one the whole feature exists for — prints nothing at all.
+    fs.writeFileSync(path.join(mem, 'MEMORY.md'), 'x'.repeat(Math.round(25 * 1024 * 0.9)));
+    const nearOut = run(world);
+    assert.match(
+      nearOut.slice(nearOut.indexOf('auto memory'), nearOut.indexOf('\nindex')),
+      /WARN this project's MEMORY\.md is near the load cap: 23,040 bytes \/ 1 lines — 90%/,
+    );
   } finally {
     fs.rmSync(world.tmp, { recursive: true, force: true });
   }
