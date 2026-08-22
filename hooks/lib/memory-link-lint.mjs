@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// SessionStart: name the L1 notes that are reachable only from the MOC.
+// SessionStart: name the L1 notes that are reachable only from the MOC — and, since #75, everything
+// else that is true of MEMORY.md itself: its size against the cap Claude Code loads it under, for
+// this project (the lint) and for every project in the vault (capReport, read by /memory:doctor).
 //
 // The "≥2 wikilinks, linked both ways" convention is documented in CLAUDE.md, but prose did not
 // hold it: /memory:health found MOC-only notes in three consecutive audits (2026-08-07 four notes,
@@ -129,6 +131,68 @@ export function findDrift(mocText, readNote) {
 }
 
 /**
+ * Claude Code loads the first 200 lines or 25 KB of `MEMORY.md`, whichever comes first, and drops
+ * the rest. Since 2026-03 its auto memory reads `~/.claude/projects/<project>/memory/MEMORY.md` —
+ * the path this plugin symlinks into the vault — so our L1 index IS that file, under its cap
+ * (#75, docs/decisions/2026-08-22-auto-memory.md). Nothing upstream reports the truncation for a
+ * file Claude Code did not write, so this is the only place it is ever said out loud.
+ */
+export const AUTO_MEMORY_CAP = { bytes: 25 * 1024, lines: 200 };
+
+// Report from here up. 80% is a heads-up while the fix is still a trim; the alternative is finding
+// out by losing notes.
+const NEAR = 0.8;
+
+/**
+ * One percentage, floored, for both readers. They report DIFFERENT things — the SessionStart lint
+ * speaks only from 80% up, `/memory:doctor` reports every state — but the same file must not carry
+ * two numbers, and rounding them apart made one say 86% and the other 87%. Floor and not ceil
+ * because a file at 99.6% must not read as 100%; which side of the cap it is on is said in words,
+ * never left to the number.
+ *
+ * @param {number} ratio
+ * @returns {string}
+ */
+const pct = (ratio) => `${Math.floor(ratio * 100)}%`;
+
+/**
+ * What WE count: bytes, and lines ignoring a trailing newline. The 200/25 KB cap is documented
+ * upstream; how it counts a trailing newline is not, so this errs one line low rather than
+ * reporting a file as fitting when it does not.
+ *
+ * @param {string} text
+ * @returns {{ bytes: number, lines: number }}
+ */
+export function mocSize(text) {
+  const bytes = Buffer.byteLength(text);
+  return { bytes, lines: bytes === 0 ? 0 : text.replace(/\n$/, '').split('\n').length };
+}
+
+/**
+ * The size finding for one MOC, or '' when it is comfortably under the cap.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function findOversize(text) {
+  const { bytes, lines } = mocSize(text);
+  const ratio = Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines);
+  if (ratio < NEAR) return '';
+  const size = `${bytes.toLocaleString('en-US')} bytes / ${lines} lines`;
+  const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')}-byte / ${AUTO_MEMORY_CAP.lines} lines cap`;
+  if (ratio <= 1)
+    return [
+      `MEMORY.md is at ${pct(ratio)} of the ${cap} Claude Code loads it under`,
+      `(${size}). Past it the rest is dropped with nothing reported. Move detail into the notes.`,
+    ].join('\n');
+  return [
+    `MEMORY.md is ${size}, past the ${cap} Claude Code loads it under: everything after`,
+    'the cap is DROPPED and no other check anywhere reports it. Trim the MOC — one line per note,',
+    'the content belongs in the note.',
+  ].join('\n');
+}
+
+/**
  * The lint report for `cwd`, or '' when there is nothing to say.
  *
  * Returns text instead of printing it, so the whole check is testable without a subprocess.
@@ -158,8 +222,19 @@ export function lint(cwd) {
     mem = path.join(vault(), 'Memory', slug);
   }
   if (!isDir(mem)) return '';
-  const ins = path.join(vault(), 'Insights', slug);
+  return reportFor(mem, path.join(vault(), 'Insights', slug));
+}
 
+/**
+ * The report for one project's `Memory/` and `Insights/` directories, or '' when there is nothing
+ * to say. Split out of `lint()` so the findings are testable against a directory, without a vault
+ * and without the resolution that picks one.
+ *
+ * @param {string} mem
+ * @param {string} ins
+ * @returns {string}
+ */
+export function reportFor(mem, ins) {
   /** @type {[string, string][]} */
   const corpus = [];
   for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
@@ -211,5 +286,99 @@ export function lint(cwd) {
     );
     for (const d of drift) out.push(`  - [[${d.target}]] hook says ${d.n}, not found in the note`);
   }
+
+  const oversize = findOversize(/** @type {string} */ (byName.get(moc)));
+  if (oversize) {
+    if (out.length) out.push('');
+    out.push(oversize);
+  }
   return out.join('\n');
+}
+
+/**
+ * `ok`/`warn`/`fail` lines about every `Memory/<slug>/MEMORY.md` in the vault, against the cap
+ * Claude Code loads them under. Tab-separated so `scripts/doctor.sh` can print them with its own
+ * helpers without a JSON parser — `jq` is optional there.
+ *
+ * Only the project the command was run from is named: this report is what people paste into
+ * issues, and the other slugs are normalised remotes of private repos. Every other MOC still gets
+ * its own percentage, largest first — "each MEMORY.md against the cap" is the point of the report,
+ * and a count alone cannot say whether the other one is at 99% or at 9%.
+ *
+ * @param {string} vaultDir
+ * @param {string} slug
+ * @returns {string[]}
+ */
+export function capReport(vaultDir, slug) {
+  const memRoot = path.join(vaultDir, 'Memory');
+  /** @type {{ slug: string, bytes: number, lines: number, pct: number, empty: boolean }[]} */
+  const all = [];
+  let dirs;
+  try {
+    dirs = fs.readdirSync(memRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    let text;
+    try {
+      text = fs.readFileSync(path.join(memRoot, d.name, 'MEMORY.md'), 'utf8');
+    } catch {
+      continue;
+    }
+    const { bytes, lines } = mocSize(text);
+    all.push({
+      slug: d.name,
+      bytes,
+      lines,
+      // Content, not byte count: a MOC holding one newline injects exactly as much as a 0-byte one.
+      empty: text.trim() === '',
+      pct: Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines),
+    });
+  }
+  if (!all.length) return [];
+
+  const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')} bytes / ${AUTO_MEMORY_CAP.lines} lines`;
+  const fix =
+    'Claude Code loads only what fits and drops the rest, reporting nothing. Trim the MOC to one line per note.';
+  /** @type {string[]} */
+  const out = [];
+  const mine = all.find((m) => m.slug === slug);
+  if (mine) {
+    const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${pct(mine.pct)} of ${cap}`;
+    // Empty first: an empty MOC is 0% of the cap, and "fits the load cap" is exactly the
+    // empty-but-readable report this vault has been misled by before.
+    if (mine.empty)
+      out.push(
+        `warn\tthis project's MEMORY.md is empty\t` +
+          'a readable empty index reports as healthy while nothing is injected. Add one line per note, or delete the file so the absence is visible.',
+      );
+    else if (mine.pct > 1)
+      out.push(`fail\tthis project's MEMORY.md is over the load cap: ${size}\t${fix}`);
+    else if (mine.pct >= NEAR)
+      out.push(`warn\tthis project's MEMORY.md is near the load cap: ${size}\t${fix}`);
+    else out.push(`ok\tthis project's MEMORY.md fits the load cap: ${size}`);
+  } else {
+    // Said out loud, because the alternative is worse than silence: a vault folder still under the
+    // legacy cwd-slug falls into `others`, which is deliberately unnamed — so "1 of 1 other
+    // MEMORY.md over the cap" would be YOUR index, reported as someone else's.
+    out.push(
+      `warn\tno MEMORY.md for this project (${slug})\t` +
+        'nothing is injected as auto memory here. Expected on a first install; if this project has notes, its vault folder is under a different key — check Memory/ in the vault against the project name above.',
+    );
+  }
+  const others = all.filter((m) => m !== mine).sort((a, b) => b.pct - a.pct);
+  if (others.length) {
+    const pcts = others.map((m) => pct(m.pct)).join(', ');
+    const over = others.filter((m) => m.pct > 1).length;
+    const near = others.filter((m) => m.pct >= NEAR && m.pct <= 1).length;
+    if (over || near)
+      out.push(
+        `warn\t${over} of ${others.length} other MEMORY.md over the cap, ${near} near it — ${pcts}\t` +
+          'other projects are not named — this report gets pasted into issues. Run /memory:doctor from each one.',
+      );
+    else out.push(`ok\t${others.length} other MEMORY.md all fit the cap — ${pcts}`);
+  }
+  return out;
 }

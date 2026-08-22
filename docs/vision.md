@@ -46,7 +46,8 @@ under the 25 KB Claude Code loads, and crossing that bound must be **reported**,
 
 One conflict is inherited and unresolved: Claude Code's auto memory is documented as machine-local
 and not shared across machines, while the vault is explicitly synced across machines. That is
-recorded rather than papered over — [#75](https://github.com/spike1292/claude-memory/issues/75).
+recorded rather than papered over — [#75](https://github.com/spike1292/claude-memory/issues/75),
+[the decision record](decisions/2026-08-22-auto-memory.md).
 
 ### Who it is for
 
@@ -243,10 +244,13 @@ What follows is the gaps that list does not carry.
   `prompt injection|untrusted|never instructions` "currently returns nothing."
   — [#67](https://github.com/spike1292/claude-memory/issues/67),
   [#70](https://github.com/spike1292/claude-memory/issues/70)
-- **`MEMORY.md` truncation is a two-writer problem, not only a growth problem.** Claude Code loads
-  the first 200 lines or 25 KB of it; a measured work-repo index sits at 88% of that cap, and
-  crossing it truncates L1 silently. The README's version of this gap is unbounded growth; the
-  silent-correctness half is newer. — [#75](https://github.com/spike1292/claude-memory/issues/75)
+- **`MEMORY.md` truncation is reported, not prevented.** Claude Code loads the first 200 lines or
+  25 KB of it; a measured work-repo index sits at 86.5% of that cap (88% when #75 was written; re-measured
+  2026-08-22). Since
+  [the decision](decisions/2026-08-22-auto-memory.md) the SessionStart lint and `/memory:doctor`
+  both say so from 80% up, so crossing it is no longer silent — but nothing trims the file, and
+  a second writer sharing the path stays an unresolved dependency.
+  — [#75](https://github.com/spike1292/claude-memory/issues/75)
 - **Structural invariants are only partly enforced.** The entry/`lib` rule "holds in 12 of 16", and
   the CI check verifies a twin *exists*, not that the entry delegates to it.
   — [docs/architecture.md "Invariants"](architecture.md#invariants-and-who-actually-enforces-them)

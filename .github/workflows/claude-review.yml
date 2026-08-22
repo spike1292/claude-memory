@@ -92,6 +92,14 @@ jobs:
                printed without being labelled one, and any attempt to estimate the
                distiller's cost from transcript length (its bill is near-fixed cache
                overhead, measured, not proportional to input).
+            4b. Claude Code's auto memory loads `MEMORY.md` — the file our L1 index
+               IS — and keeps only its first 200 lines or 25 KB, reporting nothing
+               when it drops the rest. That cap is ours to report: it lives once, as
+               `AUTO_MEMORY_CAP` in `hooks/lib/memory-link-lint.mjs`, read by the
+               SessionStart lint and by `/memory:doctor`. Flag the number copied
+               anywhere else, a report that names OTHER projects' slugs (that report
+               is pasted into issues), and any code that TRIMS the MOC — reporting
+               is the bound, trimming is a human act.
             5. Config resolution. The order is env, then `$CLAUDE_MEMORY_HOME/config.json`,
                then the built-in default, and it must be read WHEN THE HOOK RUNS — a value
                written to `settings.json`'s `env` block mid-session never reaches that

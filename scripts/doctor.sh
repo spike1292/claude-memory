@@ -102,9 +102,10 @@ else
 fi
 # codebase-memory-mcp is an MCP server, not a CLI, so PATH cannot see it. The Graph layer is the
 # observable evidence: a GRAPH_REPORT.md exists only if the server has run for this project.
-gslug=$(project_key "$PWD")
-if [ -f "$VAULT/Graph/$gslug/GRAPH_REPORT.md" ]; then
-  ok "codebase-memory-mcp — L4 graph digest present for $gslug"
+# One fork for the whole report: project_key shells out to node, and three sections need it.
+slug=$(project_key "$PWD")
+if [ -f "$VAULT/Graph/$slug/GRAPH_REPORT.md" ]; then
+  ok "codebase-memory-mcp — L4 graph digest present for $slug"
 else
   warn "no L4 graph digest for this project (optional)" \
     "L1-L3 memory is unaffected. If codebase-memory-mcp is configured, run /memory:graph-report to create one; if it is not, skip L4 entirely — nothing else depends on it."
@@ -264,9 +265,49 @@ fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
 
+# Claude Code's own auto memory loads MEMORY.md — the file this plugin's L1 index IS, via the
+# symlink — and keeps only what fits AUTO_MEMORY_CAP (no digits here: the cap lives in
+# hooks/lib/memory-link-lint.mjs and nowhere else). It reports nothing when it drops the rest, and
+# for a file it did not write it checks nothing at all. So this is one of the two places the
+# truncation is ever said out loud (the other is the SessionStart lint).
+# docs/decisions/2026-08-22-auto-memory.md
+echo
+echo "auto memory (Claude Code loads MEMORY.md; what does not fit is dropped silently)"
+if command -v node >/dev/null 2>&1; then
+  # The EXIT STATUS decides, not the output: an import error, a rejected promise or a bad $ROOT all
+  # print nothing, and "nothing" is also what an empty vault prints. Reading emptiness as health is
+  # the healthy-looking lie the rest of this file exists to avoid.
+  # The module path travels in argv, like the graphgen block below — interpolating $ROOT into the
+  # JS source puts a filesystem path inside a string literal, and pathToFileURL is needed anyway:
+  # import() of a bare absolute path is read as a package specifier.
+  if cap_lines=$(node -e '
+    import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) =>
+      process.stdout.write(m.capReport(process.argv[2], process.argv[3]).join("\n")),
+    );' "$ROOT/hooks/lib/memory-link-lint.mjs" "$VAULT" "$slug" 2>/dev/null); then
+    if [ -n "$cap_lines" ]; then
+      while IFS=$'\t' read -r status msg fix; do
+        case "$status" in
+          ok) ok "$msg" ;;
+          warn) warn "$msg" "$fix" ;;
+          fail) fail "$msg" "$fix" ;;
+          # A status capReport grows later must not vanish here — silence reading as health is the
+          # failure this whole section exists to end.
+          *) warn "unrecognised auto-memory status: $status" "$msg" ;;
+        esac
+      done <<< "$cap_lines"
+    else
+      ok "no MEMORY.md in the vault yet"
+    fi
+  else
+    fail "could not measure MEMORY.md against the load cap" \
+         "node could not read hooks/lib/memory-link-lint.mjs from $ROOT. Truncation of MEMORY.md is silent everywhere else, so this check going quiet is the failure. Re-run: node -e 'import(\"$ROOT/hooks/lib/memory-link-lint.mjs\")'"
+  fi
+else
+  warn "cannot measure MEMORY.md without node" "install node >= 22.5; nothing else here needs it more."
+fi
+
 echo
 echo "index"
-slug=$(project_key "$PWD")
 model="${MEMORY_SEMANTIC_MODEL:-bge-m3}"
 db="$STATE/db/semantic-$slug-$model.db"
 echo "  project: $slug  model: $model"
@@ -391,7 +432,10 @@ fi
 
 echo
 if [ "$fails" -gt 0 ]; then
-  echo "$fails failure(s), $warns warning(s) — semantic recall will not work until the failures are fixed."
+  # Not "semantic recall will not work": every failure here WAS a recall blocker until the auto
+  # memory section landed, and an over-cap MEMORY.md breaks nothing about recall — the index is
+  # built from the notes. This line is what people paste into issues, so it names no cause.
+  echo "$fails failure(s), $warns warning(s) — see each FAIL above for what is broken and how to fix it."
 elif [ "$warns" -gt 0 ]; then
   echo "no failures, $warns warning(s) — core memory works; see the warnings for what is degraded."
 else

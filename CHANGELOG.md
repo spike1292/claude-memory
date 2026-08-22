@@ -9,6 +9,25 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`MEMORY.md` is measured against the cap Claude Code loads it under, so truncation of L1 is
+  never silent.** Claude Code's own auto memory reads
+  `~/.claude/projects/<project>/memory/MEMORY.md` — the path this plugin symlinks into the vault —
+  and keeps only the first 200 lines or 25 KB. For a
+  file it did not write it reports nothing when it drops the rest, and nothing in this plugin
+  bounded it either. The SessionStart lint now names the size from 80% of the cap up and says
+  outright that content is being dropped past 100%, and `/memory:doctor` gains an `auto memory`
+  section reporting every `Memory/<slug>/MEMORY.md` in the vault against it — naming only the
+  project it is run from, because that report gets pasted into issues and the other slugs are
+  normalised remotes of private repos. The cap is one constant read by both. Nothing trims the file:
+  what leaves the MOC is judgement, the same reason the link lint names orphans rather than linking
+  them. The decision to co-operate with Claude Code at that path rather than separate via
+  `autoMemoryDirectory`, and the answer on the `modified`/`node_type` stamps a second writer has
+  been putting in 40 of 57 vault notes (and in one of the two MOCs) since 2026-08-04 (keep them; we write none and strip none),
+  are in [docs/decisions/2026-08-22-auto-memory.md](docs/decisions/2026-08-22-auto-memory.md).
+  ([#75](https://github.com/spike1292/claude-memory/issues/75))
+
 ## [0.6.0] - 2026-08-22
 
 ### Added
