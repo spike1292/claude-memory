@@ -215,7 +215,10 @@ a self-test with real cases.
 
 ## Known gaps
 
-- **`MEMORY.md` has no size limit** and is auto-loaded every session, so it grows unbounded.
+- **`MEMORY.md` is measured, not trimmed.** Claude Code loads its first 200 lines or 25 KB and drops
+  the rest, reporting nothing. The SessionStart lint and `/memory:doctor` report the size against
+  that cap from 80% up ([the decision](docs/decisions/2026-08-22-auto-memory.md)); deciding what
+  leaves the MOC is still a human act.
 - **Notes have no expiry**, so phase-specific facts linger after the phase ends.
 - **The real-vault eval sets are small and self-authored** (28 EN, 15 NL), so one case is 3.6
   points and the numbers measure one vault, not memory systems in general. Read MRR and direction,

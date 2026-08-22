@@ -264,9 +264,39 @@ fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
 
+slug=$(project_key "$PWD")
+
+# Claude Code's own auto memory loads MEMORY.md — the file this plugin's L1 index IS, via the
+# symlink — and keeps only the first 200 lines or 25 KB. It reports nothing when it drops the rest,
+# and for a file it did not write it checks nothing at all. So this is one of the two places the
+# truncation is ever said out loud (the other is the SessionStart lint).
+# docs/decisions/2026-08-22-auto-memory.md
+echo
+echo "auto memory (Claude Code loads MEMORY.md; what does not fit is dropped silently)"
+if command -v node >/dev/null 2>&1; then
+  cap_lines=$(node -e '
+    import("'"$ROOT"'/hooks/lib/memory-link-lint.mjs").then((m) =>
+      process.stdout.write(m.capReport(process.argv[1], process.argv[2]).join("\n")),
+    );' "$VAULT" "$slug" 2>/dev/null)
+  if [ -n "$cap_lines" ]; then
+    while IFS=$'\t' read -r status msg fix; do
+      case "$status" in
+        ok) ok "$msg" ;;
+        warn) warn "$msg" "$fix" ;;
+        fail) fail "$msg" "$fix" ;;
+      esac
+    done <<EOF
+$cap_lines
+EOF
+  else
+    ok "no MEMORY.md in the vault yet"
+  fi
+else
+  warn "cannot measure MEMORY.md without node" "install node >= 22.5; nothing else here needs it more."
+fi
+
 echo
 echo "index"
-slug=$(project_key "$PWD")
 model="${MEMORY_SEMANTIC_MODEL:-bge-m3}"
 db="$STATE/db/semantic-$slug-$model.db"
 echo "  project: $slug  model: $model"

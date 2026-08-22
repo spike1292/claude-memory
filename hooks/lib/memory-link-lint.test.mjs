@@ -2,7 +2,18 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
-import { linkTargets, findOrphans, findDrift } from './memory-link-lint.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import {
+  linkTargets,
+  findOrphans,
+  findDrift,
+  mocSize,
+  findOversize,
+  reportFor,
+  capReport,
+  AUTO_MEMORY_CAP,
+} from './memory-link-lint.mjs';
 
 test('linkTargets parses aliases and headings', () => {
   assert.deepStrictEqual(
@@ -85,4 +96,65 @@ test('findDrift only flags bolded multi-digit figures a note contradicts', () =>
     findDrift('- [[b]] says **10** and **9999**', read).map((d) => d.n),
     ['10', '9999'],
   );
+});
+
+test('mocSize counts bytes and lines the way the loader does', () => {
+  assert.deepStrictEqual(mocSize(''), { bytes: 0, lines: 0 });
+  assert.deepStrictEqual(
+    mocSize('a\nb\n'),
+    { bytes: 4, lines: 2 },
+    'a trailing newline is not a line',
+  );
+  assert.deepStrictEqual(mocSize('a\nb'), { bytes: 3, lines: 2 });
+  assert.deepStrictEqual(mocSize('é'), { bytes: 2, lines: 1 }, 'bytes, not characters');
+});
+
+test('findOversize warns near the cap and reports crossing it', () => {
+  assert.strictEqual(findOversize('- [[a]] tiny'), '', 'well under: nothing to say');
+
+  const near = 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.85));
+  const nearText = findOversize(near);
+  assert.match(nearText, /85% of/, 'names the percentage');
+  assert.doesNotMatch(nearText, /DROPPED/, 'not yet truncated');
+
+  const overBytes = findOversize('x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
+  assert.match(overBytes, /DROPPED/, 'past the cap, content is silently dropped');
+
+  const overLines = findOversize('x\n'.repeat(AUTO_MEMORY_CAP.lines + 1));
+  assert.match(overLines, /DROPPED/, 'the line cap bites even when the byte cap does not');
+  assert.match(overLines, new RegExp(`${AUTO_MEMORY_CAP.lines} lines`), 'names the line cap');
+});
+
+test('lint reports an oversize MOC alongside the other findings', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moc-'));
+  const mem = path.join(dir, 'Memory', 'p');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.writeFileSync(path.join(mem, 'MEMORY.md'), '- [[a]]\n' + 'x'.repeat(AUTO_MEMORY_CAP.bytes));
+  fs.writeFileSync(path.join(mem, 'a.md'), 'lonely');
+  const out = reportFor(mem, path.join(dir, 'Insights', 'p'));
+  assert.match(out, /MOC-only memory notes/, 'the orphan is still reported');
+  assert.match(out, /DROPPED/, 'and so is the truncation');
+});
+
+test('capReport names only this project and aggregates the rest', () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-'));
+  const write = (/** @type {string} */ slug, /** @type {string} */ text) => {
+    fs.mkdirSync(path.join(vault, 'Memory', slug), { recursive: true });
+    fs.writeFileSync(path.join(vault, 'Memory', slug, 'MEMORY.md'), text);
+  };
+  write('mine', 'small');
+  write('other-private-repo', 'x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
+
+  const lines = capReport(vault, 'mine');
+  assert.strictEqual(lines.length, 2);
+  assert.match(lines[0], /^ok\tthis project's MEMORY\.md fits/);
+  assert.match(lines[1], /^warn\t1 of 1 other MEMORY\.md over the cap/);
+  assert.ok(
+    !lines.join('\n').includes('other-private-repo'),
+    'other projects must not be named — this report is pasted into issues',
+  );
+
+  write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
+  assert.match(capReport(vault, 'mine')[0], /^fail\t/, 'over the cap is a failure, not a warning');
+  assert.deepStrictEqual(capReport(path.join(vault, 'nope'), 'mine'), [], 'no vault, no report');
 });

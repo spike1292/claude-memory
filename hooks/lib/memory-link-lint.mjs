@@ -129,6 +129,54 @@ export function findDrift(mocText, readNote) {
 }
 
 /**
+ * Claude Code loads the first 200 lines or 25 KB of `MEMORY.md`, whichever comes first, and drops
+ * the rest. Since 2026-03 its auto memory reads `~/.claude/projects/<project>/memory/MEMORY.md` —
+ * the path this plugin symlinks into the vault — so our L1 index IS that file, under its cap
+ * (#75, docs/decisions/2026-08-22-auto-memory.md). Nothing upstream reports the truncation for a
+ * file Claude Code did not write, so this is the only place it is ever said out loud.
+ */
+export const AUTO_MEMORY_CAP = { bytes: 25 * 1024, lines: 200 };
+
+// Report from here up. 80% is a heads-up while the fix is still a trim; the alternative is finding
+// out by losing notes.
+const NEAR = 0.8;
+
+/**
+ * What the loader counts: bytes, and lines ignoring a trailing newline.
+ *
+ * @param {string} text
+ * @returns {{ bytes: number, lines: number }}
+ */
+export function mocSize(text) {
+  const bytes = Buffer.byteLength(text);
+  return { bytes, lines: bytes === 0 ? 0 : text.replace(/\n$/, '').split('\n').length };
+}
+
+/**
+ * The size finding for one MOC, or '' when it is comfortably under the cap.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function findOversize(text) {
+  const { bytes, lines } = mocSize(text);
+  const pct = Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines);
+  if (pct < NEAR) return '';
+  const size = `${bytes.toLocaleString('en-US')} bytes / ${lines} lines`;
+  const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')}-byte / ${AUTO_MEMORY_CAP.lines} lines cap`;
+  if (pct <= 1)
+    return [
+      `MEMORY.md is at ${Math.round(pct * 100)}% of the ${cap} Claude Code loads it under`,
+      `(${size}). Past it the rest is dropped with nothing reported. Move detail into the notes.`,
+    ].join('\n');
+  return [
+    `MEMORY.md is ${size}, past the ${cap} Claude Code loads it under: everything after`,
+    'the cap is DROPPED and no other check anywhere reports it. Trim the MOC — one line per note,',
+    'the content belongs in the note.',
+  ].join('\n');
+}
+
+/**
  * The lint report for `cwd`, or '' when there is nothing to say.
  *
  * Returns text instead of printing it, so the whole check is testable without a subprocess.
@@ -158,8 +206,19 @@ export function lint(cwd) {
     mem = path.join(vault(), 'Memory', slug);
   }
   if (!isDir(mem)) return '';
-  const ins = path.join(vault(), 'Insights', slug);
+  return reportFor(mem, path.join(vault(), 'Insights', slug));
+}
 
+/**
+ * The report for one project's `Memory/` and `Insights/` directories, or '' when there is nothing
+ * to say. Split out of `lint()` so the findings are testable against a directory, without a vault
+ * and without the resolution that picks one.
+ *
+ * @param {string} mem
+ * @param {string} ins
+ * @returns {string}
+ */
+export function reportFor(mem, ins) {
   /** @type {[string, string][]} */
   const corpus = [];
   for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
@@ -211,5 +270,80 @@ export function lint(cwd) {
     );
     for (const d of drift) out.push(`  - [[${d.target}]] hook says ${d.n}, not found in the note`);
   }
+
+  const oversize = findOversize(/** @type {string} */ (byName.get(moc)));
+  if (oversize) {
+    if (out.length) out.push('');
+    out.push(oversize);
+  }
   return out.join('\n');
+}
+
+/**
+ * `ok`/`warn`/`fail` lines about every `Memory/<slug>/MEMORY.md` in the vault, against the cap
+ * Claude Code loads them under. Tab-separated so `scripts/doctor.sh` can print them with its own
+ * helpers without a JSON parser — `jq` is optional there.
+ *
+ * Only the project the command was run from is named: this report is what people paste into
+ * issues, and the other slugs are normalised remotes of private repos.
+ *
+ * @param {string} vaultDir
+ * @param {string} slug
+ * @returns {string[]}
+ */
+export function capReport(vaultDir, slug) {
+  const memRoot = path.join(vaultDir, 'Memory');
+  /** @type {{ slug: string, bytes: number, lines: number, pct: number }[]} */
+  const all = [];
+  let dirs;
+  try {
+    dirs = fs.readdirSync(memRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    let text;
+    try {
+      text = fs.readFileSync(path.join(memRoot, d.name, 'MEMORY.md'), 'utf8');
+    } catch {
+      continue;
+    }
+    const { bytes, lines } = mocSize(text);
+    all.push({
+      slug: d.name,
+      bytes,
+      lines,
+      pct: Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines),
+    });
+  }
+  if (!all.length) return [];
+
+  const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')} bytes / ${AUTO_MEMORY_CAP.lines} lines`;
+  const fix =
+    'Claude Code loads only what fits and drops the rest, reporting nothing. Trim the MOC to one line per note.';
+  /** @type {string[]} */
+  const out = [];
+  const mine = all.find((m) => m.slug === slug);
+  if (mine) {
+    const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${Math.round(mine.pct * 100)}% of ${cap}`;
+    if (mine.pct > 1)
+      out.push(`fail\tthis project's MEMORY.md is over the load cap: ${size}\t${fix}`);
+    else if (mine.pct >= 0.8)
+      out.push(`warn\tthis project's MEMORY.md is near the load cap: ${size}\t${fix}`);
+    else out.push(`ok\tthis project's MEMORY.md fits the load cap: ${size}`);
+  }
+  const others = all.filter((m) => m !== mine);
+  if (others.length) {
+    const over = others.filter((m) => m.pct > 1).length;
+    const near = others.filter((m) => m.pct >= 0.8 && m.pct <= 1).length;
+    const worst = Math.round(Math.max(...others.map((m) => m.pct)) * 100);
+    if (over || near)
+      out.push(
+        `warn\t${over} of ${others.length} other MEMORY.md over the cap, ${near} near it (largest ${worst}%)\t` +
+          'other projects are not named — this report gets pasted into issues. Run /memory:doctor from each one.',
+      );
+    else out.push(`ok\t${others.length} other MEMORY.md all fit the cap (largest ${worst}%)`);
+  }
+  return out;
 }

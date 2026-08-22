@@ -16,6 +16,9 @@ Dated, and superseded rather than edited when the answer changes.
 | [The last three gate hooks move to Node](decisions/2026-08-18-node-hooks.md) | Supersedes the "do not port" list above. The floors were right; they were quoted about hooks that never ran at them. |
 | [One resolver: Node resolves, shell asks](decisions/2026-08-18-single-resolver.md) | Retires the "two mirrors" rule. What it cost the shell side, and what it bought. |
 | [Orchestrating a change](decisions/2026-08-19-orchestrated-change.md) | `Implement → Verify → Document → Review → Land`, why `Document` precedes `Review`, and the nine lessons the six backlog runs paid for. |
+| [Hook startup cost](decisions/2026-08-20-hook-startup-cost.md) | What a hook actually pays before its first line runs, and why no hook is import-bound. |
+| [Types and linting](decisions/2026-08-20-types-and-linting.md) | JSDoc checked by `tsc --noEmit`, still no build step, and the measurements that declined a linter. |
+| [Claude Code's auto memory reads our `MEMORY.md`](decisions/2026-08-22-auto-memory.md) | Co-operate rather than separate, the 25 KB load cap that becomes ours to report, and what to do about a second writer's frontmatter stamps. |
 
 ## Guides
 

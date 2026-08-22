@@ -295,6 +295,18 @@ cache-creation and 22,363 cache-read at $0.0389, so the bill is a near-fixed ove
 headless session. Envelope parsing falls back to the old raw-stdout path — insights outrank a cost
 figure.
 
+**`MEMORY.md` is shared with Claude Code's own auto memory, and its load cap is ours to report.**
+Claude Code reads `~/.claude/projects/<project>/memory/MEMORY.md` — the path this plugin symlinks
+into the vault — and keeps only the first 200 lines or 25 KB. For a file it did not write it reports
+nothing when it drops the rest, so silent truncation of L1 is the failure mode. The cap is one
+constant, `AUTO_MEMORY_CAP` in `hooks/lib/memory-link-lint.mjs`, read by the SessionStart lint and
+by `/memory:doctor`; do not copy the number. **Reporting is the bound — nothing trims the MOC**,
+for the same reason the link lint names orphans rather than linking them. `/memory:doctor` names
+only the project it runs from: that report is pasted into issues and the other slugs are normalised
+remotes of private repos. The decision, the measurements, and the answer on the `modified` stamps a
+second writer is already putting in our frontmatter are in
+[docs/decisions/2026-08-22-auto-memory.md](docs/decisions/2026-08-22-auto-memory.md).
+
 **A local review loop ends on a CLEAN round, not after a fixed number.** Five of the thirteen rounds
 across #46 and #47 found a defect introduced by the previous round's fix, so stopping on a round
 that found something is stopping one round early —
