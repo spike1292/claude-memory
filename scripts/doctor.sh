@@ -266,8 +266,9 @@ fi
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
 
 # Claude Code's own auto memory loads MEMORY.md — the file this plugin's L1 index IS, via the
-# symlink — and keeps only the first 200 lines or 25 KB. It reports nothing when it drops the rest,
-# and for a file it did not write it checks nothing at all. So this is one of the two places the
+# symlink — and keeps only what fits AUTO_MEMORY_CAP (no digits here: the cap lives in
+# hooks/lib/memory-link-lint.mjs and nowhere else). It reports nothing when it drops the rest, and
+# for a file it did not write it checks nothing at all. So this is one of the two places the
 # truncation is ever said out loud (the other is the SessionStart lint).
 # docs/decisions/2026-08-22-auto-memory.md
 echo
@@ -289,6 +290,9 @@ if command -v node >/dev/null 2>&1; then
           ok) ok "$msg" ;;
           warn) warn "$msg" "$fix" ;;
           fail) fail "$msg" "$fix" ;;
+          # A status capReport grows later must not vanish here — silence reading as health is the
+          # failure this whole section exists to end.
+          *) warn "unrecognised auto-memory status: $status" "$msg" ;;
         esac
       done <<< "$cap_lines"
     else
@@ -428,7 +432,10 @@ fi
 
 echo
 if [ "$fails" -gt 0 ]; then
-  echo "$fails failure(s), $warns warning(s) — semantic recall will not work until the failures are fixed."
+  # Not "semantic recall will not work": every failure here WAS a recall blocker until the auto
+  # memory section landed, and an over-cap MEMORY.md breaks nothing about recall — the index is
+  # built from the notes. This line is what people paste into issues, so it names no cause.
+  echo "$fails failure(s), $warns warning(s) — see each FAIL above for what is broken and how to fix it."
 elif [ "$warns" -gt 0 ]; then
   echo "no failures, $warns warning(s) — core memory works; see the warnings for what is degraded."
 else
