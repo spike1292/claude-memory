@@ -127,9 +127,22 @@ test('findOversize warns near the cap and reports crossing it', () => {
   const overBytes = findOversize('x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
   assert.match(overBytes, /DROPPED/, 'past the cap, content is silently dropped');
 
+  assert.doesNotMatch(
+    findOversize('x'.repeat(AUTO_MEMORY_CAP.bytes)),
+    /DROPPED/,
+    'exactly at the cap nothing is dropped yet — the same boundary capReport pins',
+  );
+
   const overLines = findOversize('x\n'.repeat(AUTO_MEMORY_CAP.lines + 1));
   assert.match(overLines, /DROPPED/, 'the line cap bites even when the byte cap does not');
-  assert.match(overLines, new RegExp(`${AUTO_MEMORY_CAP.lines} lines`), 'names the line cap');
+  // The literal, not `${AUTO_MEMORY_CAP.lines}`: a regex built from the constant matches whatever
+  // the constant happens to say, so it is green for 201 as readily as for 200.
+  assert.match(overLines, /200 lines/, 'names the line cap Claude Code actually applies');
+});
+
+test('AUTO_MEMORY_CAP is what Claude Code loads, stated as literals', () => {
+  // Upstream's numbers, so they are written out here rather than derived from the code under test.
+  assert.deepStrictEqual(AUTO_MEMORY_CAP, { bytes: 25600, lines: 200 });
 });
 
 test('reportFor puts an oversize MOC alongside the other findings', (t) => {
@@ -187,11 +200,24 @@ test('capReport names only this project, and gives every other MOC its percentag
     /^warn\t.* near the load cap/,
     'exactly at the cap nothing is dropped yet — a warning, never a failure',
   );
+  // Three others, one per band, so the aggregate's own boundaries are pinned too — and so the
+  // "largest first" ordering has something to order.
   write('other-private-repo', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));
+  write('other-at-the-cap', 'x'.repeat(AUTO_MEMORY_CAP.bytes));
+  write('other-at-the-threshold', 'x'.repeat(AUTO_MEMORY_CAP.bytes * 0.8));
+  // Comfortably under, so widening the near band downward is caught: without it `>= NEAR` could
+  // read `>= 0.5` and this MOC would be counted as near the cap.
+  write('other-well-under', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.6)));
   assert.match(
     capReport(vault, 'mine')[1],
-    /^warn\t0 of 1 other MEMORY\.md over the cap, 1 near it — 90%/,
-    "the others' near counter, which no other case moves off zero",
+    /^warn\t0 of 4 other MEMORY\.md over the cap, 3 near it — 100%, 90%, 80%, 60%/,
+    "the others' bands and their order: at the cap is near, not over, and largest comes first",
+  );
+  write('other-at-the-cap', 'x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
+  assert.match(
+    capReport(vault, 'mine')[1],
+    /^warn\t1 of 4 other MEMORY\.md over the cap, 2 near it — 100%, 90%, 80%, 60%/,
+    'one byte more and the same file counts as over',
   );
 
   for (const blank of ['', '\n', '   \n\n'])
