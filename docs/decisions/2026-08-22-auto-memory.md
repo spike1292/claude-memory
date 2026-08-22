@@ -57,8 +57,8 @@ That makes the bound ours. It is one constant, `AUTO_MEMORY_CAP` in
   slugs are normalised remotes of private repos.
 
 Measured the day this landed: this repo's index is at 1,895 bytes and a work repo's at 22,142 —
-7% and 86.5% of the cap, which the report ceils to 8% and 87%. That second number is why 80% is the
-warning threshold rather than 95%.
+7.4% and 86.5% of the cap, which both reports floor to 7% and 86%. That second number is why 80% is
+the warning threshold rather than 95%.
 
 Both channels are worth stating plainly, because #75 faulted upstream for exactly this: the lint
 prints into the session transcript, which reaches Claude rather than the user as a banner, and

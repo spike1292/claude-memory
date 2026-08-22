@@ -276,10 +276,13 @@ if command -v node >/dev/null 2>&1; then
   # The EXIT STATUS decides, not the output: an import error, a rejected promise or a bad $ROOT all
   # print nothing, and "nothing" is also what an empty vault prints. Reading emptiness as health is
   # the healthy-looking lie the rest of this file exists to avoid.
+  # The module path travels in argv, like the graphgen block below — interpolating $ROOT into the
+  # JS source puts a filesystem path inside a string literal, and pathToFileURL is needed anyway:
+  # import() of a bare absolute path is read as a package specifier.
   if cap_lines=$(node -e '
-    import("'"$ROOT"'/hooks/lib/memory-link-lint.mjs").then((m) =>
-      process.stdout.write(m.capReport(process.argv[1], process.argv[2]).join("\n")),
-    );' "$VAULT" "$slug" 2>/dev/null); then
+    import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) =>
+      process.stdout.write(m.capReport(process.argv[2], process.argv[3]).join("\n")),
+    );' "$ROOT/hooks/lib/memory-link-lint.mjs" "$VAULT" "$slug" 2>/dev/null); then
     if [ -n "$cap_lines" ]; then
       while IFS=$'\t' read -r status msg fix; do
         case "$status" in

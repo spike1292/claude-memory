@@ -66,7 +66,7 @@ test('doctor reports an oversize MEMORY.md through capReport', () => {
     const section = out.slice(out.indexOf('auto memory'), out.indexOf('\nindex'));
     assert.match(section, /FAIL this project's MEMORY\.md is over the load cap/, section);
     assert.match(section, /26,624 bytes \/ 1 lines — 104%/, 'the measured size reaches the report');
-    assert.match(section, /1 other MEMORY\.md all fit the cap — 1%/);
+    assert.match(section, /1 other MEMORY\.md all fit the cap — 0%/);
     assert.ok(
       !section.includes('someone-elses-private-repo'),
       'other projects must not be named — this report is pasted into issues',

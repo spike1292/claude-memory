@@ -98,7 +98,7 @@ test('findDrift only flags bolded multi-digit figures a note contradicts', () =>
   );
 });
 
-test('mocSize counts bytes and lines the way the loader does', () => {
+test('mocSize counts bytes, and lines ignoring a trailing newline', () => {
   assert.deepStrictEqual(mocSize(''), { bytes: 0, lines: 0 });
   assert.deepStrictEqual(
     mocSize('a\nb\n'),
@@ -125,8 +125,9 @@ test('findOversize warns near the cap and reports crossing it', () => {
   assert.match(overLines, new RegExp(`${AUTO_MEMORY_CAP.lines} lines`), 'names the line cap');
 });
 
-test('reportFor puts an oversize MOC alongside the other findings', () => {
+test('reportFor puts an oversize MOC alongside the other findings', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moc-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const mem = path.join(dir, 'Memory', 'p');
   fs.mkdirSync(mem, { recursive: true });
   fs.writeFileSync(path.join(mem, 'MEMORY.md'), '- [[a]]\n' + 'x'.repeat(AUTO_MEMORY_CAP.bytes));
@@ -136,8 +137,9 @@ test('reportFor puts an oversize MOC alongside the other findings', () => {
   assert.match(out, /DROPPED/, 'and so is the truncation');
 });
 
-test('capReport names only this project and aggregates the rest', () => {
+test('capReport names only this project, and gives every other MOC its percentage', (t) => {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-'));
+  t.after(() => fs.rmSync(vault, { recursive: true, force: true }));
   const write = (/** @type {string} */ slug, /** @type {string} */ text) => {
     fs.mkdirSync(path.join(vault, 'Memory', slug), { recursive: true });
     fs.writeFileSync(path.join(vault, 'Memory', slug, 'MEMORY.md'), text);
@@ -148,7 +150,11 @@ test('capReport names only this project and aggregates the rest', () => {
   const lines = capReport(vault, 'mine');
   assert.strictEqual(lines.length, 2);
   assert.match(lines[0], /^ok\tthis project's MEMORY\.md fits/);
-  assert.match(lines[1], /^warn\t1 of 1 other MEMORY\.md over the cap, 0 near it — 101%/);
+  assert.match(
+    lines[1],
+    /^warn\t1 of 1 other MEMORY\.md over the cap, 0 near it — 100%/,
+    'floored: a file one byte over reads as 100%, and the WORDS say which side of the cap it is on',
+  );
   assert.ok(
     !lines.join('\n').includes('other-private-repo'),
     'other projects must not be named — this report is pasted into issues',
@@ -156,5 +162,10 @@ test('capReport names only this project and aggregates the rest', () => {
 
   write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
   assert.match(capReport(vault, 'mine')[0], /^fail\t/, 'over the cap is a failure, not a warning');
+  // Without this line the project's own MOC would fall into the unnamed `others` aggregate and be
+  // reported as someone else's — which is how a legacy cwd-slug folder would look.
+  const missing = capReport(vault, 'not-indexed-here');
+  assert.match(missing[0], /^warn\tno MEMORY\.md for this project \(not-indexed-here\)/);
+  assert.strictEqual(missing.length, 2, 'and the others are still reported');
   assert.deepStrictEqual(capReport(path.join(vault, 'nope'), 'mine'), [], 'no vault, no report');
 });

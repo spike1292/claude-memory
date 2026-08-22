@@ -13,8 +13,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`MEMORY.md` is measured against the cap Claude Code loads it under, so truncation of L1 is
   never silent.** Claude Code's own auto memory reads
-  `~/.claude/projects/<project>/memory/MEMORY.md` — the path this plugin symlinks into the vault,
-  measured on 23 of 24 project directories here — and keeps only the first 200 lines or 25 KB. For a
+  `~/.claude/projects/<project>/memory/MEMORY.md` — the path this plugin symlinks into the vault —
+  and keeps only the first 200 lines or 25 KB. For a
   file it did not write it reports nothing when it drops the rest, and nothing in this plugin
   bounded it either. The SessionStart lint now names the size from 80% of the cap up and says
   outright that content is being dropped past 100%, and `/memory:doctor` gains an `auto memory`

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// SessionStart: name the L1 notes that are reachable only from the MOC.
+// SessionStart: name the L1 notes that are reachable only from the MOC — and, since #75, everything
+// else that is true of MEMORY.md itself: its size against the cap Claude Code loads it under, for
+// this project (the lint) and for every project in the vault (capReport, read by /memory:doctor).
 //
 // The "≥2 wikilinks, linked both ways" convention is documented in CLAUDE.md, but prose did not
 // hold it: /memory:health found MOC-only notes in three consecutive audits (2026-08-07 four notes,
@@ -142,6 +144,17 @@ export const AUTO_MEMORY_CAP = { bytes: 25 * 1024, lines: 200 };
 const NEAR = 0.8;
 
 /**
+ * One percentage, floored, for both readers. They report the same file — the SessionStart lint and
+ * `/memory:doctor` — and rounding them differently made one say 86% and the other 87%. Floor and
+ * not ceil because a file at 99.6% must not read as 100%; which side of the cap it is on is said
+ * in words, never left to the number.
+ *
+ * @param {number} ratio
+ * @returns {string}
+ */
+const pct = (ratio) => `${Math.floor(ratio * 100)}%`;
+
+/**
  * What WE count: bytes, and lines ignoring a trailing newline. The 200/25 KB cap is documented
  * upstream; how it counts a trailing newline is not, so this errs one line low rather than
  * reporting a file as fitting when it does not.
@@ -162,15 +175,13 @@ export function mocSize(text) {
  */
 export function findOversize(text) {
   const { bytes, lines } = mocSize(text);
-  const pct = Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines);
-  if (pct < NEAR) return '';
+  const ratio = Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines);
+  if (ratio < NEAR) return '';
   const size = `${bytes.toLocaleString('en-US')} bytes / ${lines} lines`;
   const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')}-byte / ${AUTO_MEMORY_CAP.lines} lines cap`;
-  if (pct <= 1)
+  if (ratio <= 1)
     return [
-      // Floor here, ceil in capReport: neither direction may let a file read as the wrong side of
-      // the cap, and this branch is the one that still fits.
-      `MEMORY.md is at ${Math.floor(pct * 100)}% of the ${cap} Claude Code loads it under`,
+      `MEMORY.md is at ${pct(ratio)} of the ${cap} Claude Code loads it under`,
       `(${size}). Past it the rest is dropped with nothing reported. Move detail into the notes.`,
     ].join('\n');
   return [
@@ -326,9 +337,6 @@ export function capReport(vaultDir, slug) {
   if (!all.length) return [];
 
   const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')} bytes / ${AUTO_MEMORY_CAP.lines} lines`;
-  // Ceil, not round: a file one byte past the cap rounds to "100%", which reads as fitting. It
-  // overstates a small file by a percent instead, which costs nothing.
-  const pct = (/** @type {number} */ p) => `${Math.ceil(p * 100)}%`;
   const fix =
     'Claude Code loads only what fits and drops the rest, reporting nothing. Trim the MOC to one line per note.';
   /** @type {string[]} */
@@ -341,6 +349,14 @@ export function capReport(vaultDir, slug) {
     else if (mine.pct >= NEAR)
       out.push(`warn\tthis project's MEMORY.md is near the load cap: ${size}\t${fix}`);
     else out.push(`ok\tthis project's MEMORY.md fits the load cap: ${size}`);
+  } else {
+    // Said out loud, because the alternative is worse than silence: a vault folder still under the
+    // legacy cwd-slug falls into `others`, which is deliberately unnamed — so "1 of 1 other
+    // MEMORY.md over the cap" would be YOUR index, reported as someone else's.
+    out.push(
+      `warn\tno MEMORY.md for this project (${slug})\t` +
+        'nothing is injected as auto memory here. Expected on a first install; if this project has notes, its vault folder is under a different key — check Memory/ in the vault against the project name above.',
+    );
   }
   const others = all.filter((m) => m !== mine).sort((a, b) => b.pct - a.pct);
   if (others.length) {
