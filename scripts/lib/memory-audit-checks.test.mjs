@@ -17,6 +17,8 @@ import {
   isUnprovenancedMetric,
   isUnstampedVolatileClaim,
   buildSuffixIndex,
+  mocTargets,
+  stripCodeBlocks,
 } from './memory-audit-checks.mjs';
 
 test('isStandingNegative separates claims from instructions', () => {
@@ -181,4 +183,22 @@ test('isUnprovenancedMetric requires an instrument', () => {
     ),
     'provenance may sit on a neighbouring line',
   );
+});
+
+test('mocTargets reads the markdown links MEMORY.md is actually written with', () => {
+  const moc =
+    '- [Never `git add -A`](never-git-add-all.md) — hook\n- [Other](./other.md#x) — hook\n';
+  assert.deepEqual([...mocTargets(moc)], ['never-git-add-all', 'other']);
+  // both forms, and a non-note link is not a target
+  assert.deepEqual([...mocTargets('[[a|alias]] and [b](b.md)')], ['a', 'b']);
+  assert.equal(mocTargets('[docs](docs/architecture.md) [x](https://e.com)').has('x'), false);
+});
+
+test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
+  const body = 'text\n\n```bash\nif [[ $var =~ ^[0-9]+$ ]]; then :; fi\n```\n\n[[real-note]]\n';
+  const out = stripCodeBlocks(body);
+  assert.equal(out.includes('$var'), false);
+  assert.equal(out.includes('[[real-note]]'), true);
+  assert.equal(stripCodeBlocks('a `[[ -f x ]]` b').includes('[['), false);
+  assert.equal(stripCodeBlocks('plain [[link]] here'), 'plain [[link]] here');
 });

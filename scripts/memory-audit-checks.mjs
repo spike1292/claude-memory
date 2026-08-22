@@ -22,6 +22,8 @@ import {
   isUnprovenancedMetric,
   buildSuffixIndex,
   checkFile,
+  mocTargets,
+  stripCodeBlocks,
 } from './lib/memory-audit-checks.mjs';
 
 if (process.argv.includes('--check-file')) {
@@ -137,21 +139,21 @@ const resolves = (n) => notes.has(n) || permanent.has(n);
 // ---------------------------------------------------------------- MOC + graph
 const mocPath = path.join(MEM, 'MEMORY.md');
 const moc = fs.existsSync(mocPath) ? read(mocPath) : '';
-const mocLinks = new Set(linksIn(moc));
+const mocLinks = mocTargets(moc);
 section(
   'Not in the MOC',
   memNames.filter((n) => !mocLinks.has(n)).map((n) => `${n} — add a one-line pointer to MEMORY.md`),
 );
 section(
   'Dangling wikilinks',
-  [...new Set([...notes.values()].flatMap((v) => linksIn(v.body)))]
+  [...new Set([...notes.values()].flatMap((v) => linksIn(stripCodeBlocks(v.body))))]
     .filter((n) => !resolves(n))
     .map((n) => `[[${n}]] — no such note in Memory, Insights or permanent/`),
 );
 
 const inbound = new Map([...notes.keys()].map((k) => /** @type {[string, number]} */ ([k, 0])));
 for (const [k, v] of notes)
-  for (const l of new Set(linksIn(v.body)))
+  for (const l of new Set(linksIn(stripCodeBlocks(v.body))))
     if (inbound.has(l) && l !== k && path.basename(v.file) !== 'MEMORY.md')
       inbound.set(l, /** @type {number} */ (inbound.get(l)) + 1);
 section(

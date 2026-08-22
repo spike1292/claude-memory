@@ -262,3 +262,26 @@ export function checkFile(f) {
     out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
   return out;
 }
+
+// MEMORY.md is written with markdown links (`[Title](note.md)`), not wikilinks. A wikilink-only
+// parser therefore reported EVERY L1 note as "Not in the MOC" — 8 of 8 false positives on
+// 2026-08-22, while hooks/lib/memory-link-lint.mjs read the same file correctly. Two parsers, one
+// file format. MOC membership accepts both forms; the note-graph checks stay wikilink-only, since
+// a markdown link from the MOC is exactly what does not make a note reachable from a sibling.
+/** @param {string} moc @returns {Set<string>} */
+export function mocTargets(moc) {
+  const out = new Set();
+  for (const m of moc.matchAll(/\[\[([^\]|#]+)/g)) out.add(m[1].trim());
+  for (const m of moc.matchAll(/\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
+    out.add(m[1].replace(/^\.\//, '').trim());
+  return out;
+}
+
+// A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
+// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning.
+/** @param {string} text @returns {string} */
+export function stripCodeBlocks(text) {
+  return text
+    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, '')
+    .replace(/`[^`\n]*`/g, '');
+}

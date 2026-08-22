@@ -9,6 +9,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/memory:health` reported every L1 note as missing from the MOC.** `MEMORY.md` is written with
+  markdown links (`[Title](note.md)`), but `memory-audit-checks.mjs` scanned it for `[[wikilinks]]`
+  only — so it called all 8 notes orphaned on 2026-08-22 while `hooks/lib/memory-link-lint.mjs` read
+  the same file correctly. Two parsers, one file format. MOC membership now accepts both forms;
+  the note-graph checks stay wikilink-only, because a markdown link from the MOC is exactly what
+  does *not* make a note reachable from a sibling.
+- **A bash `[[ $var =~ … ]]` test inside a fenced code block was reported as a dangling wikilink.**
+  Link scanning now strips fenced and inline code first.
+
 ### Added
 
 - **`MEMORY.md` is measured against the cap Claude Code loads it under, so truncation of L1 is
