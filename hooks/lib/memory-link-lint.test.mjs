@@ -164,6 +164,13 @@ test('capReport names only this project, and gives every other MOC its percentag
   assert.match(capReport(vault, 'mine')[0], /^fail\t/, 'over the cap is a failure, not a warning');
   // Without this line the project's own MOC would fall into the unnamed `others` aggregate and be
   // reported as someone else's — which is how a legacy cwd-slug folder would look.
+  write('mine', '');
+  assert.match(
+    capReport(vault, 'mine')[0],
+    /^warn\tthis project's MEMORY\.md is empty/,
+    'an empty index is 0% of the cap, and "fits the cap" is the empty-but-readable lie',
+  );
+
   const missing = capReport(vault, 'not-indexed-here');
   assert.match(missing[0], /^warn\tno MEMORY\.md for this project \(not-indexed-here\)/);
   assert.strictEqual(missing.length, 2, 'and the others are still reported');

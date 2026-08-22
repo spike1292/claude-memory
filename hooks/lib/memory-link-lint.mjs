@@ -344,7 +344,14 @@ export function capReport(vaultDir, slug) {
   const mine = all.find((m) => m.slug === slug);
   if (mine) {
     const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${pct(mine.pct)} of ${cap}`;
-    if (mine.pct > 1)
+    // Empty first: 0 bytes is 0% of the cap, and "fits the load cap" is exactly the
+    // empty-but-readable report this vault has been misled by before.
+    if (mine.bytes === 0)
+      out.push(
+        `warn\tthis project's MEMORY.md is empty\t` +
+          'a readable empty index reports as healthy while nothing is injected. Add one line per note, or delete the file so the absence is visible.',
+      );
+    else if (mine.pct > 1)
       out.push(`fail\tthis project's MEMORY.md is over the load cap: ${size}\t${fix}`);
     else if (mine.pct >= NEAR)
       out.push(`warn\tthis project's MEMORY.md is near the load cap: ${size}\t${fix}`);
