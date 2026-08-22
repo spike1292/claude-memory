@@ -1,12 +1,16 @@
 # claude-memory
 
-Layered memory for [Claude Code](https://claude.com/claude-code), backed by a plain-Markdown
-Obsidian vault.
+An extension of [Claude Code](https://claude.com/claude-code)'s own memory, backed by a
+plain-Markdown Obsidian vault.
 
-Claude Code forgets everything between sessions. This plugin gives it a vault it writes to and
-reads from: per-project facts, session logs, lessons distilled automatically from what actually
-happened, and hybrid semantic + lexical retrieval so a question phrased differently from the note
-still finds it.
+Claude Code has auto memory, and it reads `~/.claude/projects/<project>/memory/MEMORY.md`. This
+plugin fills that file well and adds every layer above it: per-project facts, session logs,
+lessons distilled automatically from what actually happened, a codebase graph, and hybrid semantic
++ lexical retrieval so a question phrased differently from the note still finds it. It does not
+replace Claude Code's memory and does not compete with it — it is the vault behind it.
+
+For software engineers working in a codebase. Why it is shaped this way, and what it refuses to
+be: **[docs/vision.md](docs/vision.md)**.
 
 Everything is plain Markdown on your disk. The embedding model runs locally via ONNX — **notes are
 never sent anywhere.**
