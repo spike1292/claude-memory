@@ -202,7 +202,7 @@ test('capReport names only this project, and gives every other MOC its percentag
   );
   // The LINE arm, which every fixture above leaves dormant because one long line is all bytes.
   // A real MOC is one line per note, so this is the likelier way to cross the cap: 250 short lines
-  // are 125% of the line cap and 9% of the byte cap, and taking only the byte arm would report
+  // are 125% of the line cap and 23% of the byte cap, and taking only the byte arm would report
   // "fits" while Claude Code drops fifty notes.
   write('mine', '- [[note]] a short hook\n'.repeat(250));
   assert.match(
