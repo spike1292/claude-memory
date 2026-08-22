@@ -144,10 +144,11 @@ export const AUTO_MEMORY_CAP = { bytes: 25 * 1024, lines: 200 };
 const NEAR = 0.8;
 
 /**
- * One percentage, floored, for both readers. They report the same file — the SessionStart lint and
- * `/memory:doctor` — and rounding them differently made one say 86% and the other 87%. Floor and
- * not ceil because a file at 99.6% must not read as 100%; which side of the cap it is on is said
- * in words, never left to the number.
+ * One percentage, floored, for both readers. They report DIFFERENT things — the SessionStart lint
+ * speaks only from 80% up, `/memory:doctor` reports every state — but the same file must not carry
+ * two numbers, and rounding them apart made one say 86% and the other 87%. Floor and not ceil
+ * because a file at 99.6% must not read as 100%; which side of the cap it is on is said in words,
+ * never left to the number.
  *
  * @param {number} ratio
  * @returns {string}
@@ -310,7 +311,7 @@ export function reportFor(mem, ins) {
  */
 export function capReport(vaultDir, slug) {
   const memRoot = path.join(vaultDir, 'Memory');
-  /** @type {{ slug: string, bytes: number, lines: number, pct: number }[]} */
+  /** @type {{ slug: string, bytes: number, lines: number, pct: number, empty: boolean }[]} */
   const all = [];
   let dirs;
   try {
@@ -331,6 +332,8 @@ export function capReport(vaultDir, slug) {
       slug: d.name,
       bytes,
       lines,
+      // Content, not byte count: a MOC holding one newline injects exactly as much as a 0-byte one.
+      empty: text.trim() === '',
       pct: Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines),
     });
   }
@@ -344,9 +347,9 @@ export function capReport(vaultDir, slug) {
   const mine = all.find((m) => m.slug === slug);
   if (mine) {
     const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${pct(mine.pct)} of ${cap}`;
-    // Empty first: 0 bytes is 0% of the cap, and "fits the load cap" is exactly the
+    // Empty first: an empty MOC is 0% of the cap, and "fits the load cap" is exactly the
     // empty-but-readable report this vault has been misled by before.
-    if (mine.bytes === 0)
+    if (mine.empty)
       out.push(
         `warn\tthis project's MEMORY.md is empty\t` +
           'a readable empty index reports as healthy while nothing is injected. Add one line per note, or delete the file so the absence is visible.',

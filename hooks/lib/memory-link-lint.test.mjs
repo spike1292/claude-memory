@@ -162,15 +162,28 @@ test('capReport names only this project, and gives every other MOC its percentag
 
   write('mine', 'x'.repeat(AUTO_MEMORY_CAP.bytes + 1));
   assert.match(capReport(vault, 'mine')[0], /^fail\t/, 'over the cap is a failure, not a warning');
-  // Without this line the project's own MOC would fall into the unnamed `others` aggregate and be
-  // reported as someone else's — which is how a legacy cwd-slug folder would look.
-  write('mine', '');
+
+  // The band the whole feature exists for: still loading, about to stop. Untested, `>= NEAR` could
+  // be deleted outright and an 85% index would report "fits the load cap" with every test green.
+  write('mine', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));
+  const near = capReport(vault, 'mine');
+  assert.match(near[0], /^warn\tthis project's MEMORY\.md is near the load cap: .* — 90% of/);
+  write('other-private-repo', 'x'.repeat(Math.round(AUTO_MEMORY_CAP.bytes * 0.9)));
   assert.match(
-    capReport(vault, 'mine')[0],
-    /^warn\tthis project's MEMORY\.md is empty/,
-    'an empty index is 0% of the cap, and "fits the cap" is the empty-but-readable lie',
+    capReport(vault, 'mine')[1],
+    /^warn\t0 of 1 other MEMORY\.md over the cap, 1 near it — 90%/,
+    "the others' near counter, which no other case moves off zero",
   );
 
+  for (const blank of ['', '\n', '   \n\n'])
+    assert.match(
+      (write('mine', blank), capReport(vault, 'mine'))[0],
+      /^warn\tthis project's MEMORY\.md is empty/,
+      `${JSON.stringify(blank)}: empty means no content, not zero bytes — whitespace injects nothing either`,
+    );
+
+  // Without this branch the project's own MOC would fall into the unnamed `others` aggregate and be
+  // reported as someone else's — which is how a legacy cwd-slug folder would look.
   const missing = capReport(vault, 'not-indexed-here');
   assert.match(missing[0], /^warn\tno MEMORY\.md for this project \(not-indexed-here\)/);
   assert.strictEqual(missing.length, 2, 'and the others are still reported');
