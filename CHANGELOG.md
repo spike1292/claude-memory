@@ -24,7 +24,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   what leaves the MOC is judgement, the same reason the link lint names orphans rather than linking
   them. The decision to co-operate with Claude Code at that path rather than separate via
   `autoMemoryDirectory`, and the answer on the `modified`/`node_type` stamps a second writer has
-  been putting in 41 of 59 vault notes since 2026-08-04 (keep them; we write none and strip none),
+  been putting in 40 of 57 vault notes (and in one of the two MOCs) since 2026-08-04 (keep them; we write none and strip none),
   are in [docs/decisions/2026-08-22-auto-memory.md](docs/decisions/2026-08-22-auto-memory.md).
   ([#75](https://github.com/spike1292/claude-memory/issues/75))
 

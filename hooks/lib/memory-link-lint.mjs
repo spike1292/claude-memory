@@ -142,7 +142,9 @@ export const AUTO_MEMORY_CAP = { bytes: 25 * 1024, lines: 200 };
 const NEAR = 0.8;
 
 /**
- * What the loader counts: bytes, and lines ignoring a trailing newline.
+ * What WE count: bytes, and lines ignoring a trailing newline. The 200/25 KB cap is documented
+ * upstream; how it counts a trailing newline is not, so this errs one line low rather than
+ * reporting a file as fitting when it does not.
  *
  * @param {string} text
  * @returns {{ bytes: number, lines: number }}
@@ -166,7 +168,9 @@ export function findOversize(text) {
   const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')}-byte / ${AUTO_MEMORY_CAP.lines} lines cap`;
   if (pct <= 1)
     return [
-      `MEMORY.md is at ${Math.round(pct * 100)}% of the ${cap} Claude Code loads it under`,
+      // Floor here, ceil in capReport: neither direction may let a file read as the wrong side of
+      // the cap, and this branch is the one that still fits.
+      `MEMORY.md is at ${Math.floor(pct * 100)}% of the ${cap} Claude Code loads it under`,
       `(${size}). Past it the rest is dropped with nothing reported. Move detail into the notes.`,
     ].join('\n');
   return [
@@ -285,7 +289,9 @@ export function reportFor(mem, ins) {
  * helpers without a JSON parser — `jq` is optional there.
  *
  * Only the project the command was run from is named: this report is what people paste into
- * issues, and the other slugs are normalised remotes of private repos.
+ * issues, and the other slugs are normalised remotes of private repos. Every other MOC still gets
+ * its own percentage, largest first — "each MEMORY.md against the cap" is the point of the report,
+ * and a count alone cannot say whether the other one is at 99% or at 9%.
  *
  * @param {string} vaultDir
  * @param {string} slug
@@ -320,30 +326,33 @@ export function capReport(vaultDir, slug) {
   if (!all.length) return [];
 
   const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')} bytes / ${AUTO_MEMORY_CAP.lines} lines`;
+  // Ceil, not round: a file one byte past the cap rounds to "100%", which reads as fitting. It
+  // overstates a small file by a percent instead, which costs nothing.
+  const pct = (/** @type {number} */ p) => `${Math.ceil(p * 100)}%`;
   const fix =
     'Claude Code loads only what fits and drops the rest, reporting nothing. Trim the MOC to one line per note.';
   /** @type {string[]} */
   const out = [];
   const mine = all.find((m) => m.slug === slug);
   if (mine) {
-    const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${Math.round(mine.pct * 100)}% of ${cap}`;
+    const size = `${mine.bytes.toLocaleString('en-US')} bytes / ${mine.lines} lines — ${pct(mine.pct)} of ${cap}`;
     if (mine.pct > 1)
       out.push(`fail\tthis project's MEMORY.md is over the load cap: ${size}\t${fix}`);
-    else if (mine.pct >= 0.8)
+    else if (mine.pct >= NEAR)
       out.push(`warn\tthis project's MEMORY.md is near the load cap: ${size}\t${fix}`);
     else out.push(`ok\tthis project's MEMORY.md fits the load cap: ${size}`);
   }
-  const others = all.filter((m) => m !== mine);
+  const others = all.filter((m) => m !== mine).sort((a, b) => b.pct - a.pct);
   if (others.length) {
+    const pcts = others.map((m) => pct(m.pct)).join(', ');
     const over = others.filter((m) => m.pct > 1).length;
-    const near = others.filter((m) => m.pct >= 0.8 && m.pct <= 1).length;
-    const worst = Math.round(Math.max(...others.map((m) => m.pct)) * 100);
+    const near = others.filter((m) => m.pct >= NEAR && m.pct <= 1).length;
     if (over || near)
       out.push(
-        `warn\t${over} of ${others.length} other MEMORY.md over the cap, ${near} near it (largest ${worst}%)\t` +
+        `warn\t${over} of ${others.length} other MEMORY.md over the cap, ${near} near it — ${pcts}\t` +
           'other projects are not named — this report gets pasted into issues. Run /memory:doctor from each one.',
       );
-    else out.push(`ok\t${others.length} other MEMORY.md all fit the cap (largest ${worst}%)`);
+    else out.push(`ok\t${others.length} other MEMORY.md all fit the cap — ${pcts}`);
   }
   return out;
 }

@@ -102,9 +102,10 @@ else
 fi
 # codebase-memory-mcp is an MCP server, not a CLI, so PATH cannot see it. The Graph layer is the
 # observable evidence: a GRAPH_REPORT.md exists only if the server has run for this project.
-gslug=$(project_key "$PWD")
-if [ -f "$VAULT/Graph/$gslug/GRAPH_REPORT.md" ]; then
-  ok "codebase-memory-mcp — L4 graph digest present for $gslug"
+# One fork for the whole report: project_key shells out to node, and three sections need it.
+slug=$(project_key "$PWD")
+if [ -f "$VAULT/Graph/$slug/GRAPH_REPORT.md" ]; then
+  ok "codebase-memory-mcp — L4 graph digest present for $slug"
 else
   warn "no L4 graph digest for this project (optional)" \
     "L1-L3 memory is unaffected. If codebase-memory-mcp is configured, run /memory:graph-report to create one; if it is not, skip L4 entirely — nothing else depends on it."
@@ -264,8 +265,6 @@ fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
   || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
 
-slug=$(project_key "$PWD")
-
 # Claude Code's own auto memory loads MEMORY.md — the file this plugin's L1 index IS, via the
 # symlink — and keeps only the first 200 lines or 25 KB. It reports nothing when it drops the rest,
 # and for a file it did not write it checks nothing at all. So this is one of the two places the
@@ -274,22 +273,27 @@ slug=$(project_key "$PWD")
 echo
 echo "auto memory (Claude Code loads MEMORY.md; what does not fit is dropped silently)"
 if command -v node >/dev/null 2>&1; then
-  cap_lines=$(node -e '
+  # The EXIT STATUS decides, not the output: an import error, a rejected promise or a bad $ROOT all
+  # print nothing, and "nothing" is also what an empty vault prints. Reading emptiness as health is
+  # the healthy-looking lie the rest of this file exists to avoid.
+  if cap_lines=$(node -e '
     import("'"$ROOT"'/hooks/lib/memory-link-lint.mjs").then((m) =>
       process.stdout.write(m.capReport(process.argv[1], process.argv[2]).join("\n")),
-    );' "$VAULT" "$slug" 2>/dev/null)
-  if [ -n "$cap_lines" ]; then
-    while IFS=$'\t' read -r status msg fix; do
-      case "$status" in
-        ok) ok "$msg" ;;
-        warn) warn "$msg" "$fix" ;;
-        fail) fail "$msg" "$fix" ;;
-      esac
-    done <<EOF
-$cap_lines
-EOF
+    );' "$VAULT" "$slug" 2>/dev/null); then
+    if [ -n "$cap_lines" ]; then
+      while IFS=$'\t' read -r status msg fix; do
+        case "$status" in
+          ok) ok "$msg" ;;
+          warn) warn "$msg" "$fix" ;;
+          fail) fail "$msg" "$fix" ;;
+        esac
+      done <<< "$cap_lines"
+    else
+      ok "no MEMORY.md in the vault yet"
+    fi
   else
-    ok "no MEMORY.md in the vault yet"
+    fail "could not measure MEMORY.md against the load cap" \
+         "node could not read hooks/lib/memory-link-lint.mjs from $ROOT. Truncation of MEMORY.md is silent everywhere else, so this check going quiet is the failure. Re-run: node -e 'import(\"$ROOT/hooks/lib/memory-link-lint.mjs\")'"
   fi
 else
   warn "cannot measure MEMORY.md without node" "install node >= 22.5; nothing else here needs it more."

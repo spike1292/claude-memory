@@ -245,7 +245,8 @@ What follows is the gaps that list does not carry.
   — [#67](https://github.com/spike1292/claude-memory/issues/67),
   [#70](https://github.com/spike1292/claude-memory/issues/70)
 - **`MEMORY.md` truncation is reported, not prevented.** Claude Code loads the first 200 lines or
-  25 KB of it; a measured work-repo index sits at 86% of that cap. Since
+  25 KB of it; a measured work-repo index sits at 86.5% of that cap (88% when #75 was written; re-measured
+  2026-08-22). Since
   [the decision](decisions/2026-08-22-auto-memory.md) the SessionStart lint and `/memory:doctor`
   both say so from 80% up, so crossing it is no longer silent — but nothing trims the file, and
   a second writer sharing the path stays an unresolved dependency.

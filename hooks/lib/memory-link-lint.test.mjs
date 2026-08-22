@@ -125,7 +125,7 @@ test('findOversize warns near the cap and reports crossing it', () => {
   assert.match(overLines, new RegExp(`${AUTO_MEMORY_CAP.lines} lines`), 'names the line cap');
 });
 
-test('lint reports an oversize MOC alongside the other findings', () => {
+test('reportFor puts an oversize MOC alongside the other findings', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moc-'));
   const mem = path.join(dir, 'Memory', 'p');
   fs.mkdirSync(mem, { recursive: true });
@@ -148,7 +148,7 @@ test('capReport names only this project and aggregates the rest', () => {
   const lines = capReport(vault, 'mine');
   assert.strictEqual(lines.length, 2);
   assert.match(lines[0], /^ok\tthis project's MEMORY\.md fits/);
-  assert.match(lines[1], /^warn\t1 of 1 other MEMORY\.md over the cap/);
+  assert.match(lines[1], /^warn\t1 of 1 other MEMORY\.md over the cap, 0 near it — 101%/);
   assert.ok(
     !lines.join('\n').includes('other-private-repo'),
     'other projects must not be named — this report is pasted into issues',

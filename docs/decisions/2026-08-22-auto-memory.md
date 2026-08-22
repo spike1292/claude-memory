@@ -56,8 +56,15 @@ That makes the bound ours. It is one constant, `AUTO_MEMORY_CAP` in
   the project it is run from is named — that report is what people paste into issues, and the other
   slugs are normalised remotes of private repos.
 
-Measured the day this landed: this repo's index is at 7% of the cap, and a work repo's is at 86%.
-That second number is why 80% is the warning threshold rather than 95%.
+Measured the day this landed: this repo's index is at 1,895 bytes and a work repo's at 22,142 —
+7% and 86.5% of the cap, which the report ceils to 8% and 87%. That second number is why 80% is the
+warning threshold rather than 95%.
+
+Both channels are worth stating plainly, because #75 faulted upstream for exactly this: the lint
+prints into the session transcript, which reaches Claude rather than the user as a banner, and
+`/memory:doctor` has to be run. That is the whole surface a plugin has — a hook writes to stdout and
+a command prints. What we can control is that the message is unmissable when it fires, and that it
+fires from 80% rather than at 100%.
 
 **Nothing trims the file.** Deciding what leaves the MOC is judgement, the same reason the link lint
 names orphans rather than linking them. Reporting is the bound; trimming stays a human act.
@@ -68,10 +75,14 @@ names orphans rather than linking them. Reporting is the bound; trimming stays a
 YAML frontmatter, on the assumption it had not started. It had. Re-measured 2026-08-22 over
 `Memory/` in this vault:
 
-| field | notes carrying it | of |
-| --- | --- | --- |
-| `metadata.modified` | 41 | 59 |
-| `node_type` | 55 | 59 |
+| field | notes carrying it | of 57 notes | of 59 `.md` files |
+| --- | --- | --- | --- |
+| `metadata.modified` | 40 | 70% | 41 |
+| `node_type` | 54 | 95% | 55 |
+
+`Memory/` holds 59 `.md` files, two of which are the `MEMORY.md` MOCs — so 57 notes. The issue's
+"41 of 59" counted files, and one of those 41 is a MOC: Claude Code stamps the index too, not only
+the notes.
 
 The original check reported 0 because it grepped `^modified:` and the field is nested under
 `metadata:`. That is a recorded failure mode in this vault — `confidence:` is nested the same way,
