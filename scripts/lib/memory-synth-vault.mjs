@@ -50,7 +50,7 @@
 // Tests: node --test scripts/lib/memory-synth-vault.test.mjs
 //
 // Usage:
-//   node scripts/memory-synth-vault.mjs --out /tmp/synthvault [--notes 300] [--seed 7]
+//   node scripts/memory-synth-vault.mjs --out /tmp/synthvault [--notes 300] [--seed 7] [--echoes 2]
 //   node memory-semantic.mjs --vault /tmp/synthvault --slug bench --index --rebuild
 //   node memory-eval.mjs --vault /tmp/synthvault --slug bench --run --cases /tmp/synthvault/cases-paraphrase.jsonl
 

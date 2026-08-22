@@ -130,6 +130,29 @@ what a user's setup depends on: config keys, command names, vault layout, and
   graph-report refresh both degrade to no-ops when the CLI is missing, which is indistinguishable
   from a hook that had nothing to do, so nothing reported it. `/memory:doctor` already warns when
   `claude` is off `PATH`, and that warning was the only signal.
+- **`memory-synth-vault.mjs --notes` bounded the summary line but not the vault.** Gold notes and
+  their echoes were written first and unconditionally, and only the filler loop consulted `--notes`;
+  any value at or below the gold+echo count was ignored without a word, so `--notes 20` wrote 120
+  notes and CI's `--notes 60` wrote 120 too
+  ([#49](https://github.com/spike1292/claude-memory/issues/49)). The flag is now a ceiling on the
+  whole vault: the gold cases scale down to what fits (`--notes 60` → 20 gold, 40 echoes), and the
+  run prints how many of the available gold cases it fitted. `--notes`, `--echoes` and `--seed` must
+  now be whole numbers, and a `--notes` below one gold note plus its echoes exits non-zero naming
+  that minimum — `--notes abc` fell into `while (n < NaN)` and produced the full 120,
+  `--notes 60 --echoes 0.5` wrote 80, `--notes Infinity` never terminated, and `--seed abc` wrote
+  the seed-0 vault under a manifest reading `seed NaN`. Nothing is written before the refusal, so a
+  rejected run leaves an existing vault at `--out` intact.
+  Two consequences worth stating rather than discovering. **CI's synthetic vault is now the 60 notes
+  its command always asked for**, down from 120, with 20 gold cases instead of 40 — the suite is
+  green against it, and it feeds no retrieval figure. And **truncation keeps the gold cases spread
+  across both axes the vault varies on**: round-robin across domains, because cutting the
+  domain-major walk gave `--notes 60` twenty cases from four of the eight domains while filler kept
+  coming from all eight; and layered by position in the selected set rather than by original index,
+  because a domain has exactly as many cases as there are layers, so the first cut left `Decisions`
+  and `permanent` with no gold at all. A case set whose coverage varies silently with a flag is the
+  defect this fixed, one level up. `--notes 300` — the size every recall figure in this repo was
+  measured at — is byte-identical to before. The one figure swept at another size, `MIN_SCORE`'s
+  smallest leg, passed `--notes 100` and got 120; both places recording it now say 120.
 - **`doctor.sh`'s search for a populated vault names its macOS-only candidate as such.** The
   `$HOME/Library/CloudStorage/*/*/Claude` glob matches nothing on Linux, where the recorded previous
   vault is the only candidate that carries. Marked rather than padded with guessed Linux sync paths,
@@ -427,15 +450,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **`MIN_SCORE = 6.0` finally has a case set behind it — and the sweep says it is too low, so it is
   recorded rather than changed.** It was the one retrieval number in the repo with only a prose
   comment, against the convention that every figure names the case set it came from. Swept on the
-  synthetic bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 100/300/1000 notes) over the
-  80 on-topic prompts that script emits, with the 28 questions of the authored case set — which ask
-  about *this* repo — as an off-topic control against the bench corpus, where every fire is by
-  construction noise. **6.0 is not too high**: the weakest on-topic prompt scores 15.2-20.3, so no
-  gate up to 12 suppresses a single one of the 80. **It is too low**: it sits inside the off-topic
-  band and lets 17/19/28 of the 28 through, where ~14 halves that at zero on-topic cost at all three
-  corpus sizes. Left at 6.0 deliberately — moving it changes behaviour on every prompt, absolute
-  BM25 is corpus-scaled, and the off-topic control is contaminated (both corpora are software
-  prose). The numbers, the instrument and that reasoning are in the comment beside the constant.
+  synthetic bench vault (`memory-synth-vault.mjs --seed 7`, re-run at 120/300/1000 notes — the
+  smallest leg was invoked as `--notes 100`, which built 120 before #49 made the flag a ceiling)
+  over the 80 on-topic prompts that script emits, with the 28 questions of the authored case set —
+  which ask about *this* repo — as an off-topic control against the bench corpus, where every fire
+  is by construction noise. **6.0 is not too high**: the weakest on-topic prompt scores 15.2-20.3,
+  so no gate up to 12 suppresses a single one of the 80. **It is too low**: it sits inside the
+  off-topic band and lets 17/19/28 of the 28 through, where ~14 halves that at zero on-topic cost at
+  all three corpus sizes. Left at 6.0 deliberately — moving it changes behaviour on every prompt,
+  absolute BM25 is corpus-scaled, and the off-topic control is contaminated (both corpora are
+  software prose). The numbers, the instrument and that reasoning are in the comment beside the
+  constant.
 
 - **`--mode lexical` in the eval was not the instrument the plan assumed, and was itself a
   fork.** The premise for the item above was that #29 had made recall's BM25 and the eval's one

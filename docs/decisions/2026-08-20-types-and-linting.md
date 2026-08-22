@@ -142,7 +142,8 @@ tells the next reader the type system checked it. Local review found all three.
 Two pre-existing defects, both filed separately rather than smuggled into a typing pass:
 
 - `scripts/memory-synth-vault.mjs` ignores `--notes` below the gold+echo count — the filler loop is
-  `while (allNames.length < TOTAL)`, so a low `--notes` silently yields 120 notes.
+  `while (allNames.length < TOTAL)`, so a low `--notes` silently yields 120 notes. Filed as #49 and
+  fixed there on 2026-08-21: `--notes` now caps the gold cases too.
 - `report()` in `scripts/lib/doctor-perf.mjs` has an `= {}` default it cannot honour: `state` is used
   unguarded. Every caller passes the bag, so the default is unreachable and misleading.
 
