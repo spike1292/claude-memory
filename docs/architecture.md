@@ -344,6 +344,7 @@ exists because a comment once claimed a CI check that did not exist.
 | Embedding batch size is 1 | **NOTHING** — comment only | padding changes the embedding; competing notes sit ~0.001 apart |
 | All mutable state in `$CLAUDE_MEMORY_HOME` | **partial** — `.gitignore` covers `*.db`, `*.log`, `*.sock` | nothing checks the positive case |
 | Model profiles never share thresholds | **NOTHING** — comment only | copied thresholds once made both scans report a clean vault |
+| Markdown is the source of truth; every index is derived | **NOTHING** — convention | four behaviours rest on it: indexes live outside the plugin, `--rebuild` exists and a model change forces one, `/memory:prune` purges where a plain re-index cannot, and a foreign-model index is refused rather than migrated. A vault that loses its index loses nothing |
 
 ---
 

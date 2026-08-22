@@ -11,6 +11,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **[docs/vision.md](docs/vision.md) — what this is for, who it is for, what it refuses to be, and
+  where it is heading**, with a primary source for every claim and `[inferred]` on anything drawn
+  from a pattern of decisions rather than stated outright. It is a guide, edited in place, not a
+  dated record. Section 5 is the one place in the repo that states intent rather than fact, and says
+  so. `docs/architecture.md` gains the invariant it leaned on unwritten: the Markdown is the source
+  of truth and every index is derived.
+
 - **Retention for `$CLAUDE_MEMORY_HOME/logs/`, so the directory is bounded on both of its axes.**
   The free-form logs were capped at 1 MB; the dated JSONL families (`recall-<date>`, `hooks-<date>`)
   accumulated one file per active day, forever, in machine-local state no release replaces. They are
@@ -119,6 +126,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
   unchanged — same field names, same order, same rule that an absent key means "not measured"
   rather than zero — and `--stats` reads exactly what it read before. Recall additionally writes a
   hook line, but only when it is armed: an inert feature must not cost every prompt a file append.
+
+- **The plugin describes itself as an extension of Claude Code's own memory, not as a memory system
+  of its own.** Claude Code's auto memory reads `~/.claude/projects/<project>/memory/MEMORY.md` —
+  the path this plugin symlinks into the vault — so the two already share a file
+  ([#75](https://github.com/spike1292/claude-memory/issues/75)). The marketplace and plugin
+  descriptions and the README opening now say that plainly. No behaviour changed; this is what the
+  plugin claims to be.
 
 ### Fixed
 
