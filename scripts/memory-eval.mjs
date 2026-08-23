@@ -164,7 +164,7 @@ if (flag('--author')) {
     // Same trust boundary as --run: this is input someone wrote, not a shape we can assume. Both
     // fields, because guarding `gold` and then dereferencing `c.q` two lines later just moves the
     // TypeError down the function.
-    if (typeof c.q !== 'string' || !Array.isArray(c.gold)) {
+    if (!c.q?.trim() || !Array.isArray(c.gold)) {
       console.log(
         `every case needs a question and a gold array — got: ${JSON.stringify(c).slice(0, 80)}`,
       );
@@ -270,8 +270,11 @@ const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: st
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
 // Refuse the file: half a case set cannot produce a number anyone should read.
 // Both fields, matching --author. Guarding `gold` alone left a line with gold and no question
-// reaching the scorer, which then threw on `c.q` — the same crash one field over.
-const malformed = cases.filter((c) => typeof c.q !== 'string' || !Array.isArray(c.gold)).length;
+// reaching the scorer, which then threw on `c.q` — the same crash one field over. And BLANK counts
+// as absent: an empty query tokenises to nothing, every BM25 score ties at 0, and the ranking is
+// then arbitrary — measured here as a confident recall@1 of 100%. A number from no question is the
+// thing this guard exists to refuse, whether it arrives by a wrong corpus or by a blank line.
+const malformed = cases.filter((c) => !c.q?.trim() || !Array.isArray(c.gold)).length;
 if (malformed) {
   console.log(
     `${malformed} of ${cases.length} case lines are missing a question or a gold array — truncated or malformed. Refusing to report a number.\n` +

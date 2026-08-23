@@ -296,6 +296,17 @@ test('CLI --run refuses a partly-truncated case set instead of crashing on it', 
   assert.ok(!r.stdout.includes('recall@'));
 });
 
+test('CLI --run refuses a blank question, which scores an arbitrary 100%', () => {
+  // `typeof '' === 'string'`, so an empty q passed the guard. It tokenises to nothing, every BM25
+  // score ties at 0, and the ranking is whatever order the docs came in — measured as recall@1
+  // 100%, MRR 1.000. A confident figure from a question nobody asked.
+  const { run, casesPath } = scratch(['ours-one'], [{ q: '   ', gold: ['ours-one'] }]);
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1, `must refuse, not score:\n${r.stdout}`);
+  assert.match(r.stdout, /missing a question or a gold array/);
+  assert.ok(!r.stdout.includes('recall@'));
+});
+
 test('CLI --run refuses a case line with gold but no question', () => {
   // The guard filtered on `gold` alone, so this reached the scorer and threw on `c.q` — the same
   // crash one field over, and --author already guarded both.
