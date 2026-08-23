@@ -126,6 +126,16 @@ CLAUDE_MEMORY_HOME=~/.claude-memory-work
 published. Two homes also means two copies of the 722 MB of model weights; that is the price, and it
 is worth it.
 
+**The unit must not hardcode a plugin path.** Every release installs into its own version-pinned
+cache dir, and `${CLAUDE_PLUGIN_ROOT}` is reliable only inside `hooks/hooks.json` command strings —
+a systemd unit is not one. An `ExecStart` naming `…/memory/0.6.0/scripts/vault-mcp.mjs` keeps
+serving 0.6.0 after `/plugin update memory`, or dies when that directory goes, and the public
+connector goes dark with nothing saying why. Use the repo's existing answer, the breadcrumb every
+`commands/*.md` already falls back to:
+`${CLAUDE_PLUGIN_ROOT:-$(cat "$CLAUDE_MEMORY_HOME/plugin-root")}`. **VPS catch:** that breadcrumb is
+rewritten by `vault-memory-sync.sh` only when a Claude Code *session* starts, so a box that only
+ever runs the daemon can hold a stale one — have phase 1 check it, or write it from the unit.
+
 ## Install, do not build
 
 | Thing | Job | Note |
@@ -314,8 +324,14 @@ Six rules, each with a reason:
      semantics against a real run before phase 3** — this entry is reasoned, not measured.
    - **`api.github.com` is enough for `gh issue`/`gh pr` reads** inside the agent, which is all it
      needs.
-4. **The agent never touches `main` and never touches the vault repo.** Code work and memory work are
-   separate runners with separate permissions.
+4. **The agent never touches `main` and never touches the vault repo**, and the runner **marks its
+   runs as machine work** before spawning them. Code work and memory work are separate runners with
+   separate permissions. The marker matters as much: `logHook()` stamps `child: true` only when a
+   `*_CHILD` env var is set, and `hook-stats.mjs` counts a session only when `l.session && !l.child`
+   — its own comment records that headless runs once "roughly doubled every count here". A systemd
+   timer sets nothing, so 144 unmarked runs a day would show in `/memory:doctor --hooks` as 144
+   human sessions, wrecking every per-session figure in the very file rule 6 scans. Export the
+   marker in the unit, not in the prompt.
 5. **Done is defined by the task, not by the agent.** Backlog.md's acceptance criteria go into the
    prompt and the PR body quotes them back.
 6. **Do not pass `--bare`, despite the docs recommending it for scripted calls.** `claude --help`:
@@ -377,8 +393,9 @@ Six rules, each with a reason:
 
      A read-back probe was designed here to separate those causes and then **cut**: it cannot see
      inside the sandbox, so it never separated the one that matters, and every home for it was
-     wrong. A `logHook()` family gives `/memory:doctor --hooks` a phantom `(unnamed)` row per task
-     (`hook-stats.mjs` groups by `l.hook || '(unnamed)'`). A new dated family is reaped by nothing
+     wrong. A `logHook()` family gives `/memory:doctor --hooks` one phantom `(unnamed) · (no event)`
+     row whose count grows with every task (`hook-stats.mjs` keys the table by
+     `l.hook || '(unnamed)'` plus the event). A new dated family is reaped by nothing
      (`pruneDatedLogs()` matches only `recall-` and `hooks-`, deliberately). One fixed filename
      races three concurrent tasks. One dotfile per run breaks the stated invariant that nothing else
      in `logs/` starts with a dot (`hooks/lib/hook-io.mjs`), and orphans on a killed runner. Two
@@ -465,8 +482,8 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
 - Do the `sandbox.credentials` semantics block reads outright or mask values? Rule 3 assumes an entry
   can be scoped to a single file. Verify against a real run before phase 3.
 - May a sandboxed agent write to `$CLAUDE_MEMORY_HOME/logs/`? If not, every hook line is silently
-  dropped and rule 6's guard reports a `--bare` regression that never happened. Answer this before
-  the guard is trusted, not after.
+  dropped and rule 6's guard flags every healthy task for review. The rule already refuses to call
+  that a `--bare` regression, so this decides how noisy the guard is, not whether it lies.
 - Should `vault-mcp` also carry a slug allow-list as defence in depth? `$CLAUDE_MEMORY_HOME` already
   makes the work index unreachable — a second check is belt-and-braces, not a substitute.
 
