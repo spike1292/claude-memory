@@ -132,7 +132,16 @@ if (flag('--author')) {
 }
 
 if (flag('--generate')) {
-  const n = Number(val('--generate', true) || 40);
+  // `--generate` may be bare, so `val()` cannot refuse a missing value here — and what follows is
+  // then the NEXT FLAG. `Number('--force')` is NaN, the stride is NaN, the sample loop never runs,
+  // and `--generate --force` wrote an EMPTY case set over a real one and exited 0. A count is
+  // either a positive number or absent; anything else is a typo worth stopping for.
+  const count = val('--generate', true);
+  const n = !count || count.startsWith('--') ? 40 : Number(count);
+  if (!Number.isFinite(n) || n < 1) {
+    console.log(`--generate takes a positive count, got: ${count}`);
+    process.exit(1);
+  }
   if (fs.existsSync(CASES) && !flag('--force')) {
     console.log(
       `${CASES} exists. Regenerating invalidates every past number — pass --force if that is what you want.`,
@@ -293,7 +302,19 @@ const model = mode === 'semantic' ? activeModel() : 'bm25';
 if (flag('--json')) {
   console.log(
     JSON.stringify(
-      { cases: CASES, mode, model, fetchK: K, n: perCase.length, recall, mrr: +mrr.toFixed(3) },
+      // goldResolved/goldTotal: the churn warning is stderr prose, so a machine reading this
+      // envelope could not tell a full case set from one a prune had eaten a quarter of.
+      {
+        cases: CASES,
+        mode,
+        model,
+        fetchK: K,
+        n: perCase.length,
+        goldResolved: cov.resolved,
+        goldTotal: cov.total,
+        recall,
+        mrr: +mrr.toFixed(3),
+      },
       null,
       2,
     ),

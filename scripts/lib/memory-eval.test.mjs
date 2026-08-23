@@ -174,7 +174,13 @@ function scratch(notes, cases) {
   const vault = path.join(tmp, 'vault');
   const notesDir = path.join(vault, 'Memory', SLUG);
   fs.mkdirSync(notesDir, { recursive: true });
-  for (const n of notes) fs.writeFileSync(path.join(notesDir, `${n}.md`), `# ${n}\n`);
+  // Real prose, not just a title: --generate samples sentences of 40-220 chars, so title-only notes
+  // would make it emit zero cases and a data-loss test would pass against an empty file either way.
+  for (const n of notes)
+    fs.writeFileSync(
+      path.join(notesDir, `${n}.md`),
+      `# ${n}\n\nThe deployment finished but the release never reached production, and nobody noticed for a day.\n`,
+    );
   const evalDir = path.join(tmp, 'state', 'eval');
   fs.mkdirSync(evalDir, { recursive: true });
   // Through the resolver, not a hand-written copy: the whole bug was a second copy of this path
@@ -283,6 +289,38 @@ test('CLI --run refuses a partly-truncated case set instead of crashing on it', 
   assert.ok(!r.stdout.includes('recall@'));
 });
 
+test('CLI --generate followed by a flag does not write an empty case set over a real one', () => {
+  // `--generate` may be bare, so val() cannot refuse a missing value — and the next token is then
+  // the NEXT FLAG. Number('--force') is NaN, the stride is NaN, the loop never runs, and the file
+  // was overwritten with nothing, exit 0. Destroying an authored case set is the worst outcome
+  // here: it is the baseline every past number was measured against.
+  const { run, scopedPath } = scratch(['ours-one', 'ours-two'], null);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'keep me', gold: ['ours-one'] }) + '\n');
+  const r = run('--generate', '--force');
+  assert.equal(r.status, 0, `got:\n${r.stdout}${r.stderr}`);
+  const written = fs.readFileSync(scopedPath, 'utf8').trim();
+  assert.ok(written.length > 0, 'the case set was overwritten with nothing');
+  assert.match(r.stdout, /[1-9]\d* cases \(semantic\)/, 'it must report a real count, not 0');
+});
+
+test('CLI --generate refuses a count that is not a number', () => {
+  const { run, scopedPath } = scratch(['ours-one', 'ours-two'], null);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'keep me', gold: ['ours-one'] }) + '\n');
+  const before = fs.readFileSync(scopedPath, 'utf8');
+  const r = run('--generate', 'forty', '--force');
+  assert.equal(r.status, 1, `got:\n${r.stdout}`);
+  assert.match(r.stdout, /--generate takes a positive count/);
+  assert.equal(fs.readFileSync(scopedPath, 'utf8'), before, 'the case set must be untouched');
+});
+
+test('CLI --generate bare still means 40', () => {
+  const { run, scopedPath } = scratch(['ours-one', 'ours-two'], null);
+  const r = run('--generate');
+  assert.equal(r.status, 0, `bare --generate must still work:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /[1-9]\d* cases \(semantic\)/);
+  assert.ok(fs.readFileSync(scopedPath, 'utf8').trim().length > 0, 'it must write real cases');
+});
+
 test('CLI refuses a value-taking flag with no value', () => {
   // `--cases` last in argv yields undefined; `--cases --mode lexical` swallows the next flag. Both
   // scored the default set and printed a number for one the operator never named.
@@ -361,12 +399,28 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
   // Whole CODE BLOCKS, not lines. Per-line, `ARGS='--cases …'` on one line and `$ARGS` on the run
   // line matched neither filter and passed green while the doc still ran the unscoped set. The unit
   // that has to be clean is everything the reader will paste.
-  const fences = [...doc.matchAll(/^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```/gm)].map((m) => m[1]);
+  const fences = [...doc.matchAll(/^[ \t]*(```|~~~)[^\n]*\n([\s\S]*?)^[ \t]*\1/gm)].map(
+    (m) => m[2],
+  );
+  /** @param {string} l */
+  const isRun = (l) => l.includes('memory-eval.mjs') && l.includes('--run');
+  // Everything the scan cannot parse is a place to hide a `--cases`. An indented code block, a
+  // fence inside a blockquote, or a fence style this regex misses would each leave a runnable
+  // invocation unscanned while the two clean lines kept the counts below happy — so require that
+  // every --run line in the WHOLE doc was seen, not just that the ones we found are clean.
+  const inFences = fences.flatMap((b) => b.split('\n')).filter(isRun);
+  const inDoc = doc.split('\n').filter(isRun);
+  assert.equal(
+    inFences.length,
+    inDoc.length,
+    `a memory-eval --run line sits outside any scanned code block:\n${inDoc
+      .filter((l) => !inFences.includes(l))
+      .join('\n')}`,
+  );
   // The per-project block is the one invoking memory-eval with --run and no --vault; a --vault
   // block is the bench-vault walkthrough, where an explicit --cases is correct.
   /** @param {string} l */
-  const isPerProjectRun = (l) =>
-    l.includes('memory-eval.mjs') && l.includes('--run') && !l.includes('--vault');
+  const isPerProjectRun = (l) => isRun(l) && !l.includes('--vault');
   const blocks = fences.filter((b) => b.split('\n').some(isPerProjectRun));
   // A scan guard that matches nothing passes for the wrong reason — this repo has been bitten by
   // exactly that, so assert the scan found its target before asserting anything about it.

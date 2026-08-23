@@ -19,11 +19,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **A scored `--run` prints `cases: <path>` under the summary line.** The `--json` output has always
   carried the case-set path; the human-readable one did not, so nothing in it contradicted a wrong
   belief about which set had been read. Anything parsing that text output sees one new line.
+- **A value-taking flag with no value is refused instead of ignored.** `--cases` last in argv gave
+  `undefined` and `--cases --mode lexical` swallowed the next flag; both scored the default set. The
+  check lives in `val()` itself, so it covers every flag that reads a value rather than a list that
+  could miss the next one. `--generate` keeps its documented bare form.
 - **`--run` against a vault with no notes refuses rather than scoring.** Zero resolvable gold is a
   property of the vault there, and the corpus-mismatch message blamed the case set for it.
+- **`--run --json` reports `goldResolved`/`goldTotal`.** The churn warning is stderr prose, so a
+  machine reading the envelope could not tell a full case set from one a prune had eaten part of.
 
 ### Fixed
 
+- **`--generate` followed by another flag overwrote the case set with an empty file, exit 0.**
+  `--generate --force` made `Number('--force')`, so the stride was `NaN` and the sample loop never
+  ran — destroying the authored baseline every past number was measured against. A flag after
+  `--generate` now means the documented default of 40, and a non-numeric count is refused.
 - **`/memory:eval` scored every project against whichever one authored a case set first.** The
   command passed `--cases "$STATE/eval/eval-cases-authored.jsonl"` — a name with no slug in it, in a
   machine-local directory shared by every project on the machine — which overrode the slug- and
