@@ -181,7 +181,7 @@ export const GOLD_FLOOR = 0.5;
  * shape is a claim, not a guarantee, and this is the boundary that checks it.
  * @param {readonly { gold?: unknown }[]} cases
  * @param {ReadonlySet<string>} known
- * @returns {{ total: number, resolved: number, fraction: number, verdict: 'ok'|'churn'|'mismatch' }}
+ * @returns {{ total: number, resolved: number, verdict: 'ok'|'churn'|'mismatch' }}
  */
 export function goldCoverage(cases, known) {
   // Array-guarded, because a case line with no `gold` key flatMaps to `undefined` and counted as an
@@ -195,7 +195,6 @@ export function goldCoverage(cases, known) {
   return {
     total: gold.length,
     resolved,
-    fraction,
     verdict: fraction === 1 ? GOLD.ok : fraction >= GOLD_FLOOR ? GOLD.churn : GOLD.mismatch,
   };
 }

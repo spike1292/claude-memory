@@ -103,6 +103,28 @@ function allNotes() {
   return out;
 }
 
+// A case set is JSONL, so a truncated write leaves one unparseable line. Bare `JSON.parse` threw a
+// SyntaxError and a stack trace from inside a `.map()`, which reads as a crash rather than as the
+// bad input it is — and it fired BEFORE the malformed-case guard written to report exactly this.
+/**
+ * @param {string} text
+ * @param {string} src
+ * @returns {{ q: string, gold?: unknown, layer?: string, style?: string }[]}
+ */
+const parseJsonl = (text, src) =>
+  text
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((l, i) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        console.log(`${src}: line ${i + 1} is not valid JSON — truncated or malformed.`);
+        return process.exit(1);
+      }
+    });
+
 // ---------------------------------------------------------------- generate
 
 // --author: read {q, gold} JSONL on stdin, validate every gold note exists, and save as the case
@@ -110,11 +132,17 @@ function allNotes() {
 // LLM the upstream harness calls out to), then scoring is reproducible forever after.
 if (flag('--author')) {
   const known = new Set(allNotes().map((n) => n.note));
-  const lines = fs.readFileSync(0, 'utf8').trim().split('\n').filter(Boolean);
+  const lines = parseJsonl(fs.readFileSync(0, 'utf8'), 'stdin');
   const cases = [],
     bad = [];
-  for (const l of lines) {
-    const c = /** @type {{ q: string, gold: string[], style?: string }} */ (JSON.parse(l));
+  for (const c of lines) {
+    // Same trust boundary as --run: this is a file someone wrote, not a shape we can assume.
+    if (!Array.isArray(c.gold)) {
+      console.log(
+        `every case needs a gold array — this one has none: ${JSON.stringify(c).slice(0, 80)}`,
+      );
+      process.exit(1);
+    }
     const missing = c.gold.filter((g) => !known.has(g));
     if (missing.length) {
       bad.push(`${missing.join(', ')}  (Q: ${c.q.slice(0, 60)})`);
@@ -138,7 +166,7 @@ if (flag('--generate')) {
   // either a positive number or absent; anything else is a typo worth stopping for.
   const count = val('--generate', true);
   const n = !count || count.startsWith('--') ? 40 : Number(count);
-  if (!Number.isFinite(n) || n < 1) {
+  if (!Number.isInteger(n) || n < 1) {
     console.log(`--generate takes a positive count, got: ${count}`);
     process.exit(1);
   }
@@ -192,15 +220,9 @@ if (!fs.existsSync(CASES)) {
   console.log(`no case set at ${CASES}. Author one first: --author (see /memory:eval)`);
   process.exit(1);
 }
-const cases = fs
-  .readFileSync(CASES, 'utf8')
-  .trim()
-  .split('\n')
-  .filter(Boolean)
-  .map(
-    (l) =>
-      /** @type {{ q: string, gold: string[], layer?: string, style?: string }} */ (JSON.parse(l)),
-  );
+const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: string }[]} */ (
+  parseJsonl(fs.readFileSync(CASES, 'utf8'), CASES)
+);
 
 // A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
@@ -254,7 +276,14 @@ const mode = val('--mode') || 'semantic';
 // wider window than a session does: promoted items sort to the bottom by score, so scoring @5 from
 // a k=10 fetch shows nothing at @5. --fetch-k measures what the caller actually sees; only ks up to
 // it are reported, since a k=5 fetch cannot answer @10.
+// Validated like --generate, and for the same reason: `--fetch-k abc` made K NaN, which emptied KS,
+// which printed no recall bars at all while `--json` still reported every k as 0 and exited 0. An
+// all-zero number attributed to a named case set is the failure this whole guard exists to stop.
 const K = Number(val('--fetch-k') || Math.max(...RECALL_KS));
+if (!Number.isInteger(K) || K < 1) {
+  console.log(`--fetch-k takes a positive whole number, got: ${val('--fetch-k')}`);
+  process.exit(1);
+}
 const KS = RECALL_KS.filter((k) => k <= K);
 
 /** @type {{ q: string, results: { note: string }[] }[]} */

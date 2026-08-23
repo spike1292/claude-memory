@@ -93,7 +93,7 @@ test('lexicalRank ranks the matching note first and honours k', () => {
 // scoring one anyway reported another project's case set as this project's recall (#97).
 test('goldCoverage: every gold note present is ok', () => {
   const cov = goldCoverage([{ gold: ['a'] }, { gold: ['b', 'c'] }], new Set(['a', 'b', 'c']));
-  assert.deepEqual(cov, { total: 3, resolved: 3, fraction: 1, verdict: 'ok' });
+  assert.deepEqual(cov, { total: 3, resolved: 3, verdict: 'ok' });
 });
 
 test('goldCoverage: a few missing gold notes are churn, not a mismatch', () => {
@@ -110,16 +110,16 @@ test("goldCoverage: another vault's case set is a mismatch", () => {
   const cov = goldCoverage([{ gold: ['x'] }, { gold: ['y', 'z'] }], new Set(['a', 'b', 'c']));
   assert.equal(cov.verdict, 'mismatch');
   assert.equal(cov.resolved, 0);
-  assert.equal(cov.fraction, 0);
 });
 
 test('goldCoverage: the floor is inclusive, so exactly GOLD_FLOOR is churn', () => {
   assert.equal(GOLD_FLOOR, 0.5);
   const at = goldCoverage([{ gold: ['a', 'b', 'x', 'y'] }], new Set(['a', 'b']));
-  assert.equal(at.fraction, 0.5);
+  assert.equal(at.total, 4);
+  assert.equal(at.resolved, 2);
   assert.equal(at.verdict, 'churn');
   const below = goldCoverage([{ gold: ['a', 'x', 'y', 'z'] }], new Set(['a', 'b']));
-  assert.equal(below.fraction, 0.25);
+  assert.equal(below.resolved, 1);
   assert.equal(below.verdict, 'mismatch');
 });
 
@@ -303,14 +303,37 @@ test('CLI --generate followed by a flag does not write an empty case set over a 
   assert.match(r.stdout, /[1-9]\d* cases \(semantic\)/, 'it must report a real count, not 0');
 });
 
+test('CLI --run refuses a genuinely truncated line instead of throwing', () => {
+  // The earlier truncation test used `{"q":"c"}` — valid JSON, so it never reached the parse. A
+  // half-written last line throws SyntaxError from inside a .map(), which reads as a crash.
+  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  fs.appendFileSync(casesPath, '{"q":"truncated","gold":["ou');
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /line 2 is not valid JSON/);
+  assert.ok(!r.stderr.includes('SyntaxError'), `crashed instead of refusing:\n${r.stderr}`);
+});
+
+test('CLI refuses a --fetch-k that is not a positive number', () => {
+  // NaN emptied the recall-k list: no bars printed, --json reported every k as 0, exit 0.
+  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  for (const bad of ['abc', '0']) {
+    const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--fetch-k', bad);
+    assert.equal(r.status, 1, `--fetch-k ${bad} must not score:\n${r.stdout}`);
+    assert.match(r.stdout, /--fetch-k takes a positive whole number/);
+  }
+});
+
 test('CLI --generate refuses a count that is not a number', () => {
   const { run, scopedPath } = scratch(['ours-one', 'ours-two'], null);
   fs.writeFileSync(scopedPath, JSON.stringify({ q: 'keep me', gold: ['ours-one'] }) + '\n');
   const before = fs.readFileSync(scopedPath, 'utf8');
-  const r = run('--generate', 'forty', '--force');
-  assert.equal(r.status, 1, `got:\n${r.stdout}`);
-  assert.match(r.stdout, /--generate takes a positive count/);
-  assert.equal(fs.readFileSync(scopedPath, 'utf8'), before, 'the case set must be untouched');
+  for (const bad of ['forty', '0', '-5', '3.7']) {
+    const r = run('--generate', bad, '--force');
+    assert.equal(r.status, 1, `--generate ${bad} must refuse:\n${r.stdout}`);
+    assert.match(r.stdout, /--generate takes a positive count/);
+    assert.equal(fs.readFileSync(scopedPath, 'utf8'), before, `--generate ${bad} touched the file`);
+  }
 });
 
 test('CLI --generate bare still means 40', () => {
@@ -343,16 +366,6 @@ test('CLI refuses --cases=X rather than silently scoring the default', () => {
   assert.equal(r.status, 1, `equals form must not score:\n${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /--cases takes a space-separated value/);
   assert.ok(!r.stdout.includes('recall@'), 'it must not report a number for a set it never read');
-});
-
-test('CLI --run prints the case set beside the number it reports', () => {
-  // Every failure in #97 is a figure attributed to a set nobody checked. A number printed beside
-  // its source cannot be silently misread, whatever routed us to the wrong file.
-  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
-  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
-  assert.equal(r.status, 0);
-  assert.match(r.stdout, /recall@/);
-  assert.ok(r.stdout.includes(casesPath), `summary must name its case set, got:\n${r.stdout}`);
 });
 
 test('CLI --run says the vault is empty rather than blaming the case set', () => {
@@ -402,8 +415,11 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
   const fences = [...doc.matchAll(/^[ \t]*(```|~~~)[^\n]*\n([\s\S]*?)^[ \t]*\1/gm)].map(
     (m) => m[2],
   );
+  // A RUNNABLE line — one that starts with the interpreter — not any prose mentioning the flag.
+  // eval.md line 76 already discusses `memory-eval.mjs` in a sentence; adding `--run` to a sentence
+  // like it would otherwise fail this suite and block a perfectly good doc edit.
   /** @param {string} l */
-  const isRun = (l) => l.includes('memory-eval.mjs') && l.includes('--run');
+  const isRun = (l) => /^\s*node\s/.test(l) && l.includes('memory-eval.mjs') && l.includes('--run');
   // Everything the scan cannot parse is a place to hide a `--cases`. An indented code block, a
   // fence inside a blockquote, or a fence style this regex misses would each leave a runnable
   // invocation unscanned while the two clean lines kept the counts below happy — so require that
@@ -437,7 +453,7 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
     );
 });
 
-test('CLI --run is unchanged when every gold note resolves', () => {
+test('CLI --run scores cleanly and names its case set when every gold note resolves', () => {
   const { run, casesPath } = scratch(
     ['ours-one', 'ours-two'],
     [
@@ -450,4 +466,11 @@ test('CLI --run is unchanged when every gold note resolves', () => {
   assert.match(r.stdout, /recall@/);
   assert.ok(!r.stderr.includes('warning:'), 'the ok band must say nothing at all');
   assert.ok(!r.stdout.includes('DIFFERENT vault'));
+  // Every failure in #97 is a figure attributed to a set nobody checked; a number printed beside
+  // its source cannot be silently misread.
+  assert.ok(r.stdout.includes(casesPath), `summary must name its case set, got:\n${r.stdout}`);
+  const json = JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout);
+  assert.equal(json.goldResolved, 2, 'the JSON envelope must carry the coverage the warning does');
+  assert.equal(json.goldTotal, 2);
+  assert.equal(json.cases, casesPath);
 });
