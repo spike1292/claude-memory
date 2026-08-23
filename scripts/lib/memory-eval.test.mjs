@@ -269,6 +269,20 @@ test('CLI --run treats an explicit --cases at the scoped path as no override', (
   assert.match(r.stdout, /vault has moved out from under it/);
 });
 
+test('CLI --run refuses a partly-truncated case set instead of crashing on it', () => {
+  // Three good cases plus one gold-less line: coverage skips the bad line and passes as `ok`, then
+  // the scorer dereferences `c.gold` and dies with a TypeError. Half a case set is not a number.
+  const { run, casesPath } = scratch(
+    ['ours-one'],
+    [{ q: 'a', gold: ['ours-one'] }, { q: 'b', gold: ['ours-one'] }, { q: 'c' }],
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1, `must refuse, not crash:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /1 of 3 case lines have no gold array/);
+  assert.ok(!r.stderr.includes('TypeError'), `crashed instead of refusing:\n${r.stderr}`);
+  assert.ok(!r.stdout.includes('recall@'));
+});
+
 test('CLI refuses --cases=X rather than silently scoring the default', () => {
   // val() reads `--flag value` and nothing rejected an unrecognised token, so the equals form was
   // dropped and the run scored the DEFAULT set — printing a number the operator would read as

@@ -9,6 +9,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **`memory-eval.mjs` now refuses `--flag=value` instead of ignoring it.** `val()` has only ever
+  read the space-separated form, and nothing rejected an unrecognised argument, so
+  `--cases=other.jsonl` was discarded in silence: the run scored the **default** case set and
+  printed a recall figure the operator would read as belonging to the file they had just named. A
+  scripted equals-form invocation that appeared to work now exits 1 and says which form to use.
+- **A scored `--run` prints `cases: <path>` under the summary line.** The `--json` output has always
+  carried the case-set path; the human-readable one did not, so nothing in it contradicted a wrong
+  belief about which set had been read. Anything parsing that text output sees one new line.
+- **`--run` against a vault with no notes refuses rather than scoring.** Zero resolvable gold is a
+  property of the vault there, and the corpus-mismatch message blamed the case set for it.
+
 ### Fixed
 
 - **`/memory:eval` scored every project against whichever one authored a case set first.** The

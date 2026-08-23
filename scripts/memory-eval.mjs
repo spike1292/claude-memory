@@ -6,8 +6,11 @@
 // lib/memory-eval.mjs.
 //
 // Usage:
+//   node memory-eval.mjs --author < cases.jsonl          the way to make a REAL paraphrase set
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
 //   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
+// Flags take a space, never `=`. `--cases`/`--out` both override the per-project default on --run;
+// leave them off unless you mean to score a set that is not this project's.
 //
 // Cases live in $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they contain vault content.
 // Regenerate only with --force; a changed case set invalidates every past number.
@@ -181,6 +184,18 @@ const cases = fs
     (l) =>
       /** @type {{ q: string, gold: string[], layer?: string, style?: string }} */ (JSON.parse(l)),
   );
+
+// A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
+// and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
+// Refuse the file: half a case set cannot produce a number anyone should read.
+const malformed = cases.filter((c) => !Array.isArray(c.gold)).length;
+if (malformed) {
+  console.log(
+    `${malformed} of ${cases.length} case lines have no gold array — truncated or malformed. Refusing to report a number.\n` +
+      `  case set: ${CASES}`,
+  );
+  process.exit(1);
+}
 
 // Refuse a case set that is not about this vault — why, and the measurement, in `goldCoverage`.
 const known = new Set(allNotes().map((n) => n.note));

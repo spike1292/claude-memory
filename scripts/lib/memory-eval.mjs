@@ -11,6 +11,7 @@
 // same cases.**
 //
 // Usage:
+//   node memory-eval.mjs --author < cases.jsonl          the way to make a REAL paraphrase set
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
 //   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
 //   node --test scripts/lib/memory-eval.test.mjs
@@ -140,8 +141,8 @@ export function metrics(perCase) {
 // without a slug in it belongs to whichever project authored one first, and every other project
 // then scores itself against that vault's questions (#97).
 //
-// One place on purpose. The bug this fixes was a second, hand-written copy of this name drifting
-// from the resolver — so a refusal message that spelled the path out again would re-open it.
+// One place on purpose: the bug this fixes was a second, hand-written copy of this name drifting
+// from the resolver. Messages that quote a case-set path resolve it through here, never rebuild it.
 /** @param {string} dir @param {string} slug @param {string} style @returns {string} */
 export function defaultCasesPath(dir, slug, style) {
   return path.join(dir, `eval-cases-${slug}-${style}.jsonl`);
