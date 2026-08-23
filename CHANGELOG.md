@@ -11,11 +11,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
-- **`memory-eval.mjs` now refuses `--flag=value` instead of ignoring it.** `val()` has only ever
-  read the space-separated form, and nothing rejected an unrecognised argument, so
-  `--cases=other.jsonl` was discarded in silence: the run scored the **default** case set and
-  printed a recall figure the operator would read as belonging to the file they had just named. A
-  scripted equals-form invocation that appeared to work now exits 1 and says which form to use.
+- **`memory-eval.mjs` now refuses an argument it does not recognise instead of ignoring it.** Three
+  shapes were discarded in silence, each making the run score the **default** case set while
+  printing a recall figure the operator would read as belonging to the file they had just named:
+  `--cases=other.jsonl` (`val()` has only ever read the space-separated form), a misspelled flag
+  name like `--casess`, and any other unknown `--flag`. All three now exit 1; the equals form says
+  which form to use, and an unknown name prints the set of known flags. A scripted invocation using
+  any of them appeared to work and did not.
 - **A scored `--run` prints `cases: <path>` under the summary line.** The `--json` output has always
   carried the case-set path; the human-readable one did not, so nothing in it contradicted a wrong
   belief about which set had been read. Anything parsing that text output sees one new line.
