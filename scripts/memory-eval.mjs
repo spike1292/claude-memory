@@ -150,7 +150,7 @@ const parseJsonl = (text, src) => {
   return out;
 };
 
-// A question has to contain something searchable. Blank was the first version of this rule, but
+// A question has to contain something searchable (2026-08-23). Blank was the first version, but
 // `"???"` is not blank and still tokenises to nothing: every BM25 score ties at 0, the ranking is
 // whatever order the documents arrived in, and it scored a confident recall@1 of 100%. One letter
 // or digit is the general form of "not empty to the retriever".
