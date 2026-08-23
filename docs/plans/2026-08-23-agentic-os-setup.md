@@ -348,13 +348,19 @@ Five rules, each with a reason:
      (`hooks/lib/hook-io.mjs`, omitted only when absent) and `claude -p --output-format json`
      returns the same `session_id` in the envelope rule 1 already parses. One value, one run, exact.
      CLAUDE.md's own rule: a scan-based guard must assert that it found something.
-   - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`, and it names the day the
-     line was *written*. Two edges, not one. The VPS runs Europe/Amsterdam, so a runner using
-     `date +%F` looks for tomorrow's file between local midnight and 02:00 — a nightly false alarm;
-     use `date -u +%F`. And the hooks line is written at session **start** while the runner checks
-     after `claude -p` **returns**, so a task spanning UTC midnight writes into yesterday's file and
-     is checked against today's. Derive the filename from the run's own start time, or scan both
-     days for the `session` value.
+   - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`, and it names the day each
+     line was *written*. A run does not write one line: `hooks.json` fires on `SessionStart`,
+     `UserPromptSubmit`, `PostToolUse`, `Stop` and `SessionEnd`, and seven hooks call `logHook()`,
+     so lines land throughout the run and again as it ends. Two edges follow. The VPS runs
+     Europe/Amsterdam, so a runner using `date +%F` looks for tomorrow's file between local midnight
+     and 02:00 — a nightly false alarm; use `date -u +%F`. And the **check clock can cross UTC
+     midnight after the last line was written** — a run finishing 23:59 and checked at 00:01 has
+     every one of its lines in yesterday's file. **Scan both days for the `session` value**; keying
+     the filename off the run's start time is not enough, because the lines straddle.
+   - **An absent line does not prove `--bare`.** `appendJsonl` swallows every error by design, so a
+     read-only `logs/` or a full disk produces exactly the same silence. Report the failure as
+     "hooks did not run, *or* the log could not be written", and have the runner check that
+     `$CLAUDE_MEMORY_HOME/logs/` is writable before it blames the flag.
 
    Done right, that check goes red the day the default flips, which is the only warning this design
    will get.
