@@ -198,6 +198,13 @@ outranks the rest:
 > **would this note still be true and useful for a different client, and does it name nobody?**
 > Strip and promote; do not discard.
 
+**Assumption, taken deliberately 2026-08-23 and not verified against the contract text: "data"
+includes *derived* artefacts** — distilled insights, the embedding index, the knowledge graph — not
+only the source material. The asymmetry decides it: assuming yes costs a few notes, assuming no
+costs a fine. And it is nearly free here, because the wall already takes `Insights/<work-slug>/` and
+the work index with the home, and the strip rule already governs `permanent/`. Revisit only if the
+contract turns out to say otherwise; nothing in the design depends on the answer.
+
 The wall does the rest, because one `$CLAUDE_MEMORY_HOME` plus one vault directory is a small,
 enumerable footprint. But **deletion is not one action**:
 
@@ -534,9 +541,6 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
 
 ## Open questions
 
-- Does the contract's definition of "data" cover *derived* artefacts — distilled insights, an
-  embedding index, a knowledge graph — or only the source material? The plan treats all of them as
-  in scope, which is the safe reading, but it decides how much of `Insights/` has to go.
 - Which vault paths are safe to expose read-only? The allow-list must exist before phase 1 ships.
 - Do `sandbox.credentials` semantics block reads or mask values? The plan assumes an entry can be
   scoped to a single file.
@@ -545,6 +549,10 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
   both assume it.
 - Should `vault-mcp` carry a slug allow-list as defence in depth? `$CLAUDE_MEMORY_HOME` already makes
   the work index unreachable; this would be belt-and-braces, not a substitute.
+
+Deliberately **not** on this list: whether the contract's "data" covers derived artefacts. That is
+settled by assumption in the deletion section — the safe reading, taken because it costs almost
+nothing here.
 
 ## Sources
 
