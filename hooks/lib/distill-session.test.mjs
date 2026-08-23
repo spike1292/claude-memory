@@ -19,7 +19,7 @@ import {
   todayStr,
   projectKey,
   findNearDuplicate,
-  bodyTokens,
+  isManual,
   reconcile,
   transcriptToText,
   parseEnvelope,
@@ -99,72 +99,56 @@ test('distill-session', async (t) => {
     );
   });
 
-  // ---- body arm (RECONCILE_BODY_AT). The pairs below are the real 2026-08-17 audit findings,
-  // shortened: a restatement whose TITLE shares nothing with the original, which is the whole class
-  // the slug arm could not see. A 2-arg call must keep behaving exactly as it did before.
+  // ---- reconcile: manual. The body-overlap arm that used to be tested here is GONE: it caught
+  // 0 of 25 real duplicates and all nine of its firings were false positives, so its tests went
+  // with it rather than being relaxed until they passed. The measurement, including the 2026-08-17
+  // numbers that justified it, is in docs/decisions/2026-08-23-embedding-reconcile.md.
+  //
+  // What replaced it is an embedding query against the resident server, which has no place in a
+  // unit test — the shared predicate is tested in scripts/lib/memory-semantic.test.mjs and the real
+  // catch rate comes from `--dupe-eval`. What IS testable here is the mark, because it is the only
+  // thing standing between a correct cross-link and a wrong merge.
   const b = path.join(tmpBase, 'bodies');
   fs.mkdirSync(b);
-  const mirrors =
-    'Config vault and project_key resolution was duplicated in bash, Node and Python.' +
-    ' Porting the distiller to Node eliminated a mirror by importing paths.mjs instead of' +
-    ' reimplementing it. Mirrors drift; imports do not.';
+  const marked = path.join(b, '2026-08-16-adjudicated-keep.md');
   fs.writeFileSync(
-    path.join(b, '2026-08-16-single-implementation-resolution-beats-mirrored-logic.md'),
-    `---\ntitle: m\n---\n\n## m\n\n${mirrors}\n\n_Also asked as: mirror drift, one source of truth._\n`,
+    marked,
+    '---\ntitle: k\nreconcile: manual\n---\n\n## k\n\nA lesson whose boundary was judged.\n',
   );
-  // Same lesson, different words in the title: slug Jaccard is 0.00, body containment clears 0.40.
-  const restated =
-    '## Collapse multi-runtime mirrors via porting\n\nConfig, vault and project_key' +
-    ' resolution existed in bash, Node and Python. Porting distill-session.py to Node removed one' +
-    ' mirror without adding abstraction — the new .mjs imports paths.mjs for resolution.\n';
-  await t.test('findNearDuplicate body arm catches restatements the slug arm cannot see', () => {
-    assert.strictEqual(
-      findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting'),
-      null,
-      'slug arm alone must miss this pair — that is the bug the body arm fixes',
-    );
-    assert.ok(
-      findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting', restated),
-      'body arm must catch a restatement whose title shares no vocabulary',
-    );
+  const plain = path.join(b, '2026-08-16-ordinary-note.md');
+  fs.writeFileSync(plain, '---\ntitle: o\n---\n\n## o\n\nAn ordinary note.\n');
 
-    // A complementary note on the same subject must NOT merge. This is the real KEEP pair that
-    // scored highest (0.286) in the calibration, so this asserts the margin under
-    // RECONCILE_BODY_AT.
-    const complementary =
-      '## Cache the fork, do not port the caller\n\nA shell hook that calls' +
-      ' project_key forks git and pays the full 34ms each time. Caching it saves 14ms per call' +
-      ' across every hook, rather than porting one expensive hook from shell to Node.\n';
-    assert.strictEqual(
-      findNearDuplicate(b, 'cache-the-fork-do-not-port-the-caller', complementary),
-      null,
-      'a complementary lesson on the same subject must survive as its own note',
+  await t.test('isManual reads the mark from frontmatter only', () => {
+    assert.strictEqual(isManual(marked), true);
+    assert.strictEqual(isManual(plain), false);
+
+    // The words in a note body must not arm the mark. A note ABOUT the reconcile mark is exactly
+    // the note this vault would contain, and it would silently become unmergeable.
+    const aboutIt = path.join(b, '2026-08-16-a-note-about-the-mark.md');
+    fs.writeFileSync(
+      aboutIt,
+      '---\ntitle: a\n---\n\n## a\n\nSet reconcile: manual on a pair you keep.\n',
     );
+    assert.strictEqual(isManual(aboutIt), false, 'body prose must not arm the mark');
+    fs.unlinkSync(aboutIt);
   });
 
-  await t.test('bodyTokens excludes the alias line and headings', () => {
-    // The alias line is deliberately over-broad vocabulary; counting it would inflate every pair.
-    assert.ok(
-      !bodyTokens(
-        '---\ntitle: t\n---\n\n## t\n\nreal claim.\n\n_Also asked as: zebra, quokka._\n',
-      ).has('zebra'),
-      'alias line must not reach the body tokens',
-    );
-    assert.ok(
-      !bodyTokens('## heading-word\n\nclaim.\n').has('heading'),
-      'heading restates the title the slug arm already scores',
-    );
+  await t.test('an unreadable note is unmarked, not a throw', () => {
+    // Hooks never block, so one bad file must not take the whole check down. Failing OPEN here is
+    // the right direction: an unreadable note is not evidence of a human judgement.
+    const bad = path.join(b, '2026-08-16-unreadable.md');
+    fs.writeFileSync(bad, 'x');
+    fs.chmodSync(bad, 0o000);
+    assert.strictEqual(isManual(bad), false);
+    fs.chmodSync(bad, 0o644);
+    fs.unlinkSync(bad);
   });
 
-  await t.test('an unreadable sibling note is skipped, not thrown', () => {
-    // Hooks never block, so one bad file must not take the whole check down.
-    fs.writeFileSync(path.join(b, '2026-08-16-unreadable.md'), 'x');
-    fs.chmodSync(path.join(b, '2026-08-16-unreadable.md'), 0o000);
-    assert.ok(
-      findNearDuplicate(b, 'collapse-multi-runtime-mirrors-via-porting', restated),
-      'an unreadable note must be skipped, not thrown',
-    );
-    fs.chmodSync(path.join(b, '2026-08-16-unreadable.md'), 0o644);
+  await t.test('findNearDuplicate is the slug arm and reads no bodies', () => {
+    // The fallback arm, used only when the search server cannot answer. It scores FILENAMES, so a
+    // restatement whose title shares no vocabulary is out of its reach by construction — that is
+    // the miss the embedding arm exists to cover, not a regression.
+    assert.strictEqual(findNearDuplicate(b, 'a-lesson-whose-boundary-was-judged'), null);
   });
 
   await t.test('the entry still runs when reached through a symlinked dir', () => {
@@ -464,6 +448,126 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     );
   // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
+});
+
+// The whole mark, end to end through the real entry: an existing note the slug arm WOULD have
+// merged into, carrying `reconcile: manual`, must survive as its own note and be counted. Unit
+// tests on isManual() and on the predicate each pin one end; only this sees them wired together.
+//
+// No search server and no index here, deliberately — CLAUDE_MEMORY_HOME is a fresh directory, so
+// the reconcile client gives up before spawning anything and the slug arm is the whole dedup. That
+// is the arm the mark most easily fails to cover, because it is the one that does not go through
+// the embedding path at all.
+test('a note marked reconcile: manual is not merged into, and the block is reported', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-mark-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'checkout');
+  const vault = path.join(root, 'vault');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+
+  // DISTILL_DRYRUN emits "Dry run pattern" -> slug tokens {dry, run, pattern}. This filename shares
+  // all three, so slug Jaccard clears RECONCILE_AT — but it does NOT end in `-dry-run-pattern.md`,
+  // which would hit the exact-slug skip before any reconcile ran and prove nothing.
+  const patterns = path.join(vault, 'Insights', slug, 'Patterns');
+  fs.mkdirSync(patterns, { recursive: true });
+  const guarded = path.join(patterns, '2026-08-01-dry-run-patterns-adjudicated.md');
+  fs.writeFileSync(
+    guarded,
+    '---\ntitle: "Dry run patterns adjudicated"\nreconcile: manual\n---\n\n## Dry run patterns adjudicated\n\nA boundary someone judged.\n',
+  );
+  const before = fs.readFileSync(guarded, 'utf8');
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const out = execFileSync(process.execPath, [entry, transcript, repo], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  assert.strictEqual(
+    fs.readFileSync(guarded, 'utf8'),
+    before,
+    'the marked note must not gain an addendum or an alias',
+  );
+  const written = fs.readdirSync(patterns).filter((f) => f.endsWith('-dry-run-pattern.md'));
+  assert.strictEqual(written.length, 1, 'the lesson is written as its own note instead');
+  assert.match(
+    out,
+    /declined 1 \(reconcile: manual\)/,
+    'a block that is not reported is invisible',
+  );
+  assert.match(out, /wrote 3 note\(s\), merged 0/);
+});
+
+// Same fixture without the mark: the merge that the test above proves is blocked must actually
+// happen, or "blocked" is indistinguishable from "the arm never fired". A scan-based guard that
+// cannot demonstrate it found something is not a guard.
+test('the same pair merges when the mark is absent', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-nomark-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'checkout');
+  const vault = path.join(root, 'vault');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+  const patterns = path.join(vault, 'Insights', slug, 'Patterns');
+  fs.mkdirSync(patterns, { recursive: true });
+  const target = path.join(patterns, '2026-08-01-dry-run-patterns-adjudicated.md');
+  fs.writeFileSync(
+    target,
+    '---\ntitle: "Dry run patterns adjudicated"\n---\n\n## Dry run patterns adjudicated\n\nA boundary someone judged.\n',
+  );
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const out = execFileSync(process.execPath, [entry, transcript, repo], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  assert.match(
+    fs.readFileSync(target, 'utf8'),
+    /\*\*Also seen /,
+    'unmarked, it takes the addendum',
+  );
+  assert.strictEqual(
+    fs.readdirSync(patterns).filter((f) => f.endsWith('-dry-run-pattern.md')).length,
+    0,
+    'and no separate note is written',
+  );
+  assert.match(out, /merged 1/);
+  assert.doesNotMatch(out, /declined/, 'nothing was declined, so nothing is reported');
 });
 
 test('gateOutcome tells a guard from a decision from a debounce', () => {

@@ -9,6 +9,7 @@
 //   node memory-semantic.mjs --index [dir] [--rebuild]
 //   node memory-semantic.mjs --query "question" [-k 5] [--json]
 //   node memory-semantic.mjs --serve | --coverage | --dupes | --clusters | --check-embedding
+//   node memory-semantic.mjs --dupe-eval --truth <file.jsonl> [--bars 0.75,0.70]
 //   node --test scripts/lib/memory-semantic.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,10 @@ import {
   clusterNotes,
   centroid,
   samefolderPairs,
+  bestDupe,
+  dupeScore,
+  pairKey,
+  sweepDupes,
   socketIsLive,
   singleFlight,
   mtimeCache,
@@ -75,9 +80,14 @@ if (flag('--serve')) {
   // --serve opens no project DB (see below), so every other mode would dereference a null handle
   // and crash where it used to print usage. Unreachable from any hook — nothing passes both — but a
   // crash is the wrong answer to a typo.
-  const alsoAsked = ['--index', '--coverage', '--dupes', '--clusters', '--check-embedding'].filter(
-    flag,
-  );
+  const alsoAsked = [
+    '--index',
+    '--coverage',
+    '--dupes',
+    '--clusters',
+    '--check-embedding',
+    '--dupe-eval',
+  ].filter(flag);
   if (alsoAsked.length) {
     console.log(`--serve cannot be combined with ${alsoAsked.join(' ')} — run them separately.`);
     process.exit(1);
@@ -696,6 +706,103 @@ if (flag('--dupes')) {
   process.exit(0);
 }
 
+// ---------------------------------------------------------------- dedup eval
+
+// The acceptance check for the write-time reconcile, and the reason it exists is that the arm this
+// replaced shipped on a measurement taken against the wrong distribution: 11/16 on the pairs the
+// slug arm had already missed, 0/25 on the corpus. A single anecdote is not an acceptance check.
+//
+// It reports CAUGHT / total with the FALSE count beside it, both swept over every same-folder pair
+// rather than only over the truth set. A bar that fires on 1322 pairs to catch 18 is not a better
+// bar, and the caught column alone cannot see that.
+//
+// Truth file is JSONL, one record per judged pair: {"a": note, "b": note, "verdict": "dupe"|"keep"}.
+// The KEEPS are part of the truth: four of the 26 pairs found on 2026-08-22 were correct keeps, and
+// two of those sat above the bar only because an audit had cross-linked them. A sweep that counts
+// only catches cannot score that, and it is the failure mode the mark exists for.
+//
+// The truth file is gitignored, because it names a private vault's notes. The harness ships; the
+// truth is re-written per machine, exactly as the retrieval case sets are.
+if (flag('--dupe-eval')) {
+  const truthFile = val('--truth');
+  if (!truthFile) {
+    console.log('usage: --dupe-eval --truth <file.jsonl> [--bars 0.75,0.70]');
+    process.exit(1);
+  }
+  const rawCards = /** @type {CardRow[]} */ (
+    /** @type {DatabaseSync} */ (db)
+      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .all(CARD)
+  );
+  assertVectorWidth(rawCards, DIM, 'dupe-eval');
+  const cards = rawCards.map((r) => ({
+    note: r.note,
+    layer: r.layer,
+    vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+  }));
+  if (!cards.length) {
+    console.log('empty index, run --index first');
+    process.exit(1);
+  }
+  /** @type {Set<string>} */
+  const dupes = new Set();
+  /** @type {Set<string>} */
+  const keeps = new Set();
+  /** @type {{ a: string, b: string, verdict: string }[]} */
+  const truth = [];
+  for (const line of fs.readFileSync(truthFile, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const rec = JSON.parse(line);
+    truth.push(rec);
+    (rec.verdict === 'keep' ? keeps : dupes).add(pairKey(rec.a, rec.b));
+  }
+  // A truth record naming a note the index does not hold is a truth file that has drifted past the
+  // vault, usually a merged or renamed note. Silence here would deflate the caught column and read
+  // as a worse predicate.
+  const known = new Set(cards.map((c) => c.note));
+  const absent = truth.filter((r) => !known.has(r.a) || !known.has(r.b));
+  if (absent.length) {
+    console.log(`${absent.length} truth pair(s) name notes absent from the index:`);
+    for (const r of absent.slice(0, 10)) console.log(`   ${r.a} / ${r.b}`);
+    console.log('');
+  }
+  const bars = (val('--bars') || String(PROFILE.dupeMin)).split(',').map(Number);
+  console.log(`${cards.length} notes, truth: ${dupes.size} dupe, ${keeps.size} keep\n`);
+  console.log('bar     fires  caught  missed  false  keeps-proposed');
+  /** @type {{ s: number, a: string, b: string }[]} */
+  let missedAt = [];
+  const cell = (/** @type {number|string} */ v, /** @type {number} */ w) => String(v).padStart(w);
+  for (const bar of bars) {
+    const pairs = samefolderPairs(cards, bar);
+    const r = sweepDupes(pairs, dupes, keeps);
+    console.log(
+      `${bar.toFixed(2)}  ${cell(r.fires, 6)}  ${cell(r.caught, 4)}/${dupes.size}  ` +
+        `${cell(r.missed, 6)}  ${cell(r.falses, 5)}  ${cell(r.keepsProposed, 14)}`,
+    );
+    if (bar === bars[0]) {
+      const fired = new Set(pairs.map((p) => pairKey(p.a, p.b)));
+      const byNote = new Map(cards.map((c) => [c.note, c]));
+      missedAt = truth
+        .filter((x) => x.verdict !== 'keep' && !fired.has(pairKey(x.a, x.b)))
+        .map((x) => {
+          const a = byNote.get(x.a);
+          const b = byNote.get(x.b);
+          return { s: a && b ? dupeScore(a, b) : NaN, a: x.a, b: x.b };
+        })
+        .sort((y, z) => z.s - y.s);
+    }
+  }
+  if (missedAt.length) {
+    console.log(`\nmissed at ${bars[0]}:`);
+    for (const m of missedAt) console.log(`   ${m.s.toFixed(3)}  ${m.a} / ${m.b}`);
+  }
+  console.log(
+    '\n"false" is every firing not in the truth set as a duplicate, including unjudged pairs.',
+  );
+  console.log('"keeps-proposed" is what the reconcile: manual mark exists to suppress.');
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------- query
 
 const queries = argv.filter((_a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
@@ -845,6 +952,39 @@ if (flag('--serve')) {
         // The slug is now a REQUEST field, not process state. Falling back to the server's own slug
         // keeps an older hook working against a newer server rather than answering from the wrong
         // project — the one failure that would be invisible, since wrong notes still look like notes.
+        // Dupe mode: raw cosine against CARD vectors, not the query path's fused score. Answered
+        // here rather than by a second process because this server already holds the model and the
+        // per-slug index; the distiller's alternative was a 1.3GB model load per SessionEnd.
+        //
+        // `mode` in the reply is load-bearing. An older server does NOT error on this request — it
+        // destructures a missing `q`, embeds the literal string "undefined" and answers with five
+        // confident results. Servers are keyed by MODEL, not by version, so an old one running the
+        // active model is never evicted and a new distiller will meet one after every update.
+        if (typeof msg.dupe === 'string') {
+          const { slug = SLUG, layer = '', min = PROFILE.dupeMin } = msg;
+          const index = indexFor(slug);
+          const [cv] = await embed([DOC_PREFIX + msg.dupe]);
+          const cards = index.rowsUsed
+            .filter((r) => r.heading === CARD)
+            .map((r) => ({
+              note: r.note,
+              layer: r.layer,
+              vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+            }));
+          sock.end(
+            JSON.stringify({
+              mode: 'dupe',
+              slug,
+              best: bestDupe(cards, { layer, vec: cv }, min),
+              // Returned so the caller can compare notes written earlier in the SAME run, which no
+              // index has seen yet. Batching them into this request instead would make the server
+              // embed more than one text at a time, and batch size is pinned to 1 because padding
+              // changes the embedding.
+              vec: Array.from(cv),
+            }) + '\n',
+          );
+          return;
+        }
         const { q, k = 5, slug = SLUG } = msg;
         const index = indexFor(slug);
         const [qv] = await embed([QUERY_PREFIX + q]);

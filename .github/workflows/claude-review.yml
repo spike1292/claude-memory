@@ -119,6 +119,15 @@ jobs:
                silently rather than erroring. A threshold copied between model profiles is
                a defect even when every test passes: bge-m3 carried e5-multi's 0.95 and so
                reported zero duplicates on a vault holding sixteen.
+               There is ONE duplicate predicate (`dupeScore`/`bestDupe`, raw cosine over
+               CARD chunks, same layer, `>= PROFILE.dupeMin`) and both the distiller's
+               write-time reconcile and `--dupes` must call it — a writer and an audit
+               scoring duplicates differently is how an arm catching 0 of 25 survived five
+               days of evidence. Flag any second definition, and flag gating on
+               `searchIn()`'s score, which is RRF-fused with BM25 and is `0` for a
+               keyword-only hit. A dedup change quotes caught/total WITH the false count
+               beside it, from `--dupe-eval`, and a measurement taken only on the pairs the
+               previous arm missed is the wrong distribution.
             7. Non-trivial logic with no test. Tests are `*.test.mjs` files beside the
                module they test, run by `node --test`; there is no framework. Every top-level
                hook/script is a thin entry over a `lib/` module, so logic belongs in `lib/`

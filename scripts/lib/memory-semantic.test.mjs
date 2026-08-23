@@ -34,12 +34,113 @@ import {
   singleFlight,
   fuseReserved,
   samefolderPairs,
+  bestDupe,
+  dupeScore,
+  pairKey,
+  sweepDupes,
   socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
 
 /** @typedef {import('./memory-semantic.mjs').LexDoc} LexDoc */
+
+test('the dedup sweep counts what it claims to count', () => {
+  // This produces the ONE number the predicate is judged by. Every column stays plausible-looking
+  // when a denominator is wrong, so it is asserted rather than eyeballed.
+  const dupes = new Set([pairKey('a', 'b'), pairKey('c', 'd'), pairKey('e', 'f')]);
+  const keeps = new Set([pairKey('g', 'h')]);
+
+  // Fires on one real duplicate, one adjudicated keep, and one pair nobody has judged.
+  const r = sweepDupes(
+    [
+      { a: 'b', b: 'a' },
+      { a: 'g', b: 'h' },
+      { a: 'x', b: 'y' },
+    ],
+    dupes,
+    keeps,
+  );
+  assert.deepEqual(r, { fires: 3, caught: 1, missed: 2, falses: 2, keepsProposed: 1 });
+
+  // Pair order must not decide the verdict: a truth file is hand-written and the audit prints its
+  // pairs in score order, so the two disagree about which note comes first as a matter of course.
+  assert.equal(pairKey('a', 'b'), pairKey('b', 'a'));
+
+  // A bar that fires on nothing is the shipped body arm's result, and it must read as 0 caught
+  // rather than as a clean run.
+  assert.deepEqual(sweepDupes([], dupes, keeps), {
+    fires: 0,
+    caught: 0,
+    missed: 3,
+    falses: 0,
+    keepsProposed: 0,
+  });
+
+  // A duplicate reported twice is one finding, not two — otherwise `false` could go negative.
+  const dup = sweepDupes(
+    [
+      { a: 'a', b: 'b' },
+      { a: 'b', b: 'a' },
+    ],
+    dupes,
+    keeps,
+  );
+  assert.deepEqual(dup, { fires: 1, caught: 1, missed: 2, falses: 0, keepsProposed: 0 });
+});
+
+test('the dedup predicate is one predicate', () => {
+  // The write-time reconcile and the --dupes audit MUST agree on what a duplicate is. They did not
+  // before: the writer scored word overlap and the audit scored embeddings, so the audit could not
+  // serve as the writer's acceptance check and an arm catching 0 of 25 survived five days of daily
+  // evidence. This test is that agreement, asserted as a round trip rather than at each end.
+  const near = new Float32Array([0.6, 0.8]);
+  const mid = new Float32Array([0.66, 0.75]); // ~0.996 with `near`
+  const far = new Float32Array([-0.8, 0.6]);
+  const items = [
+    { note: 'a', layer: 'Patterns', vec: near },
+    { note: 'b', layer: 'Patterns', vec: mid },
+    { note: 'c', layer: 'Patterns', vec: far },
+    { note: 'd', layer: 'Decisions', vec: near },
+  ];
+
+  // Cross-layer scores ZERO, never a cosine: a Pattern and a Mistake on one topic are
+  // complementary by design. Returning the real cosine and filtering elsewhere would let a caller
+  // that forgot the filter merge across folders while still looking correct.
+  assert.equal(dupeScore(items[0], items[3]), 0, 'cross-layer pairs are not duplicates');
+  assert.ok(dupeScore(items[0], items[1]) > 0.99);
+
+  const hit = bestDupe(items, { layer: 'Patterns', vec: near }, 0.9);
+  assert.ok(hit, 'the near twin is over the bar');
+  assert.equal(hit.note, 'a', 'top-1 is the BEST match, not the first over the bar');
+
+  assert.equal(
+    bestDupe(items, { layer: 'Patterns', vec: far }, 0.9)?.note,
+    'c',
+    'a candidate matching only the far note still finds it when it clears the bar',
+  );
+  assert.equal(
+    bestDupe(items, { layer: 'Mistakes', vec: near }, 0.9),
+    null,
+    'a layer with no notes has no duplicate, however close the vectors',
+  );
+  assert.equal(bestDupe([], { layer: 'Patterns', vec: near }, 0.9), null);
+
+  // The round trip: every pair the audit fires on must be a pair the writer would have merged, and
+  // nothing else. Two tests pinning one end each would both stay green while the ends drifted.
+  for (const bar of [0.5, 0.9, 0.99]) {
+    const fromAudit = new Set(samefolderPairs(items, bar).map((p) => [p.a, p.b].sort().join('/')));
+    /** @type {Set<string>} */
+    const fromWriter = new Set();
+    for (const cand of items) {
+      const others = items.filter((x) => x.note !== cand.note);
+      const best = bestDupe(others, cand, bar);
+      if (best) fromWriter.add([best.note, cand.note].sort().join('/'));
+    }
+    for (const pair of fromWriter)
+      assert.ok(fromAudit.has(pair), `writer would merge ${pair} at ${bar}, audit does not see it`);
+  }
+});
 
 test('scoring, chunking and fusion', () => {
   const fm = stripFrontmatter('---\nname: x\ndescription: "A thing"\n---\nbody here\n');

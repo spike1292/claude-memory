@@ -20,8 +20,13 @@
 // particular is a non-trivial sed over git remote URLs — there is one copy of it again.
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import * as paths from './paths.mjs';
+// Imports nothing but node:fs and node:path, so it is safe above the entry guard — unlike
+// scripts/lib/memory-semantic.mjs, which process.exit()s at module scope on an unknown model
+// and is therefore reached only through an await import() inside a function.
+import { isMarked } from '../../scripts/lib/memory-mark.mjs';
 import {
   countLines,
   detach,
@@ -120,31 +125,6 @@ const STOP = new Set([
 // vocabulary.
 const RECONCILE_AT = 0.45;
 
-// Second arm, on the BODY, because the slug arm cannot see a restatement that reuses none of the
-// title's words. A /memory:health audit on 2026-08-17 found 16 same-lesson pairs in this vault that
-// the slug arm had let through — and only the 6 whose slugs happened to overlap ever got an
-// addendum. Measured against those 16 pairs plus 7 the audit judged complementary (must NOT merge):
-//
-//   arm                        caught   false merges
-//   slug Jaccard      >= 0.45   0/16       0/7
-//   body Jaccard      >= 0.25   6/16       0/7
-//   body containment  >= 0.40  11/16       0/7
-//
-// Jaccard loses because these pairs differ in LENGTH: a two-sentence note restating a six-sentence
-// one shares most of its own vocabulary but a small fraction of the union, so the denominator buries
-// it. Containment divides by the smaller set, and asymmetry stops being a penalty.
-//
-// 0.40, not the 0.30 that would catch 15/16: the highest complementary pair scores 0.286, so 0.40
-// keeps a 0.114 margin while 0.30 leaves 0.006. The costs are asymmetric — a false merge folds one
-// lesson into another and deletes the distinct one, a miss just leaves a duplicate for
-// /memory:prune. Be conservative here.
-//
-// ponytail: token overlap, not embeddings. The ceiling is the 5/16 it still misses, pairs that share
-// a lesson but almost no wording. Upgrade path: embed the new note and compare against the semantic
-// index, which finds all 16 at cosine >= 0.75 — that means reindexing BEFORE this check instead of
-// after, so only do it if the miss rate ever outweighs added SessionEnd latency.
-const RECONCILE_BODY_AT = 0.4;
-
 /**
  * Significant, lightly-singularised tokens of a slug — the reconciliation key.
  *
@@ -161,91 +141,74 @@ export function tokens(slug) {
 }
 
 /**
- * Prose tokens of a note body, via the same tokeniser the slug arm uses.
+ * Is this note marked as manually adjudicated — never auto-merge into it?
  *
- * Strips what is not the claim: frontmatter, the `##` heading (it restates the title, which the
- * slug arm already scores), the alias line (retrieval vocabulary, deliberately over-broad — leaving
- * it in inflates every pair), and `**Also seen` addenda a previous reconcile folded in.
+ * The mark exists because correctly RELATING two notes raises their similarity: cross-linking
+ * moved one kept pair 0.754 -> 0.762, over the 0.75 bar, so an audit that does its job creates the
+ * merge proposal it just rejected. It is note-scoped rather than pair-scoped so it also holds at
+ * write time, where the incoming note is neither end of any previously judged pair.
  *
- * @param {unknown} text
- * @returns {Set<string>}
+ * Reads the mark through `isMarked()`, the same function `memory-mark.mjs` writes it with. Two
+ * regexes for one field is the shape of this whole PR's bug at smaller scale: the writer and the
+ * reader drift, and the mark silently stops blocking anything while every test stays green.
+ *
+ * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement, and hooks do
+ * not throw.
+ *
+ * @param {string} file
+ * @returns {boolean}
  */
-export function bodyTokens(text) {
-  const prose = String(text)
-    .replace(/^---\n[\s\S]*?\n---\n/, '')
-    .replace(/^\s*#{1,6} .*$/gm, '')
-    .replace(/^_Also asked as:.*$/gm, '')
-    .replace(/^\*\*Also seen .*$/gm, '');
-  return tokens(prose.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-'));
-}
-
-/** Overlap as a fraction of the SMALLER set — see RECONCILE_BODY_AT for why not Jaccard. */
-/**
- * @param {ReadonlySet<string>} a
- * @param {ReadonlySet<string>} b
- * @returns {number}
- */
-function containment(a, b) {
-  if (!a.size || !b.size) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter++;
-  return inter / Math.min(a.size, b.size);
+export function isManual(file) {
+  try {
+    return isMarked(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Existing note in `dir` that already carries this lesson, or null.
+ * Existing note in `dir` whose FILENAME says it already carries this lesson, or null.
+ *
+ * The fallback arm, used when the search server cannot answer. It was never the good arm — it
+ * caught 0 of the 16 pairs that motivated the 2026-08-17 audit — but it is free and needs no
+ * index, and a distiller that cannot dedup must still write.
+ *
+ * The body-overlap arm that used to sit beside it is GONE, not demoted: it caught 0 of 25 real
+ * duplicates and all nine of its firings were false positives. Keeping a measured-harmful arm as a
+ * "fallback" would ship a known false-merge risk. See
+ * docs/decisions/2026-08-23-embedding-reconcile.md before reaching for token overlap again.
  *
  * Same-folder only, deliberately: a Pattern and a Mistake on one topic are complementary by
  * design, not duplicates.
  *
  * @param {string} dir
  * @param {string} sl
- * @param {string} [body]
  * @returns {string | null}
  */
-export function findNearDuplicate(dir, sl, body = '') {
+export function findNearDuplicate(dir, sl) {
   const now = tokens(sl);
-  /** @type {Set<string>} */
-  const nowBody = body ? bodyTokens(body) : new Set();
-  if (!now.size && !nowBody.size) return null;
+  if (!now.size) return null;
   let entries;
   try {
     entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
   } catch {
     return null;
   }
-  // Each arm is divided by its OWN threshold, so both are expressed as "fraction of the bar" and a
-  // single >= 1 gate compares them. Without that the two scales are not comparable and whichever
-  // arm happens to run second wins.
   /** @type {string | null} */
   let best = null;
   let bestScore = 0;
   for (const f of entries) {
-    const file = path.join(dir, f);
-    let score = 0;
     const old = tokens(f.slice(0, -3).replace(/^\d{4}-\d{2}-\d{2}-/, ''));
-    if (old.size && now.size) {
-      let inter = 0;
-      for (const t of now) if (old.has(t)) inter++;
-      score = inter / (now.size + old.size - inter) / RECONCILE_AT;
-    }
-    // Body arm only when a body was supplied — a 2-arg call reads no files and behaves exactly as
-    // before. N reads per new note; the folder is the bound, and this runs detached at SessionEnd.
-    if (nowBody.size) {
-      let oldBody = null;
-      try {
-        oldBody = bodyTokens(fs.readFileSync(file, 'utf8'));
-      } catch {
-        /* unreadable: skip */
-      }
-      if (oldBody?.size) score = Math.max(score, containment(nowBody, oldBody) / RECONCILE_BODY_AT);
-    }
+    if (!old.size) continue;
+    let inter = 0;
+    for (const t of now) if (old.has(t)) inter++;
+    const score = inter / (now.size + old.size - inter);
     if (score > bestScore) {
-      best = file;
+      best = path.join(dir, f);
       bestScore = score;
     }
   }
-  return bestScore >= 1 ? best : null;
+  return bestScore >= RECONCILE_AT ? best : null;
 }
 
 /**
@@ -568,18 +531,152 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
   }
 }
 
+// ---------------------------------------------------------------- reconcile client
+
+// How long a distillation waits for a cold search server. The recall hook allows 700ms because a
+// human is waiting on the prompt; nothing waits on this one — it is detached at SessionEnd and has
+// already spent tens of seconds in a headless `claude` call. Falling through immediately would mean
+// the first distillation after a reboot dedups at its worst, on the machine most likely to be
+// restating old lessons.
+const SERVER_WAIT_MS = 60_000;
+const SERVER_POLL_MS = 1_000;
+const SERVER_REQ_MS = 10_000;
+
+/**
+ * One dupe-mode request. Resolves null on any failure — an unanswered reconcile degrades to the
+ * slug arm, it never fails a distillation.
+ *
+ * @param {string} sockPath
+ * @param {object} req
+ * @returns {Promise<any>}
+ */
+function dupeRequest(sockPath, req) {
+  return new Promise((resolve) => {
+    const c = net.createConnection(sockPath);
+    const done = (/** @type {any} */ v) => {
+      clearTimeout(timer);
+      try {
+        c.destroy();
+      } catch {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(null), SERVER_REQ_MS);
+    let buf = '';
+    c.on('connect', () => c.write(JSON.stringify(req) + '\n'));
+    c.on('data', (d) => {
+      buf += d;
+    });
+    c.on('end', () => {
+      try {
+        done(JSON.parse(buf));
+      } catch {
+        done(null);
+      }
+    });
+    c.on('error', () => done(null));
+  });
+}
+
+/**
+ * Asks the resident search server for the nearest same-layer note to a candidate card.
+ *
+ * The reply MUST carry `mode: 'dupe'`. An older server does not error on this request — it
+ * destructures a missing `q`, embeds the literal string "undefined", and answers with five
+ * confident results. Servers are keyed by MODEL rather than by version, so an old one running the
+ * active model is never evicted and a new distiller meets one after every update. Without the
+ * marker that reply would be read as a verdict.
+ *
+ * @param {string} cwd
+ * @param {string} slug
+ * @returns {(req: object) => Promise<any>}
+ */
+export function dupeClient(cwd, slug) {
+  /** @type {string | null} */
+  let sockPath = null;
+  let spawned = false;
+  let dead = false;
+  return async (req) => {
+    if (dead) return null;
+    if (!sockPath) {
+      try {
+        const { MODEL_KEY } = await import('../../scripts/lib/memory-semantic.mjs');
+        // No index for this project means nothing to compare against, and spawning a server to
+        // load a database that does not exist would buy a minute of waiting for a guaranteed null.
+        // This is also what keeps a test vault off the server: the fixtures have no index.
+        const db = path.join(paths.stateDir('db'), `semantic-${slug}-${MODEL_KEY}.db`);
+        if (!fs.existsSync(db)) {
+          dead = true;
+          return null;
+        }
+        sockPath = path.join(paths.stateDir('run'), `search-${MODEL_KEY}.sock`);
+      } catch {
+        dead = true;
+        return null;
+      }
+    }
+    // WALL CLOCK, not a poll count. Counting iterations looked equivalent and was not: a server
+    // that accepts the connection and then stalls costs SERVER_REQ_MS per iteration, so sixty
+    // "one second" polls were up to eleven minutes of a SessionEnd hanging on a socket.
+    const deadline = Date.now() + SERVER_WAIT_MS;
+    for (;;) {
+      if (fs.existsSync(sockPath)) {
+        const r = await dupeRequest(sockPath, req);
+        if (r?.mode === 'dupe') return r;
+        // A reply we could parse, from a server that does not speak dupe mode: that is an older
+        // server, and it will not learn. Waiting out the deadline changes nothing — the server we
+        // spawn below probes the live socket and exits rather than stealing it, and the old one
+        // survives until its own idle timeout. Give up now and let the slug arm answer.
+        if (r) {
+          dead = true;
+          return null;
+        }
+      }
+      if (!spawned) {
+        spawned = true;
+        detach(process.execPath, [path.join(paths.scriptsDir, 'memory-semantic.mjs'), '--serve'], {
+          cwd,
+        });
+      }
+      if (Date.now() >= deadline) {
+        // One slow start is one slow start; a second note should not pay another minute for it.
+        dead = true;
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, SERVER_POLL_MS));
+    }
+  };
+}
+
 // ---------------------------------------------------------------- notes
 
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @returns {{ written: number, merged: number }}
+ * @param {string} cwd
+ * @returns {Promise<{ written: number, merged: number, declined: number }>}
  */
-function writeNotes(insights, slug) {
+async function writeNotes(insights, slug, cwd) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let written = 0,
-    merged = 0;
+    merged = 0,
+    declined = 0;
+
+  const ask = dupeClient(cwd, slug);
+  // Notes written EARLIER IN THIS RUN. The index is rebuilt after the distillation, so the server
+  // cannot see them, and two insights restating one lesson were being written as two notes every
+  // time — observed twice on 2026-08-22, where a reconcile fired against an existing note AND a
+  // fresh note was written for the same event. Their vectors come back in the dupe reply, so this
+  // costs no extra embedding.
+  /** @type {{ note: string, layer: string, vec: number[], file: string }[]} */
+  const thisRun = [];
+  /** @type {any} */
+  let sem = null;
+  try {
+    sem = await import('../../scripts/lib/memory-semantic.mjs');
+  } catch {
+    /* no index stack: slug arm only */
+  }
 
   /**
    * @param {string} folder
@@ -588,7 +685,7 @@ function writeNotes(insights, slug) {
    * @param {string} body
    * @param {unknown} aliases
    */
-  const emit = (folder, tag, title, body, aliases) => {
+  const emit = async (folder, tag, title, body, aliases) => {
     const d = path.join(base, folder);
     fs.mkdirSync(d, { recursive: true });
     const sl = slugify(title);
@@ -602,26 +699,73 @@ function writeNotes(insights, slug) {
           .map((a) => a.trim())
           .join(', ')
       : '';
-    // Reconcile before appending: a restatement of an existing lesson updates that note rather
-    // than spawning a near-duplicate. Without this the distiller keeps re-creating notes
-    // /memory:prune has just merged away.
-    const dup = findNearDuplicate(d, sl, body);
-    if (dup) {
-      reconcile(dup, title, body, line, today);
-      merged++;
-      return;
-    }
     const text = line ? `${body.replace(/\s+$/, '')}\n\n_Also asked as: ${line}._\n` : body;
     // YAML-safe: quote the title so colons/quotes in it don't break frontmatter
     const safeTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const fm = `---\ntitle: "${safeTitle}"\ndate: ${today}\nproject: ${slug}\ntags: [${tag}]\ntype: insight\n---\n\n`;
-    fs.writeFileSync(path.join(d, `${today}-${sl}.md`), fm + text);
+    const name = `${today}-${sl}`;
+    const raw = fm + text;
+
+    // The candidate is the note's CARD, built by the SAME chunker the indexer uses. Hand-rolling an
+    // approximation here would make the write-time score and the --dupes audit two different
+    // quantities, and the audit is this check's acceptance test.
+    const card = sem ? sem.chunkNote(name, raw)[0]?.text : null;
+
+    // Reconcile before appending: a restatement of an existing lesson updates that note rather
+    // than spawning a near-duplicate. Without this the distiller keeps re-creating notes
+    // /memory:prune has just merged away.
+    /** @type {{ file: string, s: number } | null} */
+    let hit = null;
+    /** @type {number[] | null} */
+    let vec = null;
+    if (card) {
+      const r = await ask({ dupe: card, slug, layer: folder, min: sem.PROFILE.dupeMin });
+      if (r) {
+        vec = r.vec ?? null;
+        // The index is a snapshot: a note merged or renamed by /memory:prune since the last
+        // --index is still in it. reconcile() reads the file with no guard, so an unchecked hit
+        // here throws ENOENT and takes the whole distillation with it — and hooks never fail a
+        // session. Before this change every candidate came from readdirSync and existed by
+        // construction.
+        const best = r.best ? path.join(d, `${r.best.note}.md`) : null;
+        if (best && fs.existsSync(best)) hit = { file: best, s: r.best.s };
+        const inRun = vec && sem.bestDupe(thisRun, { layer: folder, vec }, sem.PROFILE.dupeMin);
+        if (inRun && (!hit || inRun.s > hit.s)) {
+          const f = thisRun.find((x) => x.note === inRun.note);
+          if (f) hit = { file: f.file, s: inRun.s };
+        }
+      }
+    }
+    // Server silent: the slug arm is the whole dedup. It is the fallback, not a second opinion —
+    // when the embedding arm HAS answered, its verdict stands, because a lexical arm overruling it
+    // is exactly the false merge the good arm just declined.
+    if (!vec) {
+      const dup = findNearDuplicate(d, sl);
+      if (dup) hit = { file: dup, s: 1 };
+    }
+
+    if (hit) {
+      // `reconcile: manual` blocks BOTH arms. A half-blocked mark is indistinguishable from a
+      // broken one, and the counter is here because a mark that silently does nothing when
+      // misconfigured looks exactly like a mark that is working.
+      if (isManual(hit.file)) {
+        declined++;
+      } else {
+        reconcile(hit.file, title, body, line, today);
+        merged++;
+        return;
+      }
+    }
+
+    const file = path.join(d, `${name}.md`);
+    fs.writeFileSync(file, raw);
+    if (vec) thisRun.push({ note: name, layer: folder, vec, file });
     written++;
   };
 
   for (const it of insights.patterns || []) {
     if (it?.title)
-      emit(
+      await emit(
         'Patterns',
         'pattern',
         it.title,
@@ -631,7 +775,7 @@ function writeNotes(insights, slug) {
   }
   for (const it of insights.mistakes || []) {
     if (it?.title)
-      emit(
+      await emit(
         'Mistakes',
         'mistake',
         it.title,
@@ -641,7 +785,7 @@ function writeNotes(insights, slug) {
   }
   for (const it of insights.decisions || []) {
     if (it?.title)
-      emit(
+      await emit(
         'Decisions',
         'decision',
         it.title,
@@ -649,7 +793,7 @@ function writeNotes(insights, slug) {
         it.aliases,
       );
   }
-  return { written, merged };
+  return { written, merged, declined };
 }
 
 /**
@@ -769,9 +913,9 @@ function refreshOwnIndex(cwd) {
  *
  * @param {string} transcript
  * @param {string} cwd
- * @returns {{ written: number, merged: number, slug: string } | null}
+ * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
  */
-export function distill(transcript, cwd) {
+export async function distill(transcript, cwd) {
   let slug = projectKey(cwd);
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
@@ -787,13 +931,13 @@ export function distill(transcript, cwd) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd);
-  const { written, merged } = writeNotes(insights, slug);
+  const { written, merged, declined } = await writeNotes(insights, slug, cwd);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need
   // /memory:prune's purge — the distiller only keeps additions fresh.
   reindex(cwd, slug);
-  return { written, merged, slug };
+  return { written, merged, declined, slug };
 }
 
 // ---------------------------------------------------------------- gate (SessionEnd + Stop)
