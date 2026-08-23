@@ -315,9 +315,22 @@ Five rules, each with a reason:
    the **default** for `-p` in a future release, and there is no opt-out to pin against: Claude Code
    2.1.231 has `--bare` and no `--no-bare`, no setting, and nothing a hook could read — hooks do not
    run under `--bare` at all. So the runner must **assert the side effect instead of trusting the
-   flag**: after `claude -p` returns, check that the run left its `hooks-<date>.jsonl` line, and
-   fail the task loudly when it did not. That check goes red the day the default flips, which is the
-   only warning this design will get.
+   flag**: after `claude -p` returns, check that the run left **its own** line in
+   `$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`, and fail the task loudly when it did not.
+
+   Two traps in that check, both of which would make it pass for the wrong reason:
+
+   - **The log is machine-wide.** Every project appends to the same daily file
+     (`hooks/lib/hook-io.mjs`, `appendJsonl`). "The file has lines in it" is satisfied by the other
+     two concurrent tasks, by a Remote Control session, by anything. Match on **`t` after this run
+     started AND this task's `cwd`/`slug`** — the fields `appendJsonl` and `logHook` actually stamp.
+     CLAUDE.md's own rule: a scan-based guard must assert that it found something.
+   - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`. The VPS runs
+     Europe/Amsterdam, so a runner using `date +%F` looks for tomorrow's file between local midnight
+     and 02:00 and finds nothing — reporting a `--bare` regression every night. Use `date -u +%F`.
+
+   Done right, that check goes red the day the default flips, which is the only warning this design
+   will get.
 
 Five agents, of which only two are new:
 
@@ -355,20 +368,24 @@ Phase 1 is the payoff. Everything before it is plumbing.
    - *The 24 notes:* those were lost on 2026-08-08 to a **relocating hook sent at the wrong vault
      path** — `vault-memory-sync.sh` moved files and repointed the symlink after a stray
      `CLAUDE_VAULT` resolved somewhere throwaway (`hooks/vault-memory-sync.sh:73-78`,
-     `scripts/memory-semantic.mjs:61-64`, `README.md:208`). **The data-loss half is retired**: the
-     hook now copies (`cp -n`) before repointing, so a stray duplicate is the worst case. What
-     survives phase 0 is the *recoverable* half — a memory symlink left pointing at the wrong vault,
-     which every path-changing step can still cause. The guard is `/memory:doctor`, which fails
-     loudly when the resolved vault is empty while a populated one exists.
+     `scripts/memory-semantic.mjs:61-64`, `README.md:208`). **Only the repoint path is retired**: it
+     now copies (`cp -n`) before relinking, so a stray duplicate is its worst case. The *migrate*
+     branch three lines down still **moves** — `find "$mem" -maxdepth 1 -type f -exec mv -n {}
+     "$dest"/` (`hooks/vault-memory-sync.sh:83`) — and it fires whenever `~/.claude/projects/<slug>/
+     memory/` exists as a real directory rather than a symlink, which is exactly what a path-changing
+     phase-0 step can leave behind. The guard is `/memory:doctor`, which fails loudly when the
+     resolved vault is empty while a populated one exists. **Run it after every step that moves a
+     vault path, not only at the end of phase 0.**
 3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3 and poll every 30 minutes. Both
    numbers are **provisional guesses**, not measurements; replace them from the first week of
    `--output-format json` output.
 4. **Work data must never reach the connector.** One `$CLAUDE_MEMORY_HOME` per world — see "The
    wall". A separate serve process is *not* a wall: the sockets collide by model name and the
    survivor answers any slug.
-5. **Claude Code auth sits on a public box.** Put `~/.claude/.credentials.json` in
-   `sandbox.credentials`. Do not block all of `~/.claude` — the memory plugin reads L1 through
-   `~/.claude/projects/<slug>/memory/`.
+5. **Claude Code auth sits on a public box.** The intent is to scope `sandbox.credentials` to
+   `~/.claude/.credentials.json` — **not verified**, see rule 3 and the open questions. What is
+   certain is the other half: do **not** block all of `~/.claude`, because the memory plugin reads
+   L1 through `~/.claude/projects/<slug>/memory/`.
 6. **RAM: 16 GB, not 8 — sized for peak.** At idle the server is cheap: `modelIdleMs` (5 min)
    disposes the model and ~450 MB of `MALLOC_LARGE` drops to ~2.4 MB while the socket and indexes
    survive (measured 2026-08-17). The peak is what needs headroom — model loaded, indexes cached,
