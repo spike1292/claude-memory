@@ -34,9 +34,18 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    **Use the versioned case set — do not write fresh questions.**
 
    ```
-   node "$MEM/scripts/memory-eval.mjs" --run --cases "$STATE/eval/eval-cases-authored.jsonl" --mode semantic
-   node "$MEM/scripts/memory-eval.mjs" --run --cases "$STATE/eval/eval-cases-authored.jsonl" --mode lexical
+   node "$MEM/scripts/memory-eval.mjs" --run --mode semantic
+   node "$MEM/scripts/memory-eval.mjs" --run --mode lexical
    ```
+
+   ⚠ **Do not pass `--cases` here.** Without it the script resolves
+   `$STATE/eval/eval-cases-<slug>-<style>.jsonl`, which is scoped to THIS project. `$STATE` is
+   machine-local and shared by every project on the machine, so any case-set name without a slug in
+   it belongs to whichever project authored one first — and every other project then scores itself
+   against another vault's questions, which reports a near-zero recall as if it were a measurement
+   (#97; the numbers are in `goldCoverage`'s comment). `--run` now resolves gold against the vault
+   and refuses such a set rather than scoring it. If this project has no case set yet, author one
+   with `--author` — do not borrow.
 
    ⚠ `--mode lexical` is a **whole-note** keyword baseline for the semantic arm. It is NOT the
    recall hook: that one scores only the `(card)` chunk, and on the bench vault's own cases the two

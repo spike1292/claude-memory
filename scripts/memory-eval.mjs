@@ -16,7 +16,17 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { activeModel } from './lib/model-default.mjs';
 import * as paths from '../hooks/lib/paths.mjs';
-import { evalBody, pickSentence, metrics, lexicalRank, RECALL_KS } from './lib/memory-eval.mjs';
+import {
+  evalBody,
+  pickSentence,
+  metrics,
+  lexicalRank,
+  goldCoverage,
+  defaultCasesPath,
+  GOLD,
+  GOLD_FLOOR,
+  RECALL_KS,
+} from './lib/memory-eval.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -45,8 +55,8 @@ const STYLE = val('--style') || 'semantic';
 // Case sets are generated FROM a real vault and contain its content, so they live in
 // machine-local state, never in the plugin (which is a public repo).
 const DATA = paths.stateDir('eval');
-const CASES =
-  val('--cases') || val('--out') || path.join(DATA, `eval-cases-${SLUG}-${STYLE}.jsonl`);
+const SCOPED_CASES = defaultCasesPath(DATA, SLUG, STYLE);
+const CASES = val('--cases') || val('--out') || SCOPED_CASES;
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
 
@@ -157,6 +167,33 @@ const cases = fs
     (l) =>
       /** @type {{ q: string, gold: string[], layer?: string, style?: string }} */ (JSON.parse(l)),
   );
+
+// Refuse a case set that is not about this vault. `$CLAUDE_MEMORY_HOME/eval/` is machine-local and
+// shared by every project on the machine, so an unscoped case-set name is owned by whichever
+// project authored one first and every other project then scores itself against those questions —
+// 0/32 gold refs resolvable, reported as a recall figure (#97).
+const cov = goldCoverage(cases, new Set(allNotes().map((n) => n.note)));
+if (cov.verdict === GOLD.mismatch) {
+  // Only suggest dropping the flag when one was actually passed. A project whose OWN scoped set has
+  // gone stale would otherwise be told to drop an argument it never used, and pointed at the file
+  // it just ran.
+  const fix =
+    CASES === SCOPED_CASES
+      ? `This IS ${SLUG}'s own set, so the vault has moved out from under it. Re-author it with --author.`
+      : `Drop --cases to use this project's own set: ${SCOPED_CASES}\nAuthor one with --author if it does not exist yet.`;
+  console.log(
+    `${cov.resolved}/${cov.total} gold notes in this case set exist in ${SLUG}'s vault — under the ${Math.round(GOLD_FLOOR * 100)}% floor.\n` +
+      `That is a case set built from a DIFFERENT vault, not a bad score. Refusing to report a number.\n` +
+      `  case set: ${CASES}\n` +
+      fix,
+  );
+  process.exit(1);
+}
+if (cov.verdict === GOLD.churn)
+  console.error(
+    `warning: ${cov.total - cov.resolved}/${cov.total} gold notes no longer exist (pruned?). Scoring the rest; every missing one counts as a miss.`,
+  );
+
 const mode = val('--mode') || 'semantic';
 // A rank-window intervention (reserved slots, re-ranking) is invisible when the harness fetches a
 // wider window than a session does: promoted items sort to the bottom by score, so scoring @5 from

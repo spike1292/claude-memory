@@ -11,6 +11,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`/memory:eval` scored every project against whichever one authored a case set first.** The
+  command passed `--cases "$STATE/eval/eval-cases-authored.jsonl"` — a name with no slug in it, in a
+  machine-local directory shared by every project on the machine — which overrode the slug- and
+  style-scoped default `memory-eval.mjs` already resolved correctly. Measured 2026-08-23 from this
+  repo: **2 of 32** gold refs in that set resolved to a note in this vault (both in cross-project
+  `permanent/`), against **53 of 53** for the same project's scoped set. The `--cases` argument is
+  gone from both invocations, and the doc now says why not to reintroduce it.
+- **`--run` reported a mismatched case set as a recall figure instead of refusing it.** `--author`
+  has always resolved every gold note and failed on a missing one; `--run` checked only that the
+  case *file* existed, so another vault's questions produced a confident 0%. It now resolves gold
+  before scoring: below a 50% floor it aborts as a corpus mismatch, above it warns and scores, so a
+  gold note lost to a prune stays a warning. Failures report **counts only, never note names** —
+  those may belong to another project's private vault, and this output is pasted into public issues.
+  The recall hook's `MIN_SCORE` sweep comment no longer names the unscoped file either; it describes
+  the property an off-topic control set needs.
 - **`/memory:health` reported every L1 note as missing from the MOC.** `MEMORY.md` is written with
   markdown links (`[Title](note.md)`), but `memory-audit-checks.mjs` scanned it for `[[wikilinks]]`
   only — so it called all 8 notes orphaned on 2026-08-22. MOC membership now accepts both forms;

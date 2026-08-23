@@ -1,7 +1,21 @@
 // Tests for scripts/lib/memory-eval.mjs. Run: node --test scripts/lib/memory-eval.test.mjs
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { titleTokens, evalBody, pickSentence, metrics, lexicalRank } from './memory-eval.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import {
+  titleTokens,
+  evalBody,
+  pickSentence,
+  metrics,
+  lexicalRank,
+  goldCoverage,
+  defaultCasesPath,
+  GOLD_FLOOR,
+} from './memory-eval.mjs';
 
 test('titleTokens drops short tokens', () => {
   // 'cap' is 3 chars and drops out — short tokens are noise, not identity
@@ -73,4 +87,183 @@ test('lexicalRank ranks the matching note first and honours k', () => {
   const [{ results }] = lexicalRank(docs, ['stale html after a release'], 2);
   assert.equal(results.length, 2);
   assert.equal(results[0].note, 'b');
+});
+
+// The three bands of goldCoverage. Zero-of-N is a mismatched corpus, not a bad retrieval score;
+// scoring one anyway reported another project's case set as this project's recall (#97).
+test('goldCoverage: every gold note present is ok', () => {
+  const cov = goldCoverage([{ gold: ['a'] }, { gold: ['b', 'c'] }], new Set(['a', 'b', 'c']));
+  assert.deepEqual(cov, { total: 3, resolved: 3, fraction: 1, verdict: 'ok' });
+});
+
+test('goldCoverage: a few missing gold notes are churn, not a mismatch', () => {
+  const cov = goldCoverage(
+    [{ gold: ['a', 'b', 'c'] }, { gold: ['pruned'] }],
+    new Set(['a', 'b', 'c']),
+  );
+  assert.equal(cov.verdict, 'churn', 'a gold note lost to a prune must warn, never abort');
+  assert.equal(cov.resolved, 3);
+  assert.equal(cov.total, 4);
+});
+
+test("goldCoverage: another vault's case set is a mismatch", () => {
+  const cov = goldCoverage([{ gold: ['x'] }, { gold: ['y', 'z'] }], new Set(['a', 'b', 'c']));
+  assert.equal(cov.verdict, 'mismatch');
+  assert.equal(cov.resolved, 0);
+  assert.equal(cov.fraction, 0);
+});
+
+test('goldCoverage: the floor is inclusive, so exactly GOLD_FLOOR is churn', () => {
+  assert.equal(GOLD_FLOOR, 0.5);
+  const at = goldCoverage([{ gold: ['a', 'b', 'x', 'y'] }], new Set(['a', 'b']));
+  assert.equal(at.fraction, 0.5);
+  assert.equal(at.verdict, 'churn');
+  const below = goldCoverage([{ gold: ['a', 'x', 'y', 'z'] }], new Set(['a', 'b']));
+  assert.equal(below.fraction, 0.25);
+  assert.equal(below.verdict, 'mismatch');
+});
+
+test('goldCoverage: a case set with no gold refs at all is a mismatch, not a pass', () => {
+  const cov = goldCoverage([], new Set(['a']));
+  assert.equal(cov.total, 0);
+  assert.equal(cov.verdict, 'mismatch', 'an empty set must not divide to a passing 1');
+});
+
+test('goldCoverage: a gold note named twice counts once per reference', () => {
+  const cov = goldCoverage([{ gold: ['a'] }, { gold: ['a'] }], new Set(['a']));
+  assert.equal(cov.total, 2);
+  assert.equal(cov.resolved, 2);
+  assert.equal(cov.verdict, 'ok');
+});
+
+// ---------------------------------------------------------------- the CLI round trip
+//
+// goldCoverage being right proves nothing if the entry never calls it, and the entry resolving the
+// scoped default proves nothing if a stale --cases in the command doc overrides it. Both ends, or
+// neither: two tests pinning one end each stay green while the ends drift.
+//
+// Every one of these exits BEFORE retrieval, so none loads a model or an index.
+
+const ENTRY = fileURLToPath(new URL('../memory-eval.mjs', import.meta.url));
+const SLUG = 'eval-guard-test';
+
+/** @type {string[]} */
+const tmpDirs = [];
+test.after(() => {
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+
+/**
+ * A throwaway vault + state dir, isolated from the real ones. Notes are named, not generated:
+ * these tests care only about which gold names resolve.
+ * @param {readonly string[]} notes
+ * @param {readonly {q: string, gold: string[]}[] | null} cases
+ */
+function scratch(notes, cases) {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-guard-')));
+  tmpDirs.push(tmp);
+  const vault = path.join(tmp, 'vault');
+  const notesDir = path.join(vault, 'Memory', SLUG);
+  fs.mkdirSync(notesDir, { recursive: true });
+  for (const n of notes) fs.writeFileSync(path.join(notesDir, `${n}.md`), `# ${n}\n`);
+  const state = path.join(tmp, 'state');
+  fs.mkdirSync(path.join(state, 'eval'), { recursive: true });
+  assert.notEqual(vault, process.env.CLAUDE_VAULT, 'scratch vault must not be the real one');
+  let casesPath = null;
+  if (cases) {
+    casesPath = path.join(tmp, 'cases.jsonl');
+    fs.writeFileSync(casesPath, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
+  }
+  // Built, never spread: an inherited CLAUDE_VAULT would point the child at the real vault.
+  const env = { PATH: process.env.PATH, HOME: path.join(tmp, 'home'), CLAUDE_MEMORY_HOME: state };
+  /** @param {...string} args */
+  const run = (...args) =>
+    spawnSync(process.execPath, [ENTRY, '--vault', vault, '--slug', SLUG, ...args], {
+      encoding: 'utf8',
+      env,
+    });
+  return { run, casesPath, state };
+}
+
+test('CLI --run refuses a case set built from another vault, and names no notes', () => {
+  const { run, casesPath } = scratch(
+    ['ours-one', 'ours-two'],
+    [
+      { q: 'a', gold: ['theirs-one'] },
+      { q: 'b', gold: ['theirs-two', 'theirs-three'] },
+    ],
+  );
+  const r = run('--run', '--cases', /** @type {string} */ (casesPath));
+  assert.equal(r.status, 1, `a mismatched case set must exit non-zero:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /0\/3 gold notes/);
+  assert.match(r.stdout, /DIFFERENT vault/);
+  for (const leaked of ['theirs-one', 'theirs-two', 'theirs-three'])
+    assert.ok(
+      !(r.stdout + r.stderr).includes(leaked),
+      `refusal leaked the gold note name "${leaked}" — it may belong to another project's private vault`,
+    );
+});
+
+test('CLI --run warns but proceeds when a gold note was pruned', () => {
+  const { run, casesPath } = scratch(
+    ['ours-one', 'ours-two', 'ours-three'],
+    [
+      { q: 'a', gold: ['ours-one', 'ours-two', 'ours-three'] },
+      { q: 'b', gold: ['pruned'] },
+    ],
+  );
+  // --mode lexical scores in-process, so this one runs the whole way through without a model or an
+  // index — which is what lets it assert the exit code, not just the warning.
+  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  assert.match(r.stderr, /warning: 1\/4 gold notes no longer exist/);
+  assert.ok(
+    !r.stdout.includes('DIFFERENT vault'),
+    'ordinary churn must not be refused as a mismatch',
+  );
+  assert.equal(r.status, 0, `churn must score and exit clean:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /recall@/, 'it must actually report a number, not just warn');
+});
+
+test('CLI --run with no --cases resolves the slug-scoped default', () => {
+  const { run, state } = scratch(['ours-one'], null);
+  const r = run('--run');
+  // No case set exists, so it stops at the "generate one first" branch — which is exactly what
+  // prints the path it resolved. That path is the whole fix: scoped by slug, and by style.
+  assert.match(r.stdout, /no case set at/);
+  // Through defaultCasesPath, not a hand-written copy of the name: a second copy of this filename
+  // drifting from the resolver is the bug being fixed, and a test carrying its own copy would go on
+  // passing after the resolver moved.
+  assert.ok(
+    r.stdout.includes(defaultCasesPath(path.join(state, 'eval'), SLUG, 'semantic')),
+    `default must be slug-scoped, got:\n${r.stdout}`,
+  );
+});
+
+test('CLI --run does not tell you to drop a --cases you never passed', () => {
+  // The project's OWN scoped set, gone stale against a vault that moved. Advising "drop --cases"
+  // here would name the flag the caller did not use and point at the file it just ran.
+  const { run, state } = scratch(['ours-one'], null);
+  fs.writeFileSync(
+    defaultCasesPath(path.join(state, 'eval'), SLUG, 'semantic'),
+    JSON.stringify({ q: 'a', gold: ['long-gone'] }) + '\n',
+  );
+  const r = run('--run');
+  assert.equal(r.status, 1);
+  assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
+  assert.match(r.stdout, /vault has moved out from under it/);
+});
+
+test('CLI --run is unchanged when every gold note resolves', () => {
+  const { run, casesPath } = scratch(
+    ['ours-one', 'ours-two'],
+    [
+      { q: 'a', gold: ['ours-one'] },
+      { q: 'b', gold: ['ours-two'] },
+    ],
+  );
+  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  assert.equal(r.status, 0, `a matching case set must score cleanly:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /recall@/);
+  assert.ok(!r.stderr.includes('warning:'), 'the ok band must say nothing at all');
+  assert.ok(!r.stdout.includes('DIFFERENT vault'));
 });
