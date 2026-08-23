@@ -177,11 +177,23 @@ wrong; take the answer from Claude Code instead.
 ## Deleting the work data
 
 The VPS belongs to Codebakkers; the client work arrives through a Codecask contract. **When that
-contract ends the client data must be deleted.** That makes deletability a design constraint, not an
-afterthought — and the wall above is most of the answer, because one `$CLAUDE_MEMORY_HOME` plus one
-vault directory is a small, enumerable footprint.
+contract ends the client data must be deleted, and the contract carries a fine if the data is found
+to be *used* afterwards.** No evidence of deletion is required.
 
-But **deletion is not one action**, and two of these places are not on the VPS at all:
+**Read that obligation carefully: the penalty is on use, not on retention.** This whole system
+exists to make old knowledge resurface automatically — recall on every prompt, distilled insights,
+and a cross-project `permanent/` layer. Left alone, it would do exactly the thing the contract
+fines, without anyone deciding to. Deletability is therefore a design constraint, and one rule
+outranks the rest:
+
+> **Client-derived knowledge never graduates to `permanent/`.** That layer is cross-project by
+> design and is reachable from every future session, so it survives deleting the work world
+> entirely. `/memory:protocol` actively encourages promotion — this is the standing exception.
+> The same applies to any personal-side note that would quote a client specific: keep the lesson,
+> drop the identifying detail, and it stops being client data.
+
+The wall does the rest, because one `$CLAUDE_MEMORY_HOME` plus one vault directory is a small,
+enumerable footprint. But **deletion is not one action**:
 
 | Location | Deletes with | Note |
 | --- | --- | --- |
@@ -189,11 +201,16 @@ But **deletion is not one action**, and two of these places are not on the VPS a
 | `~/.claude-memory-work/` | `rm -rf` | `db/` (index), `models/`, `run/`, `logs/` — including the work world's `hooks-*.jsonl` and `recall-*.jsonl`, which are per-home |
 | `~/worktrees/*` for work repos | `git worktree remove` | Checkouts, plus their `.git` |
 | Work repos' git **history** | Delete the repo, not the files | `rm` of a tracked file leaves every earlier version in `.git` |
-| **GitHub remote** | Delete the repository | *Not on the VPS.* See the open question — this copy may not be permitted at all |
-| **Synology mirror** | Delete there too | *Not on the VPS.* The mirror is a copy by design |
+| Work git remote | **Client-hosted** — see below | Their infrastructure, their retention |
+| `permanent/` | Audit, do not assume | The one layer the wall does not cover |
 | **Anthropic-side transcripts** | Cannot be deleted by you | See below |
 
-Three things that are easy to miss:
+**The work remote is the client's own GitHub/GitLab account, never a personal one.** That is the
+cheapest control available: client data sits on client-controlled infrastructure, their retention
+policy governs it, and no copy lands under `spike1292` or on the Synology mirror. **Keep the work
+vault out of Synology sync entirely** — VPS plus client remote, nowhere else.
+
+Three more things that are easy to miss:
 
 - **Remote Control stores the session transcript on Anthropic servers** while connected — messages,
   responses and tool activity — retained under the Data usage policy. Execution and filesystem
@@ -207,6 +224,10 @@ Three things that are easy to miss:
 
 Write the drill down in the private `agentic-os` repo and dry-run it in phase 4 — a deletion
 procedure first executed under time pressure at contract end is one that gets a location wrong.
+
+**The drill's last step is a search, not a delete.** Query the *personal* vault for client names,
+hostnames and system names before declaring done. The wall stops writes; it does not stop a lesson
+that was hand-copied across, and that residue is what a fine on *use* would land on.
 
 ## Install, do not build
 
@@ -501,11 +522,9 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
 
 ## Open questions
 
-- May client data be pushed to a GitHub remote at all, even a private one, and under which account?
-  The deletion obligation below is satisfiable on the VPS; a GitHub remote adds a copy that is not
-  on the VPS. Answer before phase 4 creates the work vault's remote, not after.
-- Does the contract set a retention or deletion deadline, and does it require evidence of deletion?
-  That decides whether the drill needs a written record or just an action.
+- Does the contract's definition of "data" cover *derived* artefacts — distilled insights, an
+  embedding index, a knowledge graph — or only the source material? The plan treats all of them as
+  in scope, which is the safe reading, but it decides how much of `Insights/` has to go.
 - Which vault paths are safe to expose read-only? The allow-list must exist before phase 1 ships.
 - Do `sandbox.credentials` semantics block reads or mask values? The plan assumes an entry can be
   scoped to a single file.
