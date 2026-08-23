@@ -191,6 +191,11 @@ Then four behaviours, all forced by rules already in CLAUDE.md:
   blanket add has already shipped another session's file to `main` once.
 - **Tolerate `.git/index.lock`.** Two sessions saving a note in the same second will collide. Skip
   the round, do not wait — the next write picks it up.
+- **No-op when the vault has no `.git`, and skip the push when there is no remote.** This is the
+  other half of the best-effort rule, and it is the half that decides whether this ships at all:
+  git is a *new* dependency, and every user's vault today is a plain folder. Without the guard,
+  release 0.x gives every one of them a detached `git commit` that forks on each note write and
+  fails forever in silence, because the hook swallows errors by design.
 
 ### 3. AFK runner *(new repo)*
 
@@ -262,9 +267,12 @@ Five rules, each with a reason:
    task, not per tick. The reason is human throughput. Every task that fires produces a PR that
    wants reviewing, and a headless run costs a near-fixed ~40k tokens whatever the prompt (measured
    2026-08-20), so a fast tick converts a morning of labelling into a queue of PRs and a bill. Read
-   the real per-run figure from `--output-format json`. The concurrency cap under Risks is
-   **provisional** — a guess at three, not a measurement — and the first week's JSON output is what
-   replaces it with one.
+   the real per-run figure from `--output-format json`. A run measured that way in this repo on
+   2026-08-23 — a two-token prompt in a checkout with CLAUDE.md and plugins loaded, which is the
+   AFK runner's exact shape — billed **63,204 cache-creation tokens at $0.63**, so the overhead has
+   grown since the 2026-08-20 figure rather than shrunk. Budget per *task*, never per prompt length.
+   The concurrency cap under Risks is **provisional** — a guess at three, not a measurement — and
+   the first week's JSON output is what replaces it with one.
 2. **Worktrees go in `~/worktrees/`, never `.claude/worktrees/`.** Claude Code's default puts them
    inside the project, and `node_modules` resolution then walks up into the parent and loads the
    wrong version.
@@ -320,10 +328,13 @@ Five rules, each with a reason:
 
    Two traps in that check, both of which would make it pass for the wrong reason:
 
-   - **The log is machine-wide.** Every project appends to the same daily file
-     (`hooks/lib/hook-io.mjs`, `appendJsonl`). "The file has lines in it" is satisfied by the other
-     two concurrent tasks, by a Remote Control session, by anything. Match on **`t` after this run
-     started AND this task's `cwd`/`slug`** — the fields `appendJsonl` and `logHook` actually stamp.
+   - **The log is machine-wide, and neither `cwd` nor `slug` narrows it.** Every project appends to
+     the same daily file, and `appendJsonl` stamps `{ t, slug, ...record }` — `cwd` is an argument
+     used to derive the slug, never a field. `slug` does not help either: it is the normalised git
+     remote, so all three concurrent tasks, running in worktrees of one repo, stamp the same value,
+     and task A's check passes on task B's line. **Match on `session`.** `logHook` stamps it
+     (`hooks/lib/hook-io.mjs`, omitted only when absent) and `claude -p --output-format json`
+     returns the same `session_id` in the envelope rule 1 already parses. One value, one run, exact.
      CLAUDE.md's own rule: a scan-based guard must assert that it found something.
    - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`. The VPS runs
      Europe/Amsterdam, so a runner using `date +%F` looks for tomorrow's file between local midnight
@@ -369,8 +380,8 @@ Phase 1 is the payoff. Everything before it is plumbing.
      path** — `vault-memory-sync.sh` moved files and repointed the symlink after a stray
      `CLAUDE_VAULT` resolved somewhere throwaway (`hooks/vault-memory-sync.sh:73-78`,
      `scripts/memory-semantic.mjs:61-64`, `README.md:208`). **Only the repoint path is retired**: it
-     now copies (`cp -n`) before relinking, so a stray duplicate is its worst case. The *migrate*
-     branch three lines down still **moves** — `find "$mem" -maxdepth 1 -type f -exec mv -n {}
+     now copies (`cp -n`, `hooks/vault-memory-sync.sh:78`) before relinking, so a stray duplicate is
+     its worst case. The *migrate* branch still **moves** — `find "$mem" -maxdepth 1 -type f -exec mv -n {}
      "$dest"/` (`hooks/vault-memory-sync.sh:83`) — and it fires whenever `~/.claude/projects/<slug>/
      memory/` exists as a real directory rather than a symlink, which is exactly what a path-changing
      phase-0 step can leave behind. The guard is `/memory:doctor`, which fails loudly when the
