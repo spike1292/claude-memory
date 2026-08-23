@@ -179,17 +179,21 @@ re-reads the *old* path and serves the old version again.
 2. **Start a Claude Code session with `CLAUDE_MEMORY_HOME` set to that value** — this is what
    rewrites the breadcrumb, and nothing else does. It is an environment variable, not a working
    directory: `vault-memory-sync.sh` writes to whatever `memory_home()` resolves, so
-   `cd ~/.claude-memory-work && claude` without exporting the var updates the **personal** home and
-   leaves the work home's breadcrumb stale. Watch the right victim — the personal one then looks
-   fine, while the work `vault-mcp` restarts onto its old version dir and serves it forever with no
-   error. (The path written is the plugin cache dir, which is the same in both worlds; the wall is
-   `$CLAUDE_MEMORY_HOME` — config, `db/`, `models/`, `run/`, `logs/` — not the plugin install.)
+   a session started with the **work** value — or with none at all on a box where the work value is
+   exported by default — rewrites that home's breadcrumb and leaves the **personal** one stale.
+   Step 3 then restarts the daemon onto its old version dir, silently, and the procedure reports
+   success. There is exactly **one** `vault-mcp` unit and it binds the personal home, so the
+   personal breadcrumb is the only one this procedure cares about. (The path written is the plugin
+   cache dir, identical in both worlds; the wall is `$CLAUDE_MEMORY_HOME` — config, `db/`,
+   `models/`, `run/`, `logs/` — not the plugin install.)
 3. `systemctl restart vault-mcp`
 
 **And the check must not read the breadcrumb.** Comparing the daemon's path against the breadcrumb
 is circular — the daemon got its path *from* the breadcrumb, so they match whether or not step 2
 happened, and the check certifies the exact failure it exists to catch. Compare the daemon's
-resolved path against the **newest version directory actually on disk**.
+resolved path against the **most recently modified version directory on disk** — by mtime, not by name: Claude Code keeps
+every version side by side, and a text sort puts `0.10.0` below `0.6.0`, which passes a stale daemon
+for the same silent reason the breadcrumb comparison does.
 
 ## Install, do not build
 
@@ -205,7 +209,7 @@ resolved path against the **newest version directory actually on disk**.
 | `gh` CLI | How agents read and write the backlog | |
 | [gh-dash](https://github.com/dlvhdr/gh-dash) | Terminal board for issues and PRs | One tmux pane on the VPS |
 | [Backlog.md](https://github.com/MrLesk/Backlog.md) | Personal backlog and agent work queue | MCP server, terminal + web kanban, MIT |
-| chezmoi | Keeps `~/.claude` in step across Mac and VPS | |
+| ~~chezmoi~~ — **not needed** | Would keep `~/.claude` in step across Mac and VPS | Domenic's setup uses it, but `~/.claude` here is **already a private git repo**. A second mechanism over the same directory means one tool commits what the other templates, and the loser is overwritten with no error. `git pull` does this job |
 | tmux | Sessions survive disconnect | |
 | [last30days-skill](https://github.com/mvanhorn/last30days-skill) | Personal research agent | Drop-in, serves goal 2 on day one |
 | [graphify](https://github.com/Graphify-Labs/graphify) *(optional)* | Wiki and graph from docs, SQL, PDFs | `--obsidian` and `--wiki` fit the vault |
@@ -497,7 +501,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **newest version directory on disk** — not the breadcrumb, which is circular, and not merely that the unit is still up | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **most recently modified version directory on disk** (by mtime — a text sort puts `0.10.0` below `0.6.0`) — not the breadcrumb, which is circular, and not merely that the unit is still up | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
