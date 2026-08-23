@@ -303,13 +303,22 @@ test('CLI --run refuses a blank question, which scores an arbitrary 100%', () =>
   // `q: 42` rides along because the obvious short spelling of this guard — `!c.q?.trim()` — passes
   // the blank case and THROWS here: optional chaining guards null, not type. It shipped for one
   // commit and put back the crash the typeof test existed to stop.
-  for (const q of ['   ', '', 42, { text: 'nope' }]) {
+  for (const q of ['   ', '', '???', '…—', 42, { text: 'nope' }]) {
     const { run, casesPath } = scratch(['ours-one'], [{ q, gold: ['ours-one'] }]);
     const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
     assert.equal(r.status, 1, `q=${JSON.stringify(q)} must refuse, not score:\n${r.stdout}`);
     assert.match(r.stdout, /missing a question or a gold array/);
     assert.ok(!r.stdout.includes('recall@'));
     assert.ok(!r.stderr.includes('TypeError'), `q=${JSON.stringify(q)} crashed:\n${r.stderr}`);
+  }
+  // The other half of the rule, and the one that matters more: a question in any script must still
+  // score. `\w` is ASCII-only in JS, so the obvious spelling of "has a word character" would have
+  // rejected every non-Latin question in a vault that has them.
+  for (const q of ['  padded text  ', 'x', '日本語のしつもん', 'hoe lang duurde de cutover']) {
+    const { run, casesPath } = scratch(['ours-one'], [{ q, gold: ['ours-one'] }]);
+    const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+    assert.equal(r.status, 0, `q=${JSON.stringify(q)} must still score:\n${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /recall@/);
   }
 });
 

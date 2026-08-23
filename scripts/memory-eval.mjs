@@ -150,6 +150,19 @@ const parseJsonl = (text, src) => {
   return out;
 };
 
+// A question has to contain something searchable. Blank was the first version of this rule, but
+// `"???"` is not blank and still tokenises to nothing: every BM25 score ties at 0, the ranking is
+// whatever order the documents arrived in, and it scored a confident recall@1 of 100%. One letter
+// or digit is the general form of "not empty to the retriever".
+//
+// `\p{L}\p{N}` with the `u` flag, never `\w`: JS's `\w` is ASCII-only where Python's is unicode-
+// aware, so `\w` would reject 日本語 and every other non-Latin question in a vault that has them.
+//
+// `typeof` first and spelled out: `q` is JSON.parse output, so it can be a number, and
+// `(42)?.trim()` throws where the type test refuses. The short form shipped for one commit.
+/** @param {unknown} q @returns {boolean} */
+const isQuestion = (q) => typeof q === 'string' && /[\p{L}\p{N}]/u.test(q);
+
 // ---------------------------------------------------------------- generate
 
 // --author: read {q, gold} JSONL on stdin, validate every gold note exists, and save as the case
@@ -164,7 +177,7 @@ if (flag('--author')) {
     // Same trust boundary as --run: this is input someone wrote, not a shape we can assume. Both
     // fields, because guarding `gold` and then dereferencing `c.q` two lines later just moves the
     // TypeError down the function.
-    if (typeof c.q !== 'string' || !c.q.trim() || !Array.isArray(c.gold)) {
+    if (!isQuestion(c.q) || !Array.isArray(c.gold)) {
       console.log(
         `every case needs a question and a gold array — got: ${JSON.stringify(c).slice(0, 80)}`,
       );
@@ -278,9 +291,7 @@ const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: st
 // Spelled out rather than as `!c.q?.trim()`: this is JSON.parse output, so `q` can be a number, and
 // optional chaining guards the null but not the type — `(42)?.trim()` throws. The short version
 // shipped for one commit and put back the crash the `typeof` test was there to stop.
-const malformed = cases.filter(
-  (c) => typeof c.q !== 'string' || !c.q.trim() || !Array.isArray(c.gold),
-).length;
+const malformed = cases.filter((c) => !isQuestion(c.q) || !Array.isArray(c.gold)).length;
 if (malformed) {
   console.log(
     `${malformed} of ${cases.length} case lines are missing a question or a gold array — truncated or malformed. Refusing to report a number.\n` +
