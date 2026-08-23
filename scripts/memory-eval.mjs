@@ -269,10 +269,12 @@ const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: st
 // A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
 // Refuse the file: half a case set cannot produce a number anyone should read.
-const malformed = cases.filter((c) => !Array.isArray(c.gold)).length;
+// Both fields, matching --author. Guarding `gold` alone left a line with gold and no question
+// reaching the scorer, which then threw on `c.q` — the same crash one field over.
+const malformed = cases.filter((c) => typeof c.q !== 'string' || !Array.isArray(c.gold)).length;
 if (malformed) {
   console.log(
-    `${malformed} of ${cases.length} case lines have no gold array — truncated or malformed. Refusing to report a number.\n` +
+    `${malformed} of ${cases.length} case lines are missing a question or a gold array — truncated or malformed. Refusing to report a number.\n` +
       `  case set: ${CASES}`,
   );
   process.exit(1);

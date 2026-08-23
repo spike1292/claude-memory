@@ -166,7 +166,8 @@ test.after(() => {
  * A throwaway vault + state dir, isolated from the real ones. Notes are named, not generated:
  * these tests care only about which gold names resolve.
  * @param {readonly string[]} notes
- * @param {readonly {q: string, gold?: string[]}[] | null} cases  null writes no file at all
+ * Both case fields are optional: several tests feed deliberately malformed lines.
+ * @param {readonly {q?: string, gold?: string[]}[] | null} cases  null writes no file at all
  */
 function scratch(notes, cases) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-guard-')));
@@ -290,9 +291,22 @@ test('CLI --run refuses a partly-truncated case set instead of crashing on it', 
   );
   const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.equal(r.status, 1, `must refuse, not crash:\n${r.stdout}${r.stderr}`);
-  assert.match(r.stdout, /1 of 3 case lines have no gold array/);
+  assert.match(r.stdout, /1 of 3 case lines are missing a question or a gold array/);
   assert.ok(!r.stderr.includes('TypeError'), `crashed instead of refusing:\n${r.stderr}`);
   assert.ok(!r.stdout.includes('recall@'));
+});
+
+test('CLI --run refuses a case line with gold but no question', () => {
+  // The guard filtered on `gold` alone, so this reached the scorer and threw on `c.q` — the same
+  // crash one field over, and --author already guarded both.
+  const { run, casesPath } = scratch(
+    ['ours-one'],
+    [{ q: 'a', gold: ['ours-one'] }, { gold: ['ours-one'] }],
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1, `must refuse, not crash:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /missing a question or a gold array/);
+  assert.ok(!r.stderr.includes('TypeError'), `crashed instead of refusing:\n${r.stderr}`);
 });
 
 test('CLI --generate followed by a flag does not write an empty case set over a real one', () => {
