@@ -36,33 +36,29 @@ import {
 const argv = process.argv.slice(2);
 /** @param {string} n @returns {boolean} */
 const flag = (n) => argv.includes(n);
-/** @param {string} n @returns {string|null} */
-const val = (n) => {
+// A flag whose value went missing used to score the DEFAULT case set and print a number the
+// operator read as belonging to the file they had just named — #97's own failure, reached by a typo
+// instead of by a doc. `--cases` last in argv yielded undefined; `--cases --mode lexical` yielded
+// `--mode`. Checked HERE rather than against a list of value-taking flags, because every one of
+// them already passes through this function and a list would silently miss the next one added.
+/** @param {string} n @param {boolean} [bare] value optional — only `--generate`, which means 40 @returns {string|null} */
+const val = (n, bare = false) => {
   const i = argv.indexOf(n);
-  return i >= 0 ? argv[i + 1] : null;
+  if (i < 0) return null;
+  const v = argv[i + 1];
+  if (!bare && (!v || v.startsWith('--'))) {
+    console.log(`${n} needs a value.`);
+    process.exit(1);
+  }
+  return v ?? null;
 };
-// `val()` matches `--flag value` and never `--flag=value`, and nothing here rejects an argument it
-// does not recognise. So `--cases=other.jsonl` was dropped in silence: the run scored the DEFAULT
-// case set and printed a number the operator read as belonging to the file they had just named.
-// That is #97's own failure — a figure attributed to a case set that was never opened — reached by
-// a typo instead of by a doc. Refuse the form rather than guess which half was meant.
+// The other shape of the same hole, and the one no `val()` call can see: `--cases=other.jsonl`
+// matches no flag at all, so it was dropped in silence. Refuse it rather than guess.
 const equalsArg = argv.find((a) => /^--[\w-]+=/.test(a));
 if (equalsArg) {
   const [name, ...rest] = equalsArg.split('=');
   console.log(`${name} takes a space-separated value. Write: ${name} ${rest.join('=')}`);
   process.exit(1);
-}
-// The other half of the same hole: `val()` returns whatever follows the flag, so `--cases` at the
-// end of argv yields undefined and `--cases --mode lexical` yields `--mode`. Both scored the
-// DEFAULT set and reported a number for one the operator never named. `--generate` is absent on
-// purpose — bare `--generate` legitimately means 40.
-for (const f of ['--cases', '--out', '--vault', '--slug', '--style', '--mode', '--fetch-k']) {
-  if (!argv.includes(f)) continue;
-  const v = val(f);
-  if (!v || v.startsWith('--')) {
-    console.log(`${f} needs a value.`);
-    process.exit(1);
-  }
 }
 const repo =
   argv
@@ -136,7 +132,7 @@ if (flag('--author')) {
 }
 
 if (flag('--generate')) {
-  const n = Number(val('--generate') || 40);
+  const n = Number(val('--generate', true) || 40);
   if (fs.existsSync(CASES) && !flag('--force')) {
     console.log(
       `${CASES} exists. Regenerating invalidates every past number — pass --force if that is what you want.`,
