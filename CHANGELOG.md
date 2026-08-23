@@ -27,6 +27,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   property of the vault there, and the corpus-mismatch message blamed the case set for it.
 - **`--run --json` reports `goldResolved`/`goldTotal`.** The churn warning is stderr prose, so a
   machine reading the envelope could not tell a full case set from one a prune had eaten part of.
+- **`--run --json` reports recall only at the ks the fetch window can answer.** A k=5 fetch cannot
+  measure @10, which the human output already honoured and the envelope did not — so `--fetch-k 3`
+  emitted an @5 and an @10 that were @3 censored to the window, indistinguishable from real
+  figures. A consumer passing `--fetch-k 5` now gets keys `1,3,5` where it used to get `1,3,5,10`.
 
 ### Fixed
 
