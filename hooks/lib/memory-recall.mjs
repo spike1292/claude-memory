@@ -33,10 +33,8 @@ export const MAX_CHARS = 900; // ~250 tokens
 // `cases-paraphrase.jsonl` + `cases-keyword.jsonl` that script emits: 80 on-topic prompts whose
 // gold note is known by construction and which nobody wrote for this sweep. The off-topic control
 // was a 28-question authored set about a corpus the bench vault does not contain, so no bench note
-// is a right answer and every fire there is pure noise. That property — not any particular file —
-// is what makes a set usable here; it is deliberately named by its property rather than by a path,
-// because an unscoped case-set name under $CLAUDE_MEMORY_HOME is owned by whichever project
-// authored one first (#97).
+// is a right answer and every fire there is pure noise. Named by that property rather than by its
+// path, because an unscoped case-set name is owned by whichever project authored one first (#97).
 //
 // That control set is MACHINE-LOCAL and cannot ship: authored case sets live under
 // $CLAUDE_MEMORY_HOME and are private by policy, so the on-topic half of this table is

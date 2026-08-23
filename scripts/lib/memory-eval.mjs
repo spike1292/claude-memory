@@ -177,12 +177,17 @@ export const GOLD_FLOOR = 0.5;
 // tells the operator which file to stop using; that path is machine-local, so read it before
 // pasting a refusal anywhere public.
 /**
- * @param {readonly { gold: readonly string[] }[]} cases
+ * `gold` is `unknown` because these come from JSON.parse of a file the user pointed us at — the
+ * shape is a claim, not a guarantee, and this is the boundary that checks it.
+ * @param {readonly { gold?: unknown }[]} cases
  * @param {ReadonlySet<string>} known
  * @returns {{ total: number, resolved: number, fraction: number, verdict: 'ok'|'churn'|'mismatch' }}
  */
 export function goldCoverage(cases, known) {
-  const gold = cases.flatMap((c) => c.gold);
+  // Array-guarded, because a case line with no `gold` key flatMaps to `undefined` and counted as an
+  // unresolvable ref — which made a malformed file report as another vault's rather than reaching
+  // the "names no gold notes at all" branch written for it.
+  const gold = cases.flatMap((c) => (Array.isArray(c.gold) ? c.gold : []));
   const resolved = gold.filter((g) => known.has(g)).length;
   // An empty set divides to NaN, and `NaN >= GOLD_FLOOR` is false — but say it, because a case set
   // with no gold at all is a mismatch on purpose, not an accident of the arithmetic.

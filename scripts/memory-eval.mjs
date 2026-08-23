@@ -171,16 +171,26 @@ const cases = fs
       /** @type {{ q: string, gold: string[], layer?: string, style?: string }} */ (JSON.parse(l)),
   );
 
-// Refuse a case set that is not about this vault. `$CLAUDE_MEMORY_HOME/eval/` is machine-local and
-// shared by every project on the machine, so an unscoped case-set name is owned by whichever
-// project authored one first and every other project then scores itself against those questions —
-// 2/32 gold refs resolvable, reported as a recall figure (#97).
-const cov = goldCoverage(cases, new Set(allNotes().map((n) => n.note)));
+// Refuse a case set that is not about this vault — why, and the measurement, in `goldCoverage`.
+const known = new Set(allNotes().map((n) => n.note));
+// Nothing to score against at all. Diagnosed before coverage, because zero resolvable gold is a
+// property of the VAULT here, and the mismatch branch below would blame the case set for it.
+if (!known.size) {
+  console.log(
+    `no notes for ${SLUG} in ${VAULT} — nothing to score against.\n` +
+      `Check --vault/--slug, or sync the vault before scoring.`,
+  );
+  process.exit(1);
+}
+const cov = goldCoverage(cases, known);
 if (cov.verdict === GOLD.mismatch) {
-  // Which override got us here, if any. Testing the flags rather than comparing CASES to the scoped
-  // path: `--out` overrides too, so path equality told an `--out` caller to drop a `--cases` it
-  // never passed — the very advice this branch exists to withhold.
-  const override = val('--cases') ? '--cases' : val('--out') ? '--out' : null;
+  // Which override got us here, if any — and it takes BOTH tests, each having been the whole answer
+  // once. The path says WHETHER an override matters: passing --cases with the scoped path is not an
+  // override, and advising "drop it" hands back the identical file. The flag says WHICH to name:
+  // --out overrides too, so path equality alone told an --out caller to drop a --cases it never
+  // passed. Either test alone reintroduces the other's bug.
+  const override =
+    CASES === SCOPED_CASES ? null : val('--cases') ? '--cases' : val('--out') ? '--out' : null;
   const fix = !override
     ? `This IS ${SLUG}'s own set, so the vault has moved out from under it. Re-author it with --author.`
     : `Drop ${override} to use this project's own set: ${SCOPED_CASES}\nAuthor one with --author if it does not exist yet.`;

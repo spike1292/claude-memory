@@ -129,6 +129,15 @@ test('goldCoverage: a case set with no gold refs at all is a mismatch, not a pas
   assert.equal(cov.verdict, 'mismatch', 'an empty set must not divide to a passing 1');
 });
 
+test('goldCoverage: a case line with no usable gold contributes nothing to the count', () => {
+  // `flatMap` on a missing key yields `undefined`, which counted as one unresolvable ref — so a
+  // malformed file reported as another vault's instead of reaching the "no gold notes at all"
+  // branch written for it.
+  const cov = goldCoverage([{}, { gold: null }, { gold: 'not-an-array' }], new Set(['a']));
+  assert.equal(cov.total, 0);
+  assert.equal(cov.verdict, 'mismatch');
+});
+
 test('goldCoverage: a gold note named twice counts once per reference', () => {
   const cov = goldCoverage([{ gold: ['a'] }, { gold: ['a'] }], new Set(['a']));
   assert.equal(cov.total, 2);
@@ -157,7 +166,7 @@ test.after(() => {
  * A throwaway vault + state dir, isolated from the real ones. Notes are named, not generated:
  * these tests care only about which gold names resolve.
  * @param {readonly string[]} notes
- * @param {readonly {q: string, gold: string[]}[] | null} cases
+ * @param {readonly {q: string, gold?: string[]}[] | null} cases  null writes no file at all
  */
 function scratch(notes, cases) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-guard-')));
@@ -166,23 +175,30 @@ function scratch(notes, cases) {
   const notesDir = path.join(vault, 'Memory', SLUG);
   fs.mkdirSync(notesDir, { recursive: true });
   for (const n of notes) fs.writeFileSync(path.join(notesDir, `${n}.md`), `# ${n}\n`);
-  const state = path.join(tmp, 'state');
-  fs.mkdirSync(path.join(state, 'eval'), { recursive: true });
-  assert.notEqual(vault, process.env.CLAUDE_VAULT, 'scratch vault must not be the real one');
-  let casesPath = null;
-  if (cases) {
-    casesPath = path.join(tmp, 'cases.jsonl');
-    fs.writeFileSync(casesPath, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
-  }
-  // Built, never spread: an inherited CLAUDE_VAULT would point the child at the real vault.
-  const env = { PATH: process.env.PATH, HOME: path.join(tmp, 'home'), CLAUDE_MEMORY_HOME: state };
+  const evalDir = path.join(tmp, 'state', 'eval');
+  fs.mkdirSync(evalDir, { recursive: true });
+  // Through the resolver, not a hand-written copy: the whole bug was a second copy of this path
+  // drifting from where the script looks.
+  const scopedPath = defaultCasesPath(evalDir, SLUG, 'semantic');
+  // Always a real path, written only when there are cases: five casts to satisfy one nullable
+  // caller is the tail wagging the dog.
+  const casesPath = path.join(tmp, 'cases.jsonl');
+  if (cases) fs.writeFileSync(casesPath, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
+  // Built, never spread. This is the isolation — an inherited CLAUDE_VAULT would point the child at
+  // the real vault. (A `vault !== process.env.CLAUDE_VAULT` assert used to sit here; under mkdtemp
+  // it could never fire, and a guard that cannot fail reads as protection that is not there.)
+  const env = {
+    PATH: process.env.PATH,
+    HOME: path.join(tmp, 'home'),
+    CLAUDE_MEMORY_HOME: path.join(tmp, 'state'),
+  };
   /** @param {...string} args */
   const run = (...args) =>
     spawnSync(process.execPath, [ENTRY, '--vault', vault, '--slug', SLUG, ...args], {
       encoding: 'utf8',
       env,
     });
-  return { run, casesPath, state };
+  return { run, casesPath, scopedPath, vault };
 }
 
 test('CLI --run refuses a case set built from another vault, and names no notes', () => {
@@ -193,7 +209,7 @@ test('CLI --run refuses a case set built from another vault, and names no notes'
       { q: 'b', gold: ['theirs-two', 'theirs-three'] },
     ],
   );
-  const r = run('--run', '--cases', /** @type {string} */ (casesPath));
+  const r = run('--run', '--cases', casesPath);
   assert.equal(r.status, 1, `a mismatched case set must exit non-zero:\n${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /0\/3 gold notes/);
   assert.match(r.stdout, /DIFFERENT vault/);
@@ -214,7 +230,7 @@ test('CLI --run warns but proceeds when a gold note was pruned', () => {
   );
   // --mode lexical scores in-process, so this one runs the whole way through without a model or an
   // index — which is what lets it assert the exit code, not just the warning.
-  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.match(r.stderr, /warning: 1\/4 gold notes no longer exist/);
   assert.ok(
     !r.stdout.includes('DIFFERENT vault'),
@@ -225,39 +241,54 @@ test('CLI --run warns but proceeds when a gold note was pruned', () => {
 });
 
 test('CLI --run with no --cases resolves the slug-scoped default', () => {
-  const { run, state } = scratch(['ours-one'], null);
+  const { run, scopedPath } = scratch(['ours-one'], null);
   const r = run('--run');
-  // No case set exists, so it stops at the "generate one first" branch — which is exactly what
+  // No case set exists, so it stops at the "author one first" branch — which is exactly what
   // prints the path it resolved. That path is the whole fix: scoped by slug, and by style.
   assert.match(r.stdout, /no case set at/);
-  // Through defaultCasesPath, not a hand-written copy of the name: a second copy of this filename
-  // drifting from the resolver is the bug being fixed, and a test carrying its own copy would go on
-  // passing after the resolver moved.
-  assert.ok(
-    r.stdout.includes(defaultCasesPath(path.join(state, 'eval'), SLUG, 'semantic')),
-    `default must be slug-scoped, got:\n${r.stdout}`,
-  );
+  assert.ok(r.stdout.includes(scopedPath), `default must be slug-scoped, got:\n${r.stdout}`);
 });
 
 test('CLI --run does not tell you to drop a --cases you never passed', () => {
   // The project's OWN scoped set, gone stale against a vault that moved. Advising "drop --cases"
   // here would name the flag the caller did not use and point at the file it just ran.
-  const { run, state } = scratch(['ours-one'], null);
-  fs.writeFileSync(
-    defaultCasesPath(path.join(state, 'eval'), SLUG, 'semantic'),
-    JSON.stringify({ q: 'a', gold: ['long-gone'] }) + '\n',
-  );
+  const { run, scopedPath } = scratch(['ours-one'], null);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'a', gold: ['long-gone'] }) + '\n');
   const r = run('--run');
   assert.equal(r.status, 1);
   assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
   assert.match(r.stdout, /vault has moved out from under it/);
 });
 
+test('CLI --run treats an explicit --cases at the scoped path as no override', () => {
+  // The symmetric hole. Round 1 keyed this on path equality, round 2 swapped it for flag-testing,
+  // and each alone reintroduced the other's bug: pasting the scoped path back — which both the
+  // refusal and the "no case set at" branch hand you — got "Drop --cases" pointing at that same
+  // file, and "DIFFERENT vault" for a set that is this project's own.
+  const { run, scopedPath } = scratch(['ours-one'], null);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'a', gold: ['long-gone'] }) + '\n');
+  const r = run('--run', '--cases', scopedPath);
+  assert.equal(r.status, 1);
+  assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
+  assert.match(r.stdout, /vault has moved out from under it/);
+});
+
+test('CLI --run says the vault is empty rather than blaming the case set', () => {
+  const { run, casesPath } = scratch([], [{ q: 'a', gold: ['anything'] }]);
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /nothing to score against/);
+  assert.ok(
+    !r.stdout.includes('DIFFERENT vault'),
+    'an unsynced vault is not evidence about the case set',
+  );
+});
+
 test('CLI --run names the override the caller actually used, including --out', () => {
   // --out overrides the case path too, so a branch keyed on "is CASES the scoped path" told an
   // --out caller to drop a --cases it never passed — round 1's fix reintroducing round 1's bug.
   const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['theirs'] }]);
-  const r = run('--run', '--out', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  const r = run('--run', '--out', casesPath, '--mode', 'lexical');
   assert.equal(r.status, 1);
   assert.match(r.stdout, /Drop --out to use this project's own set/);
   assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
@@ -265,7 +296,7 @@ test('CLI --run names the override the caller actually used, including --out', (
 
 test("CLI --run calls an empty case set empty, not another vault's", () => {
   const { run, casesPath } = scratch(['ours-one'], []);
-  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.equal(r.status, 1);
   assert.match(r.stdout, /names no gold notes at all/);
   assert.ok(
@@ -278,7 +309,11 @@ test("CLI --run calls an empty case set empty, not another vault's", () => {
 // that overrode it, so re-adding `--cases` to commands/eval.md would reinstate the bug with every
 // other test in this file green.
 test('commands/eval.md runs the per-project eval without --cases', () => {
-  const doc = fs.readFileSync(new URL('../../commands/eval.md', import.meta.url), 'utf8');
+  const raw = fs.readFileSync(new URL('../../commands/eval.md', import.meta.url), 'utf8');
+  // Join shell line-continuations FIRST, so a scan line is a whole logical command. Scanning raw
+  // lines, `--run` on one line and `--cases` on the next passed this test while fully reinstating
+  // #97 — a scan guard that reports clean because it looked at the wrong unit.
+  const doc = raw.replace(/\\\n\s*/g, ' ');
   // The per-project invocations are the memory-eval ones with no --vault: a --vault line is the
   // bench-vault walkthrough, where an explicit --cases is correct.
   const perProject = doc
@@ -305,7 +340,7 @@ test('CLI --run is unchanged when every gold note resolves', () => {
       { q: 'b', gold: ['ours-two'] },
     ],
   );
-  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.equal(r.status, 0, `a matching case set must score cleanly:\n${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /recall@/);
   assert.ok(!r.stderr.includes('warning:'), 'the ok band must say nothing at all');
