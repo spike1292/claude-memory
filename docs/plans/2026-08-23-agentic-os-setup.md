@@ -98,13 +98,17 @@ says why.
 
 - The socket is `search-${MODEL_KEY}.sock` (`scripts/memory-semantic.mjs:73`) — **keyed by model, not
   by project**. Both worlds use bge-m3, so both want the same filename.
-- A starting server **evicts every sibling `search-*.sock`** in the same `run/` dir
-  (`scripts/lib/memory-semantic.mjs:91`). The second server does not coexist; it kills the first.
-- The slug is a **request field**, not a startup argument. Whichever server survives will answer for
-  any slug whose index it can find.
+- A second `--serve` on that name **refuses to start**: it probes `socketIsLive(SERVE_SOCK)`, prints
+  `already serving bge-m3`, and exits 0 (`scripts/memory-semantic.mjs:86-88`). It does not evict the
+  first — `evictableSockets()` filters `n !== ownName` (`scripts/lib/memory-semantic.mjs:91`), so
+  eviction only ever fires on a *different* name: another model, or a legacy per-project socket.
+- The slug is a **request field**, not a startup argument. The one surviving server answers for any
+  slug whose index it can find.
 
-Composed, that is the failure: the work server starts, kills the personal one, and then answers a
-work-slug query arriving through the **public** `/mcp` door.
+Composed, that is the failure: the personal server is already up, the work session's server quietly
+declines to start, and the personal server then answers a work-slug query arriving through the
+**public** `/mcp` door. Nothing crashes and nothing is logged as wrong. It is not a race that
+sometimes bites — it is the steady state.
 
 **The wall is `$CLAUDE_MEMORY_HOME`.** It is the one setting that can only be an environment variable
 (`hooks/lib/paths.mjs:161`), because it relocates `config.json` itself — and it relocates `run/`,
@@ -145,13 +149,19 @@ network isolation, domain allowlists, `sandbox.credentials`, and `allowUnsandbox
 The AFK-factory video's author hand-rolled a TypeScript sandbox because Docker was painful; that work
 is now redundant.
 
-## Build — four items, roughly 370 lines of code plus prose
+## Build — four items, roughly 410 lines of code plus prose
 
 ### 1. `vault-mcp` — HTTP MCP server over the vault *(this repo)*
 
 ~150 lines. Nothing off the shelf serves the L1–L4 layers. `scripts/memory-semantic.mjs --serve`
 already holds the model, answers per-slug queries, and caches indexes on demand; this is a thin
 HTTP + MCP shell over that socket.
+
+**`node:http` plus hand-rolled JSON-RPC — no new dependency.** Every release installs into its own
+version-pinned cache dir, and Claude Code runs `npm ci`, so a `@modelcontextprotocol/sdk` entry would
+ship into every user's cache to serve a feature only this machine uses. `devDependencies` are not an
+escape hatch: `npm ci` installs those too. If the shell ever needs more than a few hundred lines,
+that is the signal to move this item to the new repo instead of taking the dependency.
 
 **Read-only in phase 1.** Bearer token. An explicit **allow-list** of exposed paths, not a deny-list.
 It binds to the personal `$CLAUDE_MEMORY_HOME` and no other. Writes are phase 5, after the door has
@@ -237,10 +247,13 @@ Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
 
 Five rules, each with a reason:
 
-1. **Poll every 30 minutes, not every minute.** A headless `claude -p` run costs a near-fixed ~40k
-   tokens of context whatever the prompt (measured 2026-08-20). A one-minute poller burns money
-   finding nothing. `--output-format json` is what makes the real per-run cost readable, so the cap
-   in rule 3 rests on a measurement rather than an estimate.
+1. **Poll every 30 minutes, not every minute.** Note what this is *not* about: an empty tick costs
+   one `gh issue list` and one `backlog task list`, and no tokens at all — `claude -p` runs per
+   task, not per tick. The reason is human throughput. Every task that fires produces a PR that
+   wants reviewing, and a headless run costs a near-fixed ~40k tokens whatever the prompt (measured
+   2026-08-20), so a fast tick converts a morning of labelling into a queue of PRs and a bill. Read
+   the real per-run figure from `--output-format json`; the concurrency cap under Risks rests on a
+   measurement, never an estimate.
 2. **Worktrees go in `~/worktrees/`, never `.claude/worktrees/`.** Claude Code's default puts them
    inside the project, and `node_modules` resolution then walks up into the parent and loads the
    wrong version.

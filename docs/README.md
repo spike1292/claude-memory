@@ -38,7 +38,7 @@ like — where a decision record says why something already is the way it is. Pl
 visible to whoever reads the repo. Keep the Status section current, and delete a plan once every
 step has shipped — the changelog is the record from then on.
 
-| Plan | What |
+| | |
 | --- | --- |
 | [Agentic OS, 2026-08-23](plans/2026-08-23-agentic-os-setup.md) | VPS brain box, the vault served to CoWork over remote MCP, and an AFK software factory. Spans two repos; only the memory-layer items land here. Nothing built yet. |
 
