@@ -62,9 +62,10 @@ export function linkTargets(text) {
 export function noteTargets(text) {
   /** @type {string[]} */
   const out = [];
-  for (const m of text.matchAll(/\[\[([^\]|#]+)/g)) out.push(m[1].trim());
-  for (const m of text.matchAll(/\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
-    out.push(m[1].replace(/^\.\//, '').trim());
+  // One pass, so the result is in DOCUMENT order — two passes put every wikilink before every
+  // markdown link, and bulletTarget() takes [0], so a bullet mixing both forms picked the wrong one.
+  for (const [, wiki, md] of text.matchAll(/\[\[([^\]|#]+)|\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
+    out.push(wiki !== undefined ? wiki.trim() : md.replace(/^\.\//, '').trim());
   return out;
 }
 

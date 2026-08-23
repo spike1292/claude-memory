@@ -8,6 +8,7 @@ import {
   linkTargets,
   findOrphans,
   findDrift,
+  noteTargets,
   mocSize,
   findOversize,
   reportFor,
@@ -66,6 +67,16 @@ test('findOrphans counts sibling links but not the MOC or self', () => {
   );
   // MEMORY is never reported as an orphan itself
   assert.deepStrictEqual(findOrphans(M, ['MEMORY'], corpus([['MEMORY.md', 'x']])), []);
+});
+
+test('noteTargets returns both link forms in document order', () => {
+  // #94 review round 3: two passes put every wikilink before every markdown link, so
+  // bulletTarget()'s [0] picked the wrong target on a bullet that mixed both forms.
+  assert.deepStrictEqual(noteTargets('- [md](first.md) then [[second]]'), ['first', 'second']);
+  assert.deepStrictEqual(noteTargets('- [[first]] then [md](second.md)'), ['first', 'second']);
+  assert.deepStrictEqual(noteTargets('[[a|alias]] and [[b#head]]'), ['a', 'b']);
+  assert.deepStrictEqual(noteTargets('[site](https://e.com)'), [], 'no .md, no target');
+  assert.deepStrictEqual(noteTargets('[x](./y.md#z)'), ['y'], './ stripped, anchor dropped');
 });
 
 test('findDrift reads the markdown links a real MEMORY.md is written with', () => {
