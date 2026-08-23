@@ -9,8 +9,68 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Changed
+
+- **`memory-eval.mjs` now refuses an argument it does not recognise instead of ignoring it.** Three
+  shapes were discarded in silence, each making the run score the **default** case set while
+  printing a recall figure the operator would read as belonging to the file they had just named:
+  `--cases=other.jsonl` (`val()` has only ever read the space-separated form), a misspelled flag
+  name like `--casess`, and any other unknown `--flag`. All three now exit 1; the equals form says
+  which form to use, and an unknown name prints the set of known flags. A scripted invocation using
+  any of them appeared to work and did not.
+- **A scored `--run` prints `cases: <path>` under the summary line.** The `--json` output has always
+  carried the case-set path; the human-readable one did not, so nothing in it contradicted a wrong
+  belief about which set had been read. Anything parsing that text output sees one new line.
+- **A value-taking flag with no value is refused instead of ignored.** `--cases` last in argv gave
+  `undefined` and `--cases --mode lexical` swallowed the next flag; both scored the default set. The
+  check lives in `val()` itself, so it covers every flag that reads a value rather than a list that
+  could miss the next one. `--generate` keeps its documented bare form.
+- **`--run` against a vault with no notes refuses rather than scoring.** Zero resolvable gold is a
+  property of the vault there, and the corpus-mismatch message blamed the case set for it.
+- **`--run --json` reports `goldResolved`/`goldTotal`.** The churn warning is stderr prose, so a
+  machine reading the envelope could not tell a full case set from one a prune had eaten part of.
+- **`--run --json` reports recall only at the ks the fetch window can answer.** A k=5 fetch cannot
+  measure @10, which the human output already honoured and the envelope did not — so `--fetch-k 3`
+  emitted an @5 and an @10 that were @3 censored to the window, indistinguishable from real
+  figures. A consumer passing `--fetch-k 5` now gets keys `1,3,5` where it used to get `1,3,5,10`.
+
 ### Fixed
 
+- **A malformed or misdirected case set now refuses with a message instead of crashing or
+  reporting zeros.** Four inputs used to escape: a truncated JSONL line threw `SyntaxError` from
+  inside a `.map()`, `--cases` pointing at a directory threw `EISDIR`, a case line missing its
+  `gold` array or its `q` threw `TypeError` part-way through scoring or authoring, and a non-numeric
+  `--fetch-k` emptied the recall-k list so `--json` reported every k as 0 at exit 0. That last one
+  is the dangerous shape — a confident all-zero figure attributed to a named case set.
+- **A question with nothing searchable in it produced a figure with no retrieval behind it.** A
+  blank or punctuation-only `q` (`""`, `"   "`, `"???"`) is not missing, so it passed validation,
+  tokenised to nothing, and tied every BM25 score at 0 — leaving the ranking as whatever order the
+  documents arrived in. Measured 2026-08-23: recall@1 100% on a 3-note vault where k exceeds the
+  corpus, 0.0% on the 60-note bench vault. A case now needs at least one letter or digit; questions
+  in any script still score, since the check is `\p{L}\p{N}`, not the ASCII-only `\w`.
+- **`--author` with empty stdin overwrote the case set with an empty file, exit 0.** It has no
+  `--force` gate at all, so a producer that failed, a `< /dev/null`, or a filter matching nothing
+  silently replaced the authored baseline every past number was measured against. It now refuses to
+  write an empty set. Same data loss as the `--generate` bullet below, on the less guarded branch.
+- **`--generate` followed by another flag overwrote the case set with an empty file, exit 0.**
+  `--generate --force` made `Number('--force')`, so the stride was `NaN` and the sample loop never
+  ran — destroying the authored baseline every past number was measured against. A flag after
+  `--generate` now means the documented default of 40, and a non-numeric count is refused.
+- **`/memory:eval` scored every project against whichever one authored a case set first.** The
+  command passed `--cases "$STATE/eval/eval-cases-authored.jsonl"` — a name with no slug in it, in a
+  machine-local directory shared by every project on the machine — which overrode the slug- and
+  style-scoped default `memory-eval.mjs` already resolved correctly. Measured 2026-08-23 from this
+  repo: **2 of 32** gold refs in that set resolved to a note in this vault (both in cross-project
+  `permanent/`), against **53 of 53** for the same project's scoped set. The `--cases` argument is
+  gone from both invocations, and the doc now says why not to reintroduce it.
+- **`--run` reported a mismatched case set as a recall figure instead of refusing it.** `--author`
+  has always resolved every gold note and failed on a missing one; `--run` checked only that the
+  case *file* existed, so another vault's questions produced a confident 0%. It now resolves gold
+  before scoring: below a 50% floor it aborts as a corpus mismatch, above it warns and scores, so a
+  gold note lost to a prune stays a warning. Failures report **counts only, never note names** —
+  those may belong to another project's private vault, and this output is pasted into public issues.
+  The recall hook's `MIN_SCORE` sweep comment no longer names the unscoped file either; it describes
+  the property an off-topic control set needs.
 - **`/memory:health` reported every L1 note as missing from the MOC.** `MEMORY.md` is written with
   markdown links (`[Title](note.md)`), but `memory-audit-checks.mjs` scanned it for `[[wikilinks]]`
   only — so it called all 8 notes orphaned on 2026-08-22. MOC membership now accepts both forms;

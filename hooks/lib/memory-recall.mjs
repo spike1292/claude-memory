@@ -32,8 +32,9 @@ export const MAX_CHARS = 900; // ~250 tokens
 // built 120 before #49 made that flag a ceiling), using the
 // `cases-paraphrase.jsonl` + `cases-keyword.jsonl` that script emits: 80 on-topic prompts whose
 // gold note is known by construction and which nobody wrote for this sweep. The off-topic control
-// is the 28 questions in `$CLAUDE_MEMORY_HOME/eval/eval-cases-authored.jsonl` — they ask about
-// THIS repo, so no bench note is a right answer and every fire there is pure noise.
+// was a 28-question authored set about a corpus the bench vault does not contain, so no bench note
+// is a right answer and every fire there is pure noise. Named by that property rather than by its
+// path, because an unscoped case-set name is owned by whichever project authored one first (#97).
 //
 // That control set is MACHINE-LOCAL and cannot ship: authored case sets live under
 // $CLAUDE_MEMORY_HOME and are private by policy, so the on-topic half of this table is

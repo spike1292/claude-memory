@@ -11,16 +11,18 @@
 // same cases.**
 //
 // Usage:
+//   node memory-eval.mjs --author < cases.jsonl          the way to make a REAL paraphrase set
 //   node memory-eval.mjs --generate 40 [--style semantic|keyword] [--out <path>]
 //   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
 //   node --test scripts/lib/memory-eval.test.mjs
 //
-// Cases live in ~/.claude/data/eval-cases-<slug>-<style>.jsonl and are GITIGNORED: they contain
-// vault content. Regenerate only with --force; a changed case set invalidates every past number.
+// Cases live at `defaultCasesPath()` under $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they
+// contain vault content. Regenerate only with --force; a changed case set invalidates every past
+// number.
 
-// The shared lexical vocabulary is the ONLY import here. `node:fs`, `node:path`, `execFileSync`,
-// `model-default.mjs` and `paths.mjs` were all imported and none of them referenced — dead since
-// the entry/lib split moved the CLI out. Dropped 2026-08-19.
+// `node:fs`, `execFileSync`, `model-default.mjs` and `paths.mjs` were all imported and none of them
+// referenced — dead since the entry/lib split moved the CLI out. Dropped 2026-08-19.
+import path from 'node:path';
 import { bm25, lexTokens } from './lexical.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
@@ -132,4 +134,67 @@ export function metrics(perCase) {
     recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
   const mrr = perCase.reduce((a, c) => a + (c.rank ? 1 / c.rank : 0), 0) / n;
   return { recall, mrr };
+}
+
+// The one place a case-set filename is built. It is slug- AND style-scoped because
+// $CLAUDE_MEMORY_HOME/eval/ is machine-local and shared by every project on the machine: a name
+// without a slug in it belongs to whichever project authored one first, and every other project
+// then scores itself against that vault's questions (#97).
+//
+// One place on purpose: the bug this fixes was a second, hand-written copy of this name drifting
+// from the resolver. Messages that quote a case-set path resolve it through here, never rebuild it.
+/** @param {string} dir @param {string} slug @param {string} style @returns {string} */
+export function defaultCasesPath(dir, slug, style) {
+  return path.join(dir, `eval-cases-${slug}-${style}.jsonl`);
+}
+
+// The verdicts goldCoverage() decides. A constant, not a literal: a copy in the producer and
+// another in the branch that reads it drift apart in silence, and every test written against the
+// copy stays green while the branch goes dead.
+export const GOLD = /** @type {const} */ ({
+  ok: 'ok',
+  churn: 'churn',
+  mismatch: 'mismatch',
+});
+
+// Below this fraction of gold notes resolving, the case set is not measuring this vault at all.
+// Low on purpose: it separates a mismatched CORPUS from ordinary churn, and nothing else. A gold
+// note deleted by a prune must stay a warning — `/memory:prune` removed 20 notes on 2026-08-22 and
+// none of them was gold, so the legitimate rate is near zero and the floor never has to be tight.
+export const GOLD_FLOOR = 0.5;
+
+// The guard `--run` did not have. `--author` has always resolved every gold note and refused a set
+// with a missing one; `--run` checked that the case FILE existed and then scored, so a case set
+// built from a DIFFERENT vault produced a confident 0% instead of an error. Measured 2026-08-23
+// through this code path: 2/32 gold refs resolvable from the unscoped path `/memory:eval` named,
+// against 53/53 for the same project's slug-scoped set (#97). The 2 are notes in `permanent/`,
+// which is cross-project by design — which is why the floor is a FRACTION and not "any miss".
+//
+// The REFUSAL reports counts, never note names: the missing notes may belong to another project's
+// private vault — the same leak recorded in the mistakes layer when `--stats` printed vault paths
+// into a paste-into-issues report. Two limits on that claim, both deliberate. The caller echoes the
+// case-set PATH, which is what tells the operator which file to stop using. And the `churn` band
+// scores rather than refusing, so the normal misses block prints gold names — that band assumes the
+// set is this project's, which below the floor is exactly what stops being true.
+/**
+ * `gold` is `unknown` because these come from JSON.parse of a file the user pointed us at — the
+ * shape is a claim, not a guarantee, and this is the boundary that checks it.
+ * @param {readonly { gold?: unknown }[]} cases
+ * @param {ReadonlySet<string>} known
+ * @returns {{ total: number, resolved: number, verdict: 'ok'|'churn'|'mismatch' }}
+ */
+export function goldCoverage(cases, known) {
+  // Array-guarded, because a case line with no `gold` key flatMaps to `undefined` and counted as an
+  // unresolvable ref — which made a malformed file report as another vault's rather than reaching
+  // the "names no gold notes at all" branch written for it.
+  const gold = cases.flatMap((c) => (Array.isArray(c.gold) ? c.gold : []));
+  const resolved = gold.filter((g) => known.has(g)).length;
+  // An empty set divides to NaN, and `NaN >= GOLD_FLOOR` is false — but say it, because a case set
+  // with no gold at all is a mismatch on purpose, not an accident of the arithmetic.
+  const fraction = gold.length ? resolved / gold.length : 0;
+  return {
+    total: gold.length,
+    resolved,
+    verdict: fraction === 1 ? GOLD.ok : fraction >= GOLD_FLOOR ? GOLD.churn : GOLD.mismatch,
+  };
 }
