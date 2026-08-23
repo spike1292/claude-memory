@@ -132,8 +132,11 @@ a systemd unit is not one. An `ExecStart` naming `…/memory/0.6.0/scripts/vault
 serving 0.6.0 after `/plugin update memory`, or dies when that directory goes, and the public
 connector goes dark with nothing saying why. Use the repo's existing answer, the `plugin-root`
 breadcrumb every `commands/*.md` already falls back to — but **not in the form those files use**.
-`${CLAUDE_PLUGIN_ROOT:-$(cat …)}` is bash, and `ExecStart=` runs no shell: systemd expands bare
-`$VAR`/`${VAR}` from its own environment and supports neither `:-` defaults nor `$(…)`. Written as
+`${CLAUDE_PLUGIN_ROOT:-$(cat …)}` is bash, and `ExecStart=` runs no shell: systemd expands `${VAR}`
+from its own environment and supports neither `:-` defaults nor `$(…)`. (Bare `$VAR` it expands only
+as a standalone word — which is why the whole script below is a single quoted argument, and why the
+`$r` inside it reaches `sh` untouched. Do not "fix" that to `$$r`; `sh` would substitute the PID.)
+Written as
 printed, `systemctl start` fails on an invalid variable name before Caddy or the connector is ever
 tested. It needs an explicit shell, and `CLAUDE_MEMORY_HOME` has to be put in the unit's environment
 because nothing else will be:
@@ -149,17 +152,22 @@ no login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is checked, 
 `set -e`: an absent file makes `cat` fail to stderr, `$(…)` expand to empty, and the unit exec
 `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop — a dark connector with no cause named.
 
-**VPS catch:** `vault-memory-sync.sh` writes that breadcrumb only when a Claude Code *session*
-starts in that `$CLAUDE_MEMORY_HOME`. So it can be **stale** on a box that only runs the daemon, and
-**absent** if the unit is enabled before any session has run there — or written to the *work* home
-if the work session ran first. Phase 1 verifies it, and again after every `/plugin update memory`.
+**VPS catch, and it is worse than staleness.** `vault-memory-sync.sh` writes that breadcrumb only
+when a Claude Code *session* starts in that `$CLAUDE_MEMORY_HOME` — so it is **absent** if the unit
+is enabled before any session has run there, and **stale** on a box that only runs the daemon.
+
+But `ExecStart` reads it **once, at start**, so a fresh breadcrumb moves nothing on its own. Claude
+Code keeps every installed version rather than replacing the cache, so after `/plugin update memory`
+the old directory still exists and the running daemon happily serves it — forever, with no error.
+**`systemctl restart vault-mcp` is a required step after every plugin update**, and the phase-1
+check is that the daemon is serving the *new* version, not merely that it is still up.
 
 ## Install, do not build
 
 | Thing | Job | Note |
 | --- | --- | --- |
 | Hostinger VPS, Ubuntu 24.04, 16 GB RAM | The brain box | Sized for peak, not idle — see RAM under Risks |
-| **Node ≥ 22.5**, from nodesource or fnm | Runs `vault-mcp` and every script | `package.json` requires it for `node:sqlite`; Ubuntu 24.04's `apt install nodejs` gives 18.19, which throws on import. Claude Code bundles its own runtime and does **not** put `node` on `PATH` |
+| **Node ≥ 22.5, from nodesource** — not fnm/nvm | Runs `vault-mcp` and every script | `package.json` requires it for `node:sqlite`; Ubuntu 24.04's `apt install nodejs` gives 18.19, which throws on import. Claude Code bundles its own runtime and does **not** put `node` on `PATH`. nodesource is specified because it installs `/usr/bin/node`, which is what the unit below execs; a version manager puts it under `~/.local/share/…` and the unit dies `203/EXEC` |
 | Tailscale | SSH and dev-server preview | Free tier |
 | Caddy | TLS and reverse proxy for `/mcp` | Auto certificates |
 | Claude Code + the `memory` plugin | Agent and memory | Same plugin, second machine |
@@ -460,7 +468,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; the `plugin-root` breadcrumb is verified and the unit survives a `/plugin update memory` | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after a `/plugin update memory` **and a `systemctl restart`**, the daemon is serving the **new** version — checked against the breadcrumb's content, not by the unit still being up | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
