@@ -167,7 +167,7 @@ test.after(() => {
  * these tests care only about which gold names resolve.
  * @param {readonly string[]} notes
  * Both case fields are optional: several tests feed deliberately malformed lines.
- * @param {readonly {q?: string, gold?: string[]}[] | null} cases  null writes no file at all
+ * @param {readonly {q?: unknown, gold?: unknown}[] | null} cases  null writes no file at all
  */
 function scratch(notes, cases) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-guard-')));
@@ -300,11 +300,17 @@ test('CLI --run refuses a blank question, which scores an arbitrary 100%', () =>
   // `typeof '' === 'string'`, so an empty q passed the guard. It tokenises to nothing, every BM25
   // score ties at 0, and the ranking is whatever order the docs came in — measured as recall@1
   // 100%, MRR 1.000. A confident figure from a question nobody asked.
-  const { run, casesPath } = scratch(['ours-one'], [{ q: '   ', gold: ['ours-one'] }]);
-  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
-  assert.equal(r.status, 1, `must refuse, not score:\n${r.stdout}`);
-  assert.match(r.stdout, /missing a question or a gold array/);
-  assert.ok(!r.stdout.includes('recall@'));
+  // `q: 42` rides along because the obvious short spelling of this guard — `!c.q?.trim()` — passes
+  // the blank case and THROWS here: optional chaining guards null, not type. It shipped for one
+  // commit and put back the crash the typeof test existed to stop.
+  for (const q of ['   ', '', 42, { text: 'nope' }]) {
+    const { run, casesPath } = scratch(['ours-one'], [{ q, gold: ['ours-one'] }]);
+    const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+    assert.equal(r.status, 1, `q=${JSON.stringify(q)} must refuse, not score:\n${r.stdout}`);
+    assert.match(r.stdout, /missing a question or a gold array/);
+    assert.ok(!r.stdout.includes('recall@'));
+    assert.ok(!r.stderr.includes('TypeError'), `q=${JSON.stringify(q)} crashed:\n${r.stderr}`);
+  }
 });
 
 test('CLI --run refuses a case line with gold but no question', () => {

@@ -164,7 +164,7 @@ if (flag('--author')) {
     // Same trust boundary as --run: this is input someone wrote, not a shape we can assume. Both
     // fields, because guarding `gold` and then dereferencing `c.q` two lines later just moves the
     // TypeError down the function.
-    if (!c.q?.trim() || !Array.isArray(c.gold)) {
+    if (typeof c.q !== 'string' || !c.q.trim() || !Array.isArray(c.gold)) {
       console.log(
         `every case needs a question and a gold array — got: ${JSON.stringify(c).slice(0, 80)}`,
       );
@@ -274,7 +274,13 @@ const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: st
 // as absent: an empty query tokenises to nothing, every BM25 score ties at 0, and the ranking is
 // then arbitrary — measured here as a confident recall@1 of 100%. A number from no question is the
 // thing this guard exists to refuse, whether it arrives by a wrong corpus or by a blank line.
-const malformed = cases.filter((c) => !c.q?.trim() || !Array.isArray(c.gold)).length;
+//
+// Spelled out rather than as `!c.q?.trim()`: this is JSON.parse output, so `q` can be a number, and
+// optional chaining guards the null but not the type — `(42)?.trim()` throws. The short version
+// shipped for one commit and put back the crash the `typeof` test was there to stop.
+const malformed = cases.filter(
+  (c) => typeof c.q !== 'string' || !c.q.trim() || !Array.isArray(c.gold),
+).length;
 if (malformed) {
   console.log(
     `${malformed} of ${cases.length} case lines are missing a question or a gold array — truncated or malformed. Refusing to report a number.\n` +
