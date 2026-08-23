@@ -1,6 +1,7 @@
 # Embedding reconcile for the distiller's dedup
 
-Status: in progress (2026-08-23). Issue #93. Follow-up scan: #100.
+Status: shipped 2026-08-23 in #101, pending the maintainer's truth-file run. Issue #93.
+Follow-up scan: #100.
 
 ## Why
 
@@ -30,13 +31,15 @@ raises their similarity past the bar, so adjudicated keeps are re-proposed forev
    take the card, ask the server. Top-1 only. Keep this run's `{note, vec}` in memory and check
    that first — same predicate, no index needed.
 5. **`reconcile: manual`.** Frontmatter opt-out, note-scoped, blocking BOTH arms. New
-   `scripts/memory-mark.mjs` writes it; `/memory:prune` calls it on every kept pair. A `declined`
-   count rides the existing `{written, merged}` return.
+   `scripts/lib/memory-mark.mjs` owns reading and writing it, behind a thin `scripts/memory-mark.mjs`
+   entry; `/memory:prune` calls it on every kept pair. The distiller reads the mark through the same
+   `isMarked()` that writes it — two regexes for one field is this PR's own bug at smaller scale. A
+   `declined` count rides the existing `{written, merged}` return.
 6. **Delete the body arm.** `bodyTokens`, `containment`, `RECONCILE_BODY_AT` and their tests.
    Not kept as a fallback — it is measured harmful. Fallback is the slug arm alone.
 7. **`--dupe-eval`.** Truth-file sweep reporting caught/25 with the false count beside it. Harness
-   ships, case set is gitignored. Plus one `node --test` fixture as a drift guard — not the
-   acceptance check.
+   ships, case set is gitignored. Its counting is `sweepDupes()` in `lib/`, tested, because an
+   off-by-one in a denominator there is invisible — every column still looks plausible.
 8. **Changelog** under `## [Unreleased]`.
 
 ## Done looks like

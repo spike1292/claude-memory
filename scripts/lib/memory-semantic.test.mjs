@@ -36,12 +36,58 @@ import {
   samefolderPairs,
   bestDupe,
   dupeScore,
+  pairKey,
+  sweepDupes,
   socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
 
 /** @typedef {import('./memory-semantic.mjs').LexDoc} LexDoc */
+
+test('the dedup sweep counts what it claims to count', () => {
+  // This produces the ONE number the predicate is judged by. Every column stays plausible-looking
+  // when a denominator is wrong, so it is asserted rather than eyeballed.
+  const dupes = new Set([pairKey('a', 'b'), pairKey('c', 'd'), pairKey('e', 'f')]);
+  const keeps = new Set([pairKey('g', 'h')]);
+
+  // Fires on one real duplicate, one adjudicated keep, and one pair nobody has judged.
+  const r = sweepDupes(
+    [
+      { a: 'b', b: 'a' },
+      { a: 'g', b: 'h' },
+      { a: 'x', b: 'y' },
+    ],
+    dupes,
+    keeps,
+  );
+  assert.deepEqual(r, { fires: 3, caught: 1, missed: 2, falses: 2, keepsProposed: 1 });
+
+  // Pair order must not decide the verdict: a truth file is hand-written and the audit prints its
+  // pairs in score order, so the two disagree about which note comes first as a matter of course.
+  assert.equal(pairKey('a', 'b'), pairKey('b', 'a'));
+
+  // A bar that fires on nothing is the shipped body arm's result, and it must read as 0 caught
+  // rather than as a clean run.
+  assert.deepEqual(sweepDupes([], dupes, keeps), {
+    fires: 0,
+    caught: 0,
+    missed: 3,
+    falses: 0,
+    keepsProposed: 0,
+  });
+
+  // A duplicate reported twice is one finding, not two — otherwise `false` could go negative.
+  const dup = sweepDupes(
+    [
+      { a: 'a', b: 'b' },
+      { a: 'b', b: 'a' },
+    ],
+    dupes,
+    keeps,
+  );
+  assert.deepEqual(dup, { fires: 1, caught: 1, missed: 2, falses: 0, keepsProposed: 0 });
+});
 
 test('the dedup predicate is one predicate', () => {
   // The write-time reconcile and the --dupes audit MUST agree on what a duplicate is. They did not

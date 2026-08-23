@@ -587,6 +587,43 @@ export function samefolderPairs(items, minScore) {
 }
 
 /**
+ * The pair key both halves of the dedup eval agree on. Order-independent, because a truth file is
+ * hand-written and nobody should have to guess which note the author put first.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {string}
+ */
+export function pairKey(a, b) {
+  return [a, b].sort().join(' :: ');
+}
+
+/**
+ * Score one bar against a truth set.
+ *
+ * Extracted and tested because it produces the ONE number this predicate is judged by, and an
+ * off-by-one in a denominator here is invisible: every column would still look plausible. `false`
+ * counts every firing that is not a known duplicate, INCLUDING pairs nobody has judged — a bar that
+ * fires on 1322 pairs to catch 18 is not a better bar, and a caught column alone cannot see that.
+ *
+ * @param {readonly { a: string, b: string }[]} fired
+ * @param {ReadonlySet<string>} dupes
+ * @param {ReadonlySet<string>} keeps
+ * @returns {{ fires: number, caught: number, missed: number, falses: number, keepsProposed: number }}
+ */
+export function sweepDupes(fired, dupes, keeps) {
+  const firedKeys = new Set(fired.map((p) => pairKey(p.a, p.b)));
+  const caught = [...dupes].filter((k) => firedKeys.has(k)).length;
+  return {
+    fires: firedKeys.size,
+    caught,
+    missed: dupes.size - caught,
+    falses: firedKeys.size - caught,
+    keepsProposed: [...keeps].filter((k) => firedKeys.has(k)).length,
+  };
+}
+
+/**
  * Nearest same-layer note to a candidate card, or null when nothing reaches the bar.
  *
  * Top-1 by design: the runner-up is not a consolation prize. When the best match is marked

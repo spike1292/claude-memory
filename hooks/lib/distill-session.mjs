@@ -23,6 +23,10 @@ import path from 'node:path';
 import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import * as paths from './paths.mjs';
+// Imports nothing but node:fs and node:path, so it is safe above the entry guard — unlike
+// scripts/lib/memory-semantic.mjs, which process.exit()s at module scope on an unknown model
+// and is therefore reached only through an await import() inside a function.
+import { isMarked } from '../../scripts/lib/memory-mark.mjs';
 import {
   countLines,
   detach,
@@ -144,17 +148,19 @@ export function tokens(slug) {
  * merge proposal it just rejected. It is note-scoped rather than pair-scoped so it also holds at
  * write time, where the incoming note is neither end of any previously judged pair.
  *
- * Read with a regex rather than a YAML parser: this is one flat key in a block the distiller
- * itself writes, and a parser is a dependency shipped into every plugin cache for one boolean.
+ * Reads the mark through `isMarked()`, the same function `memory-mark.mjs` writes it with. Two
+ * regexes for one field is the shape of this whole PR's bug at smaller scale: the writer and the
+ * reader drift, and the mark silently stops blocking anything while every test stays green.
+ *
+ * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement, and hooks do
+ * not throw.
  *
  * @param {string} file
  * @returns {boolean}
  */
 export function isManual(file) {
   try {
-    const raw = fs.readFileSync(file, 'utf8');
-    const m = raw.match(/^---\n([\s\S]*?)\n---/);
-    return !!m && /^reconcile:\s*manual\s*$/m.test(m[1]);
+    return isMarked(fs.readFileSync(file, 'utf8'));
   } catch {
     return false;
   }
@@ -608,10 +614,22 @@ export function dupeClient(cwd, slug) {
         return null;
       }
     }
-    for (let waited = 0; ; waited += SERVER_POLL_MS) {
+    // WALL CLOCK, not a poll count. Counting iterations looked equivalent and was not: a server
+    // that accepts the connection and then stalls costs SERVER_REQ_MS per iteration, so sixty
+    // "one second" polls were up to eleven minutes of a SessionEnd hanging on a socket.
+    const deadline = Date.now() + SERVER_WAIT_MS;
+    for (;;) {
       if (fs.existsSync(sockPath)) {
         const r = await dupeRequest(sockPath, req);
         if (r?.mode === 'dupe') return r;
+        // A reply we could parse, from a server that does not speak dupe mode: that is an older
+        // server, and it will not learn. Waiting out the deadline changes nothing — the server we
+        // spawn below probes the live socket and exits rather than stealing it, and the old one
+        // survives until its own idle timeout. Give up now and let the slug arm answer.
+        if (r) {
+          dead = true;
+          return null;
+        }
       }
       if (!spawned) {
         spawned = true;
@@ -619,7 +637,7 @@ export function dupeClient(cwd, slug) {
           cwd,
         });
       }
-      if (waited >= SERVER_WAIT_MS) {
+      if (Date.now() >= deadline) {
         // One slow start is one slow start; a second note should not pay another minute for it.
         dead = true;
         return null;
@@ -704,7 +722,13 @@ async function writeNotes(insights, slug, cwd) {
       const r = await ask({ dupe: card, slug, layer: folder, min: sem.PROFILE.dupeMin });
       if (r) {
         vec = r.vec ?? null;
-        if (r.best) hit = { file: path.join(d, `${r.best.note}.md`), s: r.best.s };
+        // The index is a snapshot: a note merged or renamed by /memory:prune since the last
+        // --index is still in it. reconcile() reads the file with no guard, so an unchecked hit
+        // here throws ENOENT and takes the whole distillation with it — and hooks never fail a
+        // session. Before this change every candidate came from readdirSync and existed by
+        // construction.
+        const best = r.best ? path.join(d, `${r.best.note}.md`) : null;
+        if (best && fs.existsSync(best)) hit = { file: best, s: r.best.s };
         const inRun = vec && sem.bestDupe(thisRun, { layer: folder, vec }, sem.PROFILE.dupeMin);
         if (inRun && (!hit || inRun.s > hit.s)) {
           const f = thisRun.find((x) => x.note === inRun.note);

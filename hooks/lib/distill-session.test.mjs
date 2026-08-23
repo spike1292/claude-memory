@@ -450,6 +450,126 @@ test('the ctx source label carries the same key as the directory it indexes', (t
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
 });
 
+// The whole mark, end to end through the real entry: an existing note the slug arm WOULD have
+// merged into, carrying `reconcile: manual`, must survive as its own note and be counted. Unit
+// tests on isManual() and on the predicate each pin one end; only this sees them wired together.
+//
+// No search server and no index here, deliberately — CLAUDE_MEMORY_HOME is a fresh directory, so
+// the reconcile client gives up before spawning anything and the slug arm is the whole dedup. That
+// is the arm the mark most easily fails to cover, because it is the one that does not go through
+// the embedding path at all.
+test('a note marked reconcile: manual is not merged into, and the block is reported', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-mark-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'checkout');
+  const vault = path.join(root, 'vault');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+
+  // DISTILL_DRYRUN emits "Dry run pattern" -> slug tokens {dry, run, pattern}. This filename shares
+  // all three, so slug Jaccard clears RECONCILE_AT — but it does NOT end in `-dry-run-pattern.md`,
+  // which would hit the exact-slug skip before any reconcile ran and prove nothing.
+  const patterns = path.join(vault, 'Insights', slug, 'Patterns');
+  fs.mkdirSync(patterns, { recursive: true });
+  const guarded = path.join(patterns, '2026-08-01-dry-run-patterns-adjudicated.md');
+  fs.writeFileSync(
+    guarded,
+    '---\ntitle: "Dry run patterns adjudicated"\nreconcile: manual\n---\n\n## Dry run patterns adjudicated\n\nA boundary someone judged.\n',
+  );
+  const before = fs.readFileSync(guarded, 'utf8');
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const out = execFileSync(process.execPath, [entry, transcript, repo], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  assert.strictEqual(
+    fs.readFileSync(guarded, 'utf8'),
+    before,
+    'the marked note must not gain an addendum or an alias',
+  );
+  const written = fs.readdirSync(patterns).filter((f) => f.endsWith('-dry-run-pattern.md'));
+  assert.strictEqual(written.length, 1, 'the lesson is written as its own note instead');
+  assert.match(
+    out,
+    /declined 1 \(reconcile: manual\)/,
+    'a block that is not reported is invisible',
+  );
+  assert.match(out, /wrote 3 note\(s\), merged 0/);
+});
+
+// Same fixture without the mark: the merge that the test above proves is blocked must actually
+// happen, or "blocked" is indistinguishable from "the arm never fired". A scan-based guard that
+// cannot demonstrate it found something is not a guard.
+test('the same pair merges when the mark is absent', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-nomark-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'checkout');
+  const vault = path.join(root, 'vault');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+  const patterns = path.join(vault, 'Insights', slug, 'Patterns');
+  fs.mkdirSync(patterns, { recursive: true });
+  const target = path.join(patterns, '2026-08-01-dry-run-patterns-adjudicated.md');
+  fs.writeFileSync(
+    target,
+    '---\ntitle: "Dry run patterns adjudicated"\n---\n\n## Dry run patterns adjudicated\n\nA boundary someone judged.\n',
+  );
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const out = execFileSync(process.execPath, [entry, transcript, repo], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  });
+
+  assert.match(
+    fs.readFileSync(target, 'utf8'),
+    /\*\*Also seen /,
+    'unmarked, it takes the addendum',
+  );
+  assert.strictEqual(
+    fs.readdirSync(patterns).filter((f) => f.endsWith('-dry-run-pattern.md')).length,
+    0,
+    'and no separate note is written',
+  );
+  assert.match(out, /merged 1/);
+  assert.doesNotMatch(out, /declined/, 'nothing was declined, so nothing is reported');
+});
+
 test('gateOutcome tells a guard from a decision from a debounce', () => {
   // These are the three states that look identical from outside the hook: it exited 0 and printed
   // nothing. Which one it was is the difference between "working as designed" and "off for weeks".

@@ -35,6 +35,8 @@ import {
   samefolderPairs,
   bestDupe,
   dupeScore,
+  pairKey,
+  sweepDupes,
   socketIsLive,
   singleFlight,
   mtimeCache,
@@ -742,7 +744,6 @@ if (flag('--dupe-eval')) {
     console.log('empty index, run --index first');
     process.exit(1);
   }
-  const pairKey = (/** @type {string} */ a, /** @type {string} */ b) => [a, b].sort().join(' :: ');
   /** @type {Set<string>} */
   const dupes = new Set();
   /** @type {Set<string>} */
@@ -770,27 +771,25 @@ if (flag('--dupe-eval')) {
   console.log('bar     fires  caught  missed  false  keeps-proposed');
   /** @type {{ s: number, a: string, b: string }[]} */
   let missedAt = [];
+  const cell = (/** @type {number|string} */ v, /** @type {number} */ w) => String(v).padStart(w);
   for (const bar of bars) {
     const pairs = samefolderPairs(cards, bar);
-    const fired = new Set(pairs.map((p) => pairKey(p.a, p.b)));
-    const caught = [...dupes].filter((k) => fired.has(k)).length;
-    const proposedKeeps = [...keeps].filter((k) => fired.has(k)).length;
-    const cell = (/** @type {number|string} */ v, /** @type {number} */ w) => String(v).padStart(w);
+    const r = sweepDupes(pairs, dupes, keeps);
     console.log(
-      `${bar.toFixed(2)}  ${cell(pairs.length, 6)}  ${cell(caught, 4)}/${dupes.size}  ` +
-        `${cell(dupes.size - caught, 6)}  ${cell(pairs.length - caught, 5)}  ` +
-        `${cell(proposedKeeps, 14)}`,
+      `${bar.toFixed(2)}  ${cell(r.fires, 6)}  ${cell(r.caught, 4)}/${dupes.size}  ` +
+        `${cell(r.missed, 6)}  ${cell(r.falses, 5)}  ${cell(r.keepsProposed, 14)}`,
     );
     if (bar === bars[0]) {
+      const fired = new Set(pairs.map((p) => pairKey(p.a, p.b)));
       const byNote = new Map(cards.map((c) => [c.note, c]));
       missedAt = truth
-        .filter((r) => r.verdict !== 'keep' && !fired.has(pairKey(r.a, r.b)))
-        .map((r) => {
-          const a = byNote.get(r.a);
-          const b = byNote.get(r.b);
-          return { s: a && b ? dupeScore(a, b) : NaN, a: r.a, b: r.b };
+        .filter((x) => x.verdict !== 'keep' && !fired.has(pairKey(x.a, x.b)))
+        .map((x) => {
+          const a = byNote.get(x.a);
+          const b = byNote.get(x.b);
+          return { s: a && b ? dupeScore(a, b) : NaN, a: x.a, b: x.b };
         })
-        .sort((x, y) => y.s - x.s);
+        .sort((y, z) => z.s - y.s);
     }
   }
   if (missedAt.length) {
