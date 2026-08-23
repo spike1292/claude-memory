@@ -314,6 +314,14 @@ test('CLI --run refuses a genuinely truncated line instead of throwing', () => {
   assert.ok(!r.stderr.includes('SyntaxError'), `crashed instead of refusing:\n${r.stderr}`);
 });
 
+test('CLI --run refuses a --cases pointing at a directory', () => {
+  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  const r = run('--run', '--cases', path.dirname(casesPath), '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /is not a file/);
+  assert.ok(!r.stderr.includes('EISDIR'), `crashed instead of refusing:\n${r.stderr}`);
+});
+
 test('CLI refuses a --fetch-k that is not a positive number', () => {
   // NaN emptied the recall-k list: no bars printed, --json reported every k as 0, exit 0.
   const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
@@ -451,6 +459,20 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
       !b.includes('--cases') && !b.includes('--out'),
       `commands/eval.md must let the slug-scoped default resolve, got block:\n${b}`,
     );
+  // And nothing runnable may name the machine-shared eval directory, however it is spelled. The
+  // check above asks "does this line say --cases", which two shapes evade: a `--vault` line is
+  // exempted from it (a live-vault run pointed at a shared file is the original bug), and the
+  // argument can be assembled in an earlier fence (`ARGS="--cases $STATE/eval/…"`). Both must
+  // write the path, so the path is what to look for. `$STATE/eval/…-<slug>-<style>` is described
+  // in prose above the block, which is not a fence and not runnable.
+  const shared = fences
+    .flatMap((b) => b.split('\n'))
+    .filter((l) => l.includes('$STATE/eval/') || l.includes('eval-cases-authored'));
+  assert.deepEqual(
+    shared,
+    [],
+    `commands/eval.md must not point a runnable command at the machine-shared eval dir:\n${shared.join('\n')}`,
+  );
 });
 
 test('CLI --run scores cleanly and names its case set when every gold note resolves', () => {

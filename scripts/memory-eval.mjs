@@ -220,6 +220,12 @@ if (!fs.existsSync(CASES)) {
   console.log(`no case set at ${CASES}. Author one first: --author (see /memory:eval)`);
   process.exit(1);
 }
+// existsSync is true for a directory, and readFileSync then threw EISDIR with a stack. A mistyped
+// --cases is bad input, not a crash.
+if (!fs.statSync(CASES).isFile()) {
+  console.log(`${CASES} is not a file. --cases takes a .jsonl case set.`);
+  process.exit(1);
+}
 const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: string }[]} */ (
   parseJsonl(fs.readFileSync(CASES, 'utf8'), CASES)
 );
