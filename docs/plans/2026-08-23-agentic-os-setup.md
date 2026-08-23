@@ -191,9 +191,15 @@ re-reads the *old* path and serves the old version again.
 **And the check must not read the breadcrumb.** Comparing the daemon's path against the breadcrumb
 is circular — the daemon got its path *from* the breadcrumb, so they match whether or not step 2
 happened, and the check certifies the exact failure it exists to catch. Compare the daemon's
-resolved path against the **most recently modified version directory on disk** — by mtime, not by name: Claude Code keeps
-every version side by side, and a text sort puts `0.10.0` below `0.6.0`, which passes a stale daemon
-for the same silent reason the breadcrumb comparison does.
+resolved path against the **highest-versioned directory on disk, compared as a version** — read `version` from each dir's
+`.claude-plugin/plugin.json`, or `sort -V` the names. Both of the obvious shortcuts are wrong. A
+text sort puts `0.10.0` below `0.6.0`. And **mtime is not a stand-in for "newest"**:
+`scripts/share-modules.mjs` symlinks `node_modules` into *every* installed version dir, current
+first and the old ones last, so an old dir routinely ends up stamped later than the live one — on
+this machine `0.3.1` carries an mtime days after it last really changed. Sorting by mtime would fail
+a healthy daemon right after a consolidation run, and pass a stale one after any write into an old
+dir. (Highest-version-wins is itself wrong after a deliberate rollback; if that ever matters, take
+the answer from Claude Code rather than from a directory scan).
 
 ## Install, do not build
 
@@ -501,7 +507,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **most recently modified version directory on disk** (by mtime — a text sort puts `0.10.0` below `0.6.0`) — not the breadcrumb, which is circular, and not merely that the unit is still up | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (`share-modules.mjs` touches every version dir), not against the breadcrumb (circular), and not merely that the unit is still up | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
