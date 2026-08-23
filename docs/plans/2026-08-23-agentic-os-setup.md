@@ -112,7 +112,7 @@ sometimes bites — it is the steady state.
 
 **The wall is `$CLAUDE_MEMORY_HOME`.** It is the one setting that can only be an environment variable
 (`hooks/lib/paths.mjs:161`), because it relocates `config.json` itself — and it relocates `run/`,
-`db/` and `models/` with it. Two homes means two `run/` dirs, so two sockets that cannot see or evict
+`db/`, `models/` and `node_modules/` with it. Two homes means two `run/` dirs, so two sockets that cannot see or evict
 each other, and two `db/` dirs, so neither server can load the other's index at all.
 
 ```bash
@@ -123,7 +123,9 @@ CLAUDE_MEMORY_HOME=~/.claude-memory-work
 ```
 
 `vault-mcp` binds to exactly one home, set in its systemd unit. Only the personal one is ever
-published. Two homes also means two copies of the 722 MB of model weights; that is the price, and it
+published. Two homes also means two copies of the 722 MB of model weights, and two `node_modules`
+runtimes — with the caveat under step 2 of the update procedure, since a version dir can only be
+symlinked at one of them. That is the price, and it
 is worth it.
 
 **The unit must not hardcode a plugin path.** Every release installs into its own version-pinned
@@ -185,7 +187,16 @@ re-reads the *old* path and serves the old version again.
    success. There is exactly **one** `vault-mcp` unit and it binds the personal home, so the
    personal breadcrumb is the only one this procedure cares about. (The path written is the plugin
    cache dir, identical in both worlds; the wall is `$CLAUDE_MEMORY_HOME` — config, `db/`,
-   `models/`, `run/`, `logs/` — not the plugin install.)
+   `models/`, `run/`, `logs/`, and `node_modules/`.)
+
+   **One thread does cross the wall, and it is `node_modules`.** `scripts/share-modules.mjs` puts
+   the shared runtime in `$CLAUDE_MEMORY_HOME/node_modules` and symlinks version dirs at it, so a
+   freshly installed version dir gets claimed by **whichever world consolidates first**. Run
+   `/memory:install` from the work world after an update and `0.7.0/node_modules` points into
+   `~/.claude-memory-work` — wiping the employer world then breaks the personal daemon and takes the
+   public connector down with it, which is the precise opposite of what the wall is for. **Do the
+   install and any `share-modules` run from the personal world only**, and treat that as part of the
+   update procedure, not as folklore.
 3. `systemctl restart vault-mcp`
 
 **And the check must not read the breadcrumb.** Comparing the daemon's path against the breadcrumb
@@ -231,6 +242,18 @@ is now redundant.
 ~150 lines. Nothing off the shelf serves the L1–L4 layers. `scripts/memory-semantic.mjs --serve`
 already holds the model, answers per-slug queries, and caches indexes on demand; this is a thin
 HTTP + MCP shell over that socket.
+
+**But the shell must own the socket's lifecycle, because nothing else will.** Today the *only*
+thing that starts `--serve` is `hooks/memory-recall.mjs:174`, an opt-in `UserPromptSubmit` hook that
+needs a live interactive session — and the server deliberately idle-exits, unlinking the socket
+after `serveIdleMs` (30 min): *"so it cannot become a daemon nobody remembers starting; the hook
+respawns it on demand."* On a VPS whose whole point is that nobody is sitting at it, that yields two
+dark connectors: one before any session has ever run, and one 30 minutes after the last. Both look
+healthy — `systemctl status vault-mcp` says `active (running)` throughout.
+
+So `vault-mcp` spawns `--serve` detached on a miss, the same contract `memory-recall.mjs` already
+uses, and falls through rather than failing while the server warms. Do not "fix" this by removing
+the idle exit; the exit is what stops orphaned models accumulating, and the respawn is the design.
 
 **`node:http` plus hand-rolled JSON-RPC — no new dependency.** Publishing a vault over MCP is a
 general feature and belongs here; the *dependency* is what must not ship. Every release installs into
@@ -511,7 +534,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up; **and the connector still answers 31 minutes after the last local session**, which is what proves `vault-mcp` respawns the idle-exited `--serve` | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
