@@ -41,7 +41,11 @@ const flag = (n) => argv.includes(n);
 // instead of by a doc. `--cases` last in argv yielded undefined; `--cases --mode lexical` yielded
 // `--mode`. Checked HERE rather than against a list of value-taking flags, because every one of
 // them already passes through this function and a list would silently miss the next one added.
-/** @param {string} n @param {boolean} [bare] value optional — only `--generate`, which means 40 @returns {string|null} */
+/**
+ * @param {string} n
+ * @param {boolean} [bare] value optional — only `--generate`, whose bare form means 40
+ * @returns {string|null}
+ */
 const val = (n, bare = false) => {
   const i = argv.indexOf(n);
   if (i < 0) return null;
@@ -60,10 +64,9 @@ if (equalsArg) {
   console.log(`${name} takes a space-separated value. Write: ${name} ${rest.join('=')}`);
   process.exit(1);
 }
-// And the last shape: a misspelled flag NAME. `--casess other.jsonl` matched nothing, was dropped,
-// and the run scored the default set — #97's core failure reached by a typo. This list can drift
-// as the earlier one did, but it drifts LOUDLY: forget to add a new flag and that flag errors on
-// its first use, where the old list's omission was a silent hole.
+// And the last shape: a misspelled flag NAME — `--casess other.jsonl` matched nothing and was
+// dropped. A closed set is safe to keep by hand because it fails CLOSED: a name missing from it
+// errors on first use instead of going quiet. A test ties it to the call sites.
 const KNOWN_FLAGS = new Set([
   '--run',
   '--author',

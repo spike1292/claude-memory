@@ -388,6 +388,20 @@ test('CLI --generate bare still means 40', () => {
   assert.ok(fs.readFileSync(scopedPath, 'utf8').trim().length > 0, 'it must write real cases');
 });
 
+test('KNOWN_FLAGS covers every flag the entry actually reads', () => {
+  // The list fails closed — a flag missing from it is refused outright rather than ignored — but
+  // "refused outright" still means a working invocation stops working. Tie it to the call sites.
+  const src = fs.readFileSync(ENTRY, 'utf8');
+  const used = new Set([...src.matchAll(/(?:val|flag)\('(--[\w-]+)'/g)].map((m) => m[1]));
+  assert.ok(used.size > 0, 'found no flag call sites — this scan is looking at the wrong thing');
+  const list = src.slice(
+    src.indexOf('const KNOWN_FLAGS'),
+    src.indexOf(']);', src.indexOf('const KNOWN_FLAGS')),
+  );
+  for (const f of used)
+    assert.ok(list.includes(`'${f}'`), `${f} is read by the entry but missing from KNOWN_FLAGS`);
+});
+
 test('CLI refuses a misspelled flag rather than dropping it', () => {
   // `--casess other.jsonl` matched nothing and was discarded, so the run scored the DEFAULT set and
   // printed a number the operator attributed to the file they named — #97, reached by a typo.
