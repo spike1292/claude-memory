@@ -146,25 +146,36 @@ only the first is the one people expect:
   **load**, not at run. Expect "not an absolute path", not "invalid variable name" — someone
   debugging by hunting for a bad variable will not find one.
 
-Bare `$VAR` inside a quoted word is left alone by systemd, which is why the script below is a single
-quoted argument and why `$r` and `$CLAUDE_MEMORY_HOME` reach `sh` untouched. Do not "fix" `$r` to
-`$$r`; `sh` would substitute the PID. It needs an explicit shell, and `CLAUDE_MEMORY_HOME` has to be
-put in the unit's environment because nothing else will:
+**So put the logic in a wrapper script, not in the unit line.** An inline `/bin/sh -c '…'` works,
+but only if you are sure how systemd treats a bare `$r` inside a quoted word — and `systemd.service(5)`
+documents `$$` as the escape for a literal dollar, which only exists because `$VAR` *is* expanded
+somewhere in that path. If it expands ours, `$r` becomes empty before `sh` ever runs, the guard
+below fails on every start, and the unit reports a missing breadcrumb no matter how fresh the
+breadcrumb is: a dark connector naming the wrong cause, which is precisely what this section exists
+to stop. A wrapper file removes the question rather than answering it.
 
 ```ini
 Environment=CLAUDE_MEMORY_HOME=/home/…/.claude-memory
-ExecStart=/bin/sh -c 'r=$(cat "$CLAUDE_MEMORY_HOME/plugin-root" 2>/dev/null); [ -n "$r" ] || { echo "no usable plugin-root breadcrumb in $CLAUDE_MEMORY_HOME — start a Claude Code session with that CLAUDE_MEMORY_HOME first" >&2; exit 1; }; exec /usr/bin/node "$r/scripts/vault-mcp.mjs"'
+ExecStart=/usr/local/bin/vault-mcp-start
 ```
 
-Three things in that line are load-bearing. `CLAUDE_PLUGIN_ROOT` gets no fallback branch — a daemon
-never has it set. The interpreter is an **absolute path**: a system unit runs with a bare `PATH` and
-no login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is tested for **content, not
-exit status**: `sh` has no `set -e`, so an absent file lets `$(…)` expand to empty and the unit
-execs `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop — a dark connector with no cause
-named. An *empty* breadcrumb does the same while `cat` exits 0, and it is reachable: the hook writes
-with `printf … > "$MEM_HOME/plugin-root"`, a truncate-then-write with no temp file and no rename, so
-a killed session, a full disk, or a restart inside that write window all leave a zero-byte file —
-and step 3 of the update procedure runs right after step 2. Hence `[ -n "$r" ]`, not `|| exit`.
+```sh
+#!/bin/sh
+# /usr/local/bin/vault-mcp-start
+r=$(cat "$CLAUDE_MEMORY_HOME/plugin-root" 2>/dev/null)
+[ -n "$r" ] || { echo "no usable plugin-root breadcrumb in $CLAUDE_MEMORY_HOME — start a Claude Code session with that CLAUDE_MEMORY_HOME first" >&2; exit 1; }
+exec /usr/bin/node "$r/scripts/vault-mcp.mjs"
+```
+
+Three things in it are load-bearing. `CLAUDE_PLUGIN_ROOT` gets no fallback branch — a daemon never
+has it set. The interpreter is an **absolute path**: a system unit runs with a bare `PATH` and no
+login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is tested for **content, not exit
+status**: `sh` has no `set -e`, so an absent file lets `$(…)` expand to empty and the wrapper would
+exec `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop. An *empty* breadcrumb does the
+same while `cat` exits 0, and it is reachable: the hook writes with
+`printf … > "$MEM_HOME/plugin-root"`, a truncate-then-write with no temp file and no rename, so a
+killed session, a full disk, or a restart inside that write window all leave a zero-byte file — and
+step 3 of the update procedure runs right after step 2. Hence `[ -n "$r" ]`, not `|| exit`.
 
 **VPS catch, and it is worse than staleness.** `vault-memory-sync.sh` writes that breadcrumb only
 when a Claude Code *session* runs with `CLAUDE_MEMORY_HOME` **set to that value** — an environment
@@ -258,9 +269,10 @@ uses, and falls through rather than failing while the server warms. Do not "fix"
 the idle exit; the exit is what stops orphaned models accumulating, and the respawn is the design.
 
 **Unverified, and cheap to check:** a process spawned by a systemd service normally stays in that
-unit's cgroup, so `systemctl restart vault-mcp` (step 3) may take the `--serve` down with it. If so
-the next miss respawns it and the only cost is one slow query — but confirm rather than assume,
-the same way rule 3's `credentials` entry is marked reasoned-not-measured.
+unit's cgroup, so `systemctl restart vault-mcp` (step 3) may take the `--serve` down with it. The
+cost is not one *slow* answer — the miss path falls through to keyword search, so it is one
+**degraded, keyword-only** answer, MRR 0.158 against the vector path's 0.547. Confirm rather than
+assume, the same way rule 3's `credentials` entry is marked reasoned-not-measured.
 
 **`node:http` plus hand-rolled JSON-RPC — no new dependency.** Publishing a vault over MCP is a
 general feature and belongs here; the *dependency* is what must not ship. Every release installs into
@@ -293,8 +305,11 @@ read with `readStdin()` + `payload()` from `hooks/lib/hook-io.mjs` and **never**
 and nowhere else, and the hook reports itself through `logHook()` so `/memory:doctor --hooks` can
 see it.
 
-Then five behaviours. Two are CLAUDE.md rules, one is a cost this checkout has already paid, and two
-are consequences of the VPS that phase 0 creates:
+Then five behaviours. Two are CLAUDE.md rules (detach/debounce, and degrade to a no-op when the
+dependency is missing), two are hazards this checkout already has today (a blanket `git add` has
+shipped another session's file to `main`; two sessions on one clone collide on `index.lock`), and
+one is a consequence of the VPS that phase 0 creates (`pull --rebase`, because a second machine now
+commits too):
 
 - **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
   the session whenever the network is slow or the VPS is down.
@@ -541,7 +556,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up; **and the connector still answers 31 minutes after the last local session**, which is what proves `vault-mcp` respawns the idle-exited `--serve` | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up; **and 31 minutes after the last local session the connector answers *from the server*** — assert the socket, or a reply stamped `via: 'server'`. "An answer came back" proves nothing: the miss path falls through to keyword search, so a broken spawn answers too, at MRR 0.158 instead of 0.547, silently and forever | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
@@ -590,7 +605,10 @@ Phase 1 is the payoff. Everything before it is plumbing.
 6. **RAM: 16 GB, not 8 — sized for peak.** At idle the server is cheap: `modelIdleMs` (5 min)
    disposes the model and ~450 MB of `MALLOC_LARGE` drops to ~2.4 MB while the socket and indexes
    survive (measured 2026-08-17). The peak is what needs headroom — model loaded, indexes cached,
-   and up to three sandboxed agents building at once.
+   and up to three sandboxed agents building at once. **From phase 4 that peak holds two models,
+   not one**: two homes mean two `run/` dirs and two sockets that cannot see each other, so both
+   worlds can hold a resident `--serve` simultaneously. That is the wall working as designed, and it
+   is the second ~1.3 GB the 16 GB figure has to cover.
 
 Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the variable.
 
