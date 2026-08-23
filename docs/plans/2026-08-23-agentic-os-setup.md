@@ -186,11 +186,17 @@ and a cross-project `permanent/` layer. Left alone, it would do exactly the thin
 fines, without anyone deciding to. Deletability is therefore a design constraint, and one rule
 outranks the rest:
 
-> **Client-derived knowledge never graduates to `permanent/`.** That layer is cross-project by
-> design and is reachable from every future session, so it survives deleting the work world
-> entirely. `/memory:protocol` actively encourages promotion — this is the standing exception.
-> The same applies to any personal-side note that would quote a client specific: keep the lesson,
-> drop the identifying detail, and it stops being client data.
+> **Client-*specific* knowledge never graduates to `permanent/`. General knowledge learned while
+> doing the work does.** That layer is cross-project by design and reachable from every future
+> session, so anything promoted survives deleting the work world entirely — which is fine for a
+> transferable lesson and a liability for a client detail.
+>
+> The line is identifiers, not origin. Client-specific: their names, hostnames, system and service
+> names, architecture particulars, data, credentials, and business rules unique to them. General:
+> the same lesson with those stripped — *"a queue consumer that acks before persisting loses
+> messages on restart"* is yours to keep; *"their billing consumer does"* is not. The test:
+> **would this note still be true and useful for a different client, and does it name nobody?**
+> Strip and promote; do not discard.
 
 The wall does the rest, because one `$CLAUDE_MEMORY_HOME` plus one vault directory is a small,
 enumerable footprint. But **deletion is not one action**:
@@ -202,13 +208,18 @@ enumerable footprint. But **deletion is not one action**:
 | `~/worktrees/*` for work repos | `git worktree remove` | Checkouts, plus their `.git` |
 | Work repos' git **history** | Delete the repo, not the files | `rm` of a tracked file leaves every earlier version in `.git` |
 | Work git remote | **Client-hosted** — see below | Their infrastructure, their retention |
+| Synology NAS mirror | `rm -rf` there too | Codebakkers-owned, so **permitted** — but it is still a copy, and still in the drill |
 | `permanent/` | Audit, do not assume | The one layer the wall does not cover |
 | **Anthropic-side transcripts** | Cannot be deleted by you | See below |
 
 **The work remote is the client's own GitHub/GitLab account, never a personal one.** That is the
 cheapest control available: client data sits on client-controlled infrastructure, their retention
-policy governs it, and no copy lands under `spike1292` or on the Synology mirror. **Keep the work
-vault out of Synology sync entirely** — VPS plus client remote, nowhere else.
+policy governs it, and no copy lands under `spike1292`.
+
+**The NAS is Codebakkers-owned, so work may be mirrored there.** Permitted is not free: it is one
+more location in the drill, and it is the one most likely to be forgotten because backups are
+supposed to be invisible. The technical rules above still apply unchanged — **do not put a git repo
+inside a Synology-synced folder**; mirror a plain export instead.
 
 Three more things that are easy to miss:
 
@@ -225,9 +236,10 @@ Three more things that are easy to miss:
 Write the drill down in the private `agentic-os` repo and dry-run it in phase 4 — a deletion
 procedure first executed under time pressure at contract end is one that gets a location wrong.
 
-**The drill's last step is a search, not a delete.** Query the *personal* vault for client names,
-hostnames and system names before declaring done. The wall stops writes; it does not stop a lesson
-that was hand-copied across, and that residue is what a fine on *use* would land on.
+**The drill's last step is a search, not a delete.** Query the *personal* vault and `permanent/` for
+client names, hostnames and system names before declaring done. The wall stops writes; it does not
+stop an identifier that rode along inside an otherwise-general lesson, and that residue is what a
+fine on *use* would land on. A hit is usually not a note to delete — it is a note to **strip**.
 
 ## Install, do not build
 
