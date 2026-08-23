@@ -133,7 +133,7 @@ serving 0.6.0 after `/plugin update memory`, or dies when that directory goes, a
 connector goes dark with nothing saying why. Use the repo's existing answer, the `plugin-root`
 breadcrumb every `commands/*.md` already falls back to — but **not in the form those files use**.
 `${CLAUDE_PLUGIN_ROOT:-$(cat …)}` is bash, and `ExecStart=` runs no shell. Two things break it, and
-only the second is the one people expect:
+only the first is the one people expect:
 
 - **`$(…)` command substitution does not exist in systemd.** It is not a shell; there is nothing to
   run the `cat`. (Whether `${VAR:-default}` works is a separate question — systemd does support some
@@ -149,14 +149,18 @@ put in the unit's environment because nothing else will:
 
 ```ini
 Environment=CLAUDE_MEMORY_HOME=/home/…/.claude-memory
-ExecStart=/bin/sh -c 'r=$(cat "$CLAUDE_MEMORY_HOME/plugin-root") || { echo "no plugin-root breadcrumb in $CLAUDE_MEMORY_HOME — start a Claude Code session there first" >&2; exit 1; }; exec /usr/bin/node "$r/scripts/vault-mcp.mjs"'
+ExecStart=/bin/sh -c 'r=$(cat "$CLAUDE_MEMORY_HOME/plugin-root" 2>/dev/null); [ -n "$r" ] || { echo "no usable plugin-root breadcrumb in $CLAUDE_MEMORY_HOME — start a Claude Code session with that CLAUDE_MEMORY_HOME first" >&2; exit 1; }; exec /usr/bin/node "$r/scripts/vault-mcp.mjs"'
 ```
 
 Three things in that line are load-bearing. `CLAUDE_PLUGIN_ROOT` gets no fallback branch — a daemon
 never has it set. The interpreter is an **absolute path**: a system unit runs with a bare `PATH` and
-no login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is checked, because `sh` has no
-`set -e`: an absent file makes `cat` fail to stderr, `$(…)` expand to empty, and the unit exec
-`node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop — a dark connector with no cause named.
+no login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is tested for **content, not
+exit status**: `sh` has no `set -e`, so an absent file lets `$(…)` expand to empty and the unit
+execs `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop — a dark connector with no cause
+named. An *empty* breadcrumb does the same while `cat` exits 0, and it is reachable: the hook writes
+with `printf … > "$MEM_HOME/plugin-root"`, a truncate-then-write with no temp file and no rename, so
+a killed session, a full disk, or a restart inside that write window all leave a zero-byte file —
+and step 3 of the update procedure runs right after step 2. Hence `[ -n "$r" ]`, not `|| exit`.
 
 **VPS catch, and it is worse than staleness.** `vault-memory-sync.sh` writes that breadcrumb only
 when a Claude Code *session* starts in that `$CLAUDE_MEMORY_HOME` — so it is **absent** if the unit
@@ -171,8 +175,11 @@ re-reads the *old* path and serves the old version again.
 **The update procedure is three steps, in this order:**
 
 1. `/plugin update memory`
-2. **Start a Claude Code session in that `$CLAUDE_MEMORY_HOME`** — this is what rewrites the
-   breadcrumb, and nothing else does.
+2. **Start a Claude Code session with `CLAUDE_MEMORY_HOME` set to that value** — this is what
+   rewrites the breadcrumb, and nothing else does. It is an environment variable, not a working
+   directory: `vault-memory-sync.sh` writes the breadcrumb to whatever `memory_home()` resolves, so
+   `cd ~/.claude-memory-work && claude` without exporting the var writes the *work* plugin path into
+   the **personal** home.
 3. `systemctl restart vault-mcp`
 
 **And the check must not read the breadcrumb.** Comparing the daemon's path against the breadcrumb
