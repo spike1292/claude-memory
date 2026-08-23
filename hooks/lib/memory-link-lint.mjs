@@ -43,6 +43,32 @@ export function linkTargets(text) {
 }
 
 /**
+ * Every note a text links to, in EITHER form — `[[wikilink]]` and `[Title](note.md)`.
+ *
+ * The one parser for "which note does this link point at". It exists because there were two, and
+ * they drifted on this exact file format: `MEMORY.md` is written with markdown links, so a
+ * wikilink-only parser silently matched nothing — which disabled `findDrift` here (`readNote` was
+ * called 0 times against a real MOC) and made `/memory:health` report every L1 note as missing from
+ * the MOC. Both were found on 2026-08-22, in two files, one file format. `mocTargets()` in
+ * `scripts/lib/memory-audit-checks.mjs` calls this rather than carrying a third copy.
+ *
+ * NOT a replacement for `linkTargets()` above: that one is deliberately wikilink-only, because the
+ * note-graph checks ask whether a SIBLING can reach a note, and a markdown link from the MOC is
+ * exactly what does not make it reachable.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function noteTargets(text) {
+  /** @type {string[]} */
+  const out = [];
+  for (const m of text.matchAll(/\[\[([^\]|#]+)/g)) out.push(m[1].trim());
+  for (const m of text.matchAll(/\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
+    out.push(m[1].replace(/^\.\//, '').trim());
+  return out;
+}
+
+/**
  * `.md` files under `dir`, recursively. Missing directories are simply empty.
  *
  * @param {string} dir
@@ -111,9 +137,7 @@ export function findOrphans(memDir, noteNames, corpus) {
  */
 function bulletTarget(line) {
   if (!line.startsWith('- [')) return null;
-  if (line.startsWith('- [[')) return line.slice(4).split(']]')[0];
-  const md = line.match(/^- \[[^\]]*\]\(([^)]+?)\.md(?:#[^)]*)?\)/);
-  return md ? md[1].replace(/^\.\//, '') : null;
+  return noteTargets(line)[0] ?? null;
 }
 
 /**

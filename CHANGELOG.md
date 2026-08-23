@@ -23,7 +23,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   MOC moved to markdown links. Every one of its tests passed throughout, because each used the
   wikilink form: the "test written against the copy stays green while the dependency goes dead"
   failure this repo already documents. Both link forms are now accepted, and the new test asserts
-  `readNote` is actually reached.
+  `readNote` is actually reached. There is now **one** parser for "which note does this link point
+  at" — `noteTargets()` — which `mocTargets()` calls rather than carrying a third copy of the
+  regex; `linkTargets()` stays deliberately wikilink-only for the note-graph checks.
 - **A bash `[[ $var =~ … ]]` test inside a fenced code block was reported as a dangling wikilink.**
   Link scanning now strips fenced and inline code first.
 

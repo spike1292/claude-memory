@@ -10,6 +10,7 @@
 // Usage: node ~/.claude/scripts/memory-audit-checks.mjs [repo-dir]   (default: cwd)
 // ponytail: prints findings, never edits. Deleting or rewriting a note needs confirmation anyway.
 
+import { noteTargets } from '../../hooks/lib/memory-link-lint.mjs';
 import fs from 'node:fs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
@@ -264,17 +265,14 @@ export function checkFile(f) {
 }
 
 // MEMORY.md is written with markdown links (`[Title](note.md)`), not wikilinks. A wikilink-only
-// parser therefore reported EVERY L1 note as "Not in the MOC" — 8 of 8 false positives on
-// 2026-08-22, while hooks/lib/memory-link-lint.mjs read the same file correctly. Two parsers, one
-// file format. MOC membership accepts both forms; the note-graph checks stay wikilink-only, since
-// a markdown link from the MOC is exactly what does not make a note reachable from a sibling.
+// parser reported EVERY L1 note as "Not in the MOC" — 8 of 8 false positives on 2026-08-22 — and
+// the same drift had silently disabled findDrift() in the lint. Two parsers, one file format, so
+// there is now ONE: noteTargets(). Do not inline a regex here again. The note-graph checks stay
+// wikilink-only, since a markdown link from the MOC is exactly what does not make a note reachable
+// from a sibling.
 /** @param {string} moc @returns {Set<string>} */
 export function mocTargets(moc) {
-  const out = new Set();
-  for (const m of moc.matchAll(/\[\[([^\]|#]+)/g)) out.add(m[1].trim());
-  for (const m of moc.matchAll(/\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
-    out.add(m[1].replace(/^\.\//, '').trim());
-  return out;
+  return new Set(noteTargets(moc));
 }
 
 // A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
