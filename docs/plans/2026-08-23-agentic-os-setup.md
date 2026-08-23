@@ -163,8 +163,9 @@ a killed session, a full disk, or a restart inside that write window all leave a
 and step 3 of the update procedure runs right after step 2. Hence `[ -n "$r" ]`, not `|| exit`.
 
 **VPS catch, and it is worse than staleness.** `vault-memory-sync.sh` writes that breadcrumb only
-when a Claude Code *session* starts in that `$CLAUDE_MEMORY_HOME` — so it is **absent** if the unit
-is enabled before any session has run there, and **stale** on a box that only runs the daemon.
+when a Claude Code *session* runs with `CLAUDE_MEMORY_HOME` **set to that value** — an environment
+variable, not a directory you `cd` into. So it is **absent** if the unit is enabled before any such
+session has run, and **stale** on a box that only runs the daemon.
 
 But `ExecStart` reads it **once, at start**, so a restart alone moves nothing. Claude Code keeps every
 installed version rather than replacing the cache, so after `/plugin update memory` the old directory
@@ -177,9 +178,12 @@ re-reads the *old* path and serves the old version again.
 1. `/plugin update memory`
 2. **Start a Claude Code session with `CLAUDE_MEMORY_HOME` set to that value** — this is what
    rewrites the breadcrumb, and nothing else does. It is an environment variable, not a working
-   directory: `vault-memory-sync.sh` writes the breadcrumb to whatever `memory_home()` resolves, so
-   `cd ~/.claude-memory-work && claude` without exporting the var writes the *work* plugin path into
-   the **personal** home.
+   directory: `vault-memory-sync.sh` writes to whatever `memory_home()` resolves, so
+   `cd ~/.claude-memory-work && claude` without exporting the var updates the **personal** home and
+   leaves the work home's breadcrumb stale. Watch the right victim — the personal one then looks
+   fine, while the work `vault-mcp` restarts onto its old version dir and serves it forever with no
+   error. (The path written is the plugin cache dir, which is the same in both worlds; the wall is
+   `$CLAUDE_MEMORY_HOME` — config, `db/`, `models/`, `run/`, `logs/` — not the plugin install.)
 3. `systemctl restart vault-mcp`
 
 **And the check must not read the breadcrumb.** Comparing the daemon's path against the breadcrumb
