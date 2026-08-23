@@ -49,8 +49,8 @@ export function linkTargets(text) {
  * they drifted on this exact file format: `MEMORY.md` is written with markdown links, so a
  * wikilink-only parser silently matched nothing — which disabled `findDrift` here (`readNote` was
  * called 0 times against a real MOC) and made `/memory:health` report every L1 note as missing from
- * the MOC. Both were found on 2026-08-22, in two files, one file format. `mocTargets()` in
- * `scripts/lib/memory-audit-checks.mjs` calls this rather than carrying a third copy.
+ * the MOC. Both were found on 2026-08-22, in two files, one file format, so this is the only place
+ * the regex lives — `findDrift` below and `/memory:health`'s MOC check both call it.
  *
  * NOT a replacement for `linkTargets()` above: that one is deliberately wikilink-only, because the
  * note-graph checks ask whether a SIBLING can reach a note, and a markdown link from the MOC is
@@ -63,7 +63,7 @@ export function noteTargets(text) {
   /** @type {string[]} */
   const out = [];
   // One pass, so the result is in DOCUMENT order — two passes put every wikilink before every
-  // markdown link, and bulletTarget() takes [0], so a bullet mixing both forms picked the wrong one.
+  // markdown link, and findDrift takes [0], so a bullet mixing both forms picked the wrong one.
   for (const [, wiki, md] of text.matchAll(/\[\[([^\]|#]+)|\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
     out.push(wiki !== undefined ? wiki.trim() : md.replace(/^\.\//, '').trim());
   return out;
@@ -126,22 +126,6 @@ export function findOrphans(memDir, noteNames, corpus) {
 }
 
 /**
- * The note a MOC bullet points at, in either link form, or null when the line is not one.
- *
- * A `- [[wikilink]]` gate was the only form here until 2026-08-22, and a real `MEMORY.md` is written
- * with markdown links — so `findDrift` matched NOTHING on every real vault, and every one of its
- * tests passed because each used the wikilink form. `readNote` was called 0 times on this repo's own
- * MOC. Found in review of #94, which fixed the same parser drift in `memory-audit-checks.mjs`.
- *
- * @param {string} line
- * @returns {string | null}
- */
-function bulletTarget(line) {
-  if (!line.startsWith('- [')) return null;
-  return noteTargets(line)[0] ?? null;
-}
-
-/**
  * Bolded figures in a MOC hook that the note it points at does not contain.
  *
  * MOC hooks restate figures, then the note body moves and the hook does not. /memory:health caught
@@ -156,8 +140,9 @@ export function findDrift(mocText, readNote) {
   /** @type {{ target: string, n: string }[]} */
   const drift = [];
   for (const line of mocText.split('\n')) {
-    const target = bulletTarget(line);
-    if (target === null) continue;
+    if (!line.startsWith('- [')) continue;
+    const target = noteTargets(line)[0];
+    if (target === undefined) continue;
     const body = readNote(target);
     if (body === null) continue;
     /** @type {Set<string>} */

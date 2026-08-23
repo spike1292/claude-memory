@@ -10,7 +10,6 @@
 // Usage: node ~/.claude/scripts/memory-audit-checks.mjs [repo-dir]   (default: cwd)
 // ponytail: prints findings, never edits. Deleting or rewriting a note needs confirmation anyway.
 
-import { noteTargets } from '../../hooks/lib/memory-link-lint.mjs';
 import fs from 'node:fs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
@@ -264,22 +263,13 @@ export function checkFile(f) {
   return out;
 }
 
-// MEMORY.md is written with markdown links (`[Title](note.md)`), not wikilinks. A wikilink-only
-// parser reported EVERY L1 note as "Not in the MOC" — 8 of 8 false positives on 2026-08-22 — and
-// the same drift had silently disabled findDrift() in the lint. Two parsers, one file format, so
-// there is now ONE: noteTargets(). Do not inline a regex here again. The note-graph checks stay
-// wikilink-only, since a markdown link from the MOC is exactly what does not make a note reachable
-// from a sibling.
-/** @param {string} moc @returns {Set<string>} */
-export function mocTargets(moc) {
-  return new Set(noteTargets(moc));
-}
-
 // A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
-// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning.
+// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
+// and inline code with them: a literal `[[wikilink]]` in REFLECTIONS.md false-positives otherwise.
+// ponytail: backtick fences only — 0 of 442 notes use `~~~`; add it when one does.
 /** @param {string} text @returns {string} */
 export function stripCodeBlocks(text) {
   return text
-    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, '')
+    .replace(/^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, '')
     .replace(/`[^`\n]*`/g, '');
 }

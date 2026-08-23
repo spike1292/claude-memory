@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as paths from '../hooks/lib/paths.mjs';
+import { noteTargets } from '../hooks/lib/memory-link-lint.mjs';
 import {
   isStandingNegative,
   hasConfidence,
@@ -22,7 +23,6 @@ import {
   isUnprovenancedMetric,
   buildSuffixIndex,
   checkFile,
-  mocTargets,
   stripCodeBlocks,
 } from './lib/memory-audit-checks.mjs';
 
@@ -139,7 +139,11 @@ const resolves = (n) => notes.has(n) || permanent.has(n);
 // ---------------------------------------------------------------- MOC + graph
 const mocPath = path.join(MEM, 'MEMORY.md');
 const moc = fs.existsSync(mocPath) ? read(mocPath) : '';
-const mocLinks = mocTargets(moc);
+// MEMORY.md is written with markdown links, not wikilinks; a wikilink-only parser reported all 8 L1
+// notes as missing from the MOC on 2026-08-22. `noteTargets` reads both forms and is the only parser
+// for this — `linksIn` below stays wikilink-only, since a markdown link from the MOC is exactly what
+// does NOT make a note reachable from a sibling.
+const mocLinks = new Set(noteTargets(moc));
 section(
   'Not in the MOC',
   memNames.filter((n) => !mocLinks.has(n)).map((n) => `${n} — add a one-line pointer to MEMORY.md`),

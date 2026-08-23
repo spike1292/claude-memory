@@ -17,7 +17,6 @@ import {
   isUnprovenancedMetric,
   isUnstampedVolatileClaim,
   buildSuffixIndex,
-  mocTargets,
   stripCodeBlocks,
 } from './memory-audit-checks.mjs';
 
@@ -183,15 +182,6 @@ test('isUnprovenancedMetric requires an instrument', () => {
     ),
     'provenance may sit on a neighbouring line',
   );
-});
-
-test('mocTargets reads the markdown links MEMORY.md is actually written with', () => {
-  const moc =
-    '- [Never `git add -A`](never-git-add-all.md) — hook\n- [Other](./other.md#x) — hook\n';
-  assert.deepEqual([...mocTargets(moc)], ['never-git-add-all', 'other']);
-  // both forms, and a non-note link is not a target
-  assert.deepEqual([...mocTargets('[[a|alias]] and [b](b.md)')], ['a', 'b']);
-  assert.equal(mocTargets('[docs](docs/architecture.md) [x](https://e.com)').has('x'), false);
 });
 
 test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
