@@ -151,9 +151,10 @@ const parseJsonl = (text, src) => {
 };
 
 // A question has to contain something searchable (2026-08-23). Blank was the first version, but
-// `"???"` is not blank and still tokenises to nothing: every BM25 score ties at 0, the ranking is
-// whatever order the documents arrived in, and it scored a confident recall@1 of 100%. One letter
-// or digit is the general form of "not empty to the retriever".
+// `"???"` is not blank and still tokenises to nothing: every BM25 score ties at 0, so the ranking
+// is whatever order the documents arrived in. The reported figure is then not a measurement at all
+// — 100% on the 3-note fixture where k exceeds the corpus, 0.0% on the 60-note bench vault. One
+// letter or digit is the general form of "not empty to the retriever".
 //
 // `\p{L}\p{N}` with the `u` flag, never `\w`: JS's `\w` is ASCII-only where Python's is unicode-
 // aware, so `\w` would reject 日本語 and every other non-Latin question in a vault that has them.
@@ -283,14 +284,9 @@ const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: st
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
 // Refuse the file: half a case set cannot produce a number anyone should read.
 // Both fields, matching --author. Guarding `gold` alone left a line with gold and no question
-// reaching the scorer, which then threw on `c.q` — the same crash one field over. And BLANK counts
-// as absent: an empty query tokenises to nothing, every BM25 score ties at 0, and the ranking is
-// then arbitrary — measured here as a confident recall@1 of 100%. A number from no question is the
-// thing this guard exists to refuse, whether it arrives by a wrong corpus or by a blank line.
-//
-// Spelled out rather than as `!c.q?.trim()`: this is JSON.parse output, so `q` can be a number, and
-// optional chaining guards the null but not the type — `(42)?.trim()` throws. The short version
-// shipped for one commit and put back the crash the `typeof` test was there to stop.
+// reaching the scorer, which then threw on `c.q` — the same crash one field over. What counts as a
+// question is `isQuestion()` above; a number from no question is the thing this guard refuses,
+// whether it arrives by a wrong corpus or by a blank line.
 const malformed = cases.filter((c) => !isQuestion(c.q) || !Array.isArray(c.gold)).length;
 if (malformed) {
   console.log(

@@ -42,11 +42,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `gold` array or its `q` threw `TypeError` part-way through scoring or authoring, and a non-numeric
   `--fetch-k` emptied the recall-k list so `--json` reported every k as 0 at exit 0. That last one
   is the dangerous shape — a confident all-zero figure attributed to a named case set.
-- **A question with nothing searchable in it scored an arbitrary 100%.** A blank or
-  punctuation-only `q` (`""`, `"   "`, `"???"`) is not missing, so it passed validation, tokenised
-  to nothing, tied every BM25 score at 0 and took whatever order the documents arrived in — read
-  back as recall@1 100%, MRR 1.000. A case now needs at least one letter or digit; questions in any
-  script still score, since the check is `\p{L}\p{N}`, not the ASCII-only `\w`.
+- **A question with nothing searchable in it produced a figure with no retrieval behind it.** A
+  blank or punctuation-only `q` (`""`, `"   "`, `"???"`) is not missing, so it passed validation,
+  tokenised to nothing, and tied every BM25 score at 0 — leaving the ranking as whatever order the
+  documents arrived in. Measured 2026-08-23: recall@1 100% on a 3-note vault where k exceeds the
+  corpus, 0.0% on the 60-note bench vault. A case now needs at least one letter or digit; questions
+  in any script still score, since the check is `\p{L}\p{N}`, not the ASCII-only `\w`.
 - **`--author` with empty stdin overwrote the case set with an empty file, exit 0.** It has no
   `--force` gate at all, so a producer that failed, a `< /dev/null`, or a filter matching nothing
   silently replaced the authored baseline every past number was measured against. It now refuses to

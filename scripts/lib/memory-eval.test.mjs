@@ -296,10 +296,11 @@ test('CLI --run refuses a partly-truncated case set instead of crashing on it', 
   assert.ok(!r.stdout.includes('recall@'));
 });
 
-test('CLI --run refuses a blank question, which scores an arbitrary 100%', () => {
-  // `typeof '' === 'string'`, so an empty q passed the guard. It tokenises to nothing, every BM25
-  // score ties at 0, and the ranking is whatever order the docs came in — measured as recall@1
-  // 100%, MRR 1.000. A confident figure from a question nobody asked.
+test('CLI --run refuses a question with nothing searchable in it', () => {
+  // `typeof '' === 'string'`, so an empty q passed the guard, and `'???'` is not even blank. Both
+  // tokenise to nothing: every BM25 score ties at 0 and the ranking is whatever order the docs came
+  // in, which reports as 100% where k exceeds the corpus and 0% on a real vault. Neither is a
+  // measurement.
   // `q: 42` rides along because the obvious short spelling of this guard — `!c.q?.trim()` — passes
   // the blank case and THROWS here: optional chaining guards null, not type. It shipped for one
   // commit and put back the crash the typeof test existed to stop.
