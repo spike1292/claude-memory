@@ -124,7 +124,9 @@ CLAUDE_MEMORY_HOME=~/.claude-memory-work
 ```
 
 `vault-mcp` binds to exactly one home, set in its systemd unit. Only the personal one is ever
-published. Two homes means two copies of the 722 MB of model weights — that is the whole price. It
+published. Two homes cost two things: **722 MB of model weights twice on disk, and — from phase 4 —
+a second ~1.3 GB resident at peak**, because the two sockets cannot see each other and both worlds
+can hold a `--serve` at once (Risk 6 carries the RAM consequence). It
 does **not** buy two runtimes: `node_modules` is **shared, not walled**. A version dir carries one
 symlink, and `if (isLink(dir)) continue` stops a second world repointing it, so both worlds load
 through whichever home consolidated first (see step 2 of the update procedure). Two runtimes on
@@ -170,12 +172,20 @@ exec /usr/bin/node "$r/scripts/vault-mcp.mjs"
 Three things in it are load-bearing. `CLAUDE_PLUGIN_ROOT` gets no fallback branch — a daemon never
 has it set. The interpreter is an **absolute path**: a system unit runs with a bare `PATH` and no
 login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is tested for **content, not exit
-status**: `sh` has no `set -e`, so an absent file lets `$(…)` expand to empty and the wrapper would
-exec `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop. An *empty* breadcrumb does the
+status**: this script does not enable `set -e`, so an absent file lets `$(…)` expand to empty and
+the wrapper would exec `node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop. **Do not "harden"
+it by adding `set -e`** — `r=$(cat …)` would then abort the script, and since stderr is already
+redirected to `/dev/null` it exits 1 printing nothing, which is the cause-free dark connector this
+whole guard exists to prevent. An *empty* breadcrumb does the
 same while `cat` exits 0, and it is reachable: the hook writes with
 `printf … > "$MEM_HOME/plugin-root"`, a truncate-then-write with no temp file and no rename, so a
 killed session, a full disk, or a restart inside that write window all leave a zero-byte file — and
 step 3 of the update procedure runs right after step 2. Hence `[ -n "$r" ]`, not `|| exit`.
+
+**Both files are deployment artefacts and belong in the new `agentic-os` repo**, deployed to the VPS
+from there. The cure for a hardcoded plugin path must not itself live only on the box: rebuild it,
+or hand-edit the wrapper once, and the sole copy is gone — the unit then points at a path that no
+longer exists and the connector is dark on a `203/EXEC` nobody can trace to a deleted file.
 
 **VPS catch, and it is worse than staleness.** `vault-memory-sync.sh` writes that breadcrumb only
 when a Claude Code *session* runs with `CLAUDE_MEMORY_HOME` **set to that value** — an environment
@@ -229,7 +239,7 @@ rollback; if that ever matters, take the answer from Claude Code rather than fro
 | Thing | Job | Note |
 | --- | --- | --- |
 | Hostinger VPS, Ubuntu 24.04, 16 GB RAM | The brain box | Sized for peak, not idle — see RAM under Risks |
-| **Node ≥ 22.5, from nodesource** — not fnm/nvm | Runs `vault-mcp` and every script | `package.json` requires it for `node:sqlite`; Ubuntu 24.04's `apt install nodejs` gives 18.19, which throws on import. Claude Code bundles its own runtime and does **not** put `node` on `PATH`. nodesource is specified because it installs `/usr/bin/node`, which is what the unit below execs; a version manager puts it elsewhere (`~/.local/share/fnm/…`, `~/.nvm/versions/node/…`) and the unit dies `203/EXEC` |
+| **Node ≥ 22.5, from nodesource** — not fnm/nvm | Runs `vault-mcp` and every script | `package.json` requires it for `node:sqlite`; Ubuntu 24.04's `apt install nodejs` gives 18.19, which throws on import. Claude Code bundles its own runtime and does **not** put `node` on `PATH`. nodesource is specified because it installs `/usr/bin/node`, the absolute path the **wrapper** execs; a version manager puts it elsewhere (`~/.local/share/fnm/…`, `~/.nvm/versions/node/…`). Symptom to grep for: the wrapper exits **127** (`node: not found`), *not* systemd's `203/EXEC` — the unit starts fine, because the file it points at is the wrapper and that exists |
 | Tailscale | SSH and dev-server preview | Free tier |
 | Caddy | TLS and reverse proxy for `/mcp` | Auto certificates |
 | Claude Code + the `memory` plugin | Agent and memory | Same plugin, second machine |
@@ -271,8 +281,9 @@ the idle exit; the exit is what stops orphaned models accumulating, and the resp
 **Unverified, and cheap to check:** a process spawned by a systemd service normally stays in that
 unit's cgroup, so `systemctl restart vault-mcp` (step 3) may take the `--serve` down with it. The
 cost is not one *slow* answer — the miss path falls through to keyword search, so it is one
-**degraded, keyword-only** answer, MRR 0.158 against the vector path's 0.547. Confirm rather than
-assume, the same way rule 3's `credentials` entry is marked reasoned-not-measured.
+**degraded, keyword-only** answer: MRR 0.158 against the vector path's 0.546 on the English
+paraphrase set (n=28, `README.md`). Confirm rather than assume, the same way rule 3's `credentials`
+entry is marked reasoned-not-measured.
 
 **`node:http` plus hand-rolled JSON-RPC — no new dependency.** Publishing a vault over MCP is a
 general feature and belongs here; the *dependency* is what must not ship. Every release installs into
@@ -556,7 +567,7 @@ Five agents, of which only two are new:
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
 | 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up; **and 31 minutes after the last local session the connector answers *from the server*** — assert the socket, or a reply stamped `via: 'server'`. "An answer came back" proves nothing: the miss path falls through to keyword search, so a broken spawn answers too, at MRR 0.158 instead of 0.547, silently and forever | 1–2 days |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; after the three-step update procedure, the daemon's resolved path equals the **highest-versioned directory on disk**, compared as a version — not by text sort (`0.10.0` < `0.6.0`), not by mtime (it records the last write into a dir, not its version), not against the breadcrumb (circular), and not merely that the unit is still up; **and 31 minutes after the last local session, a *second* query answers from the server** — send one query to trigger the detached spawn, wait for warm-up, then assert a **live** socket (connect, `socketIsLive()`) or a reply stamped `via: 'server'`. Three traps: "an answer came back" proves nothing, because the miss path falls through to keyword search; the *first* reply is keyword-only **by design** while the server warms, so testing it fails a healthy build; and a socket **file** is not a live server — `--serve` unlinks stale files left by a server that died without its SIGTERM handler, so an existence check passes on a SIGKILLed one. Keyword-only is MRR 0.158 vs 0.546 (English paraphrases, n=28) | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
 | 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
