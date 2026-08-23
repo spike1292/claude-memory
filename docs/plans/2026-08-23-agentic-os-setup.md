@@ -99,7 +99,7 @@ says why.
 - The socket is `search-${MODEL_KEY}.sock` (`scripts/memory-semantic.mjs:73`) — **keyed by model, not
   by project**. Both worlds use bge-m3, so both want the same filename.
 - A second `--serve` on that name **refuses to start**: it probes `socketIsLive(SERVE_SOCK)`, prints
-  `already serving bge-m3`, and exits 0 (`scripts/memory-semantic.mjs:86-88`). It does not evict the
+  `already serving bge-m3`, and exits 0 (`scripts/memory-semantic.mjs:85-87`). It does not evict the
   first — `evictableSockets()` filters `n !== ownName` (`scripts/lib/memory-semantic.mjs:91`), so
   eviction only ever fires on a *different* name: another model, or a legacy per-project socket.
 - The slug is a **request field**, not a startup argument. The one surviving server answers for any
@@ -157,11 +157,12 @@ is now redundant.
 already holds the model, answers per-slug queries, and caches indexes on demand; this is a thin
 HTTP + MCP shell over that socket.
 
-**`node:http` plus hand-rolled JSON-RPC — no new dependency.** Every release installs into its own
-version-pinned cache dir, and Claude Code runs `npm ci`, so a `@modelcontextprotocol/sdk` entry would
-ship into every user's cache to serve a feature only this machine uses. `devDependencies` are not an
-escape hatch: `npm ci` installs those too. If the shell ever needs more than a few hundred lines,
-that is the signal to move this item to the new repo instead of taking the dependency.
+**`node:http` plus hand-rolled JSON-RPC — no new dependency.** Publishing a vault over MCP is a
+general feature and belongs here; the *dependency* is what must not ship. Every release installs into
+its own version-pinned cache dir and Claude Code runs `npm ci`, so a `@modelcontextprotocol/sdk`
+entry lands in every user's cache whether or not they ever serve anything. `devDependencies` are not
+an escape hatch: `npm ci` installs those too. If the shell ever outgrows a few hundred hand-written
+lines, that is the signal to move the item to the new repo rather than take the dependency.
 
 **Read-only in phase 1.** Bearer token. An explicit **allow-list** of exposed paths, not a deny-list.
 It binds to the personal `$CLAUDE_MEMORY_HOME` and no other. Writes are phase 5, after the door has
@@ -229,8 +230,7 @@ Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
         |
         +--> git worktree add ~/worktrees/<task-id>
         |
-        +--> claude -p --bare --output-format json
-        |      --plugin-dir <memory plugin>
+        +--> claude -p --output-format json          (NOT --bare, see rule 6)
         |      --settings ~/afk/sandbox.json
         |      "<task body + acceptance criteria>"
         |
@@ -285,6 +285,21 @@ Five rules, each with a reason:
    separate runners with separate permissions.
 5. **Done is defined by the task, not by the agent.** Backlog.md's acceptance criteria go into the
    prompt and the PR body quotes them back.
+6. **Do not pass `--bare`, despite the docs recommending it for scripted calls.** `claude --help`:
+   it skips *hooks, plugin sync, auto-memory, keychain reads and CLAUDE.md auto-discovery*, and
+   forces `ANTHROPIC_API_KEY`. Every one of those is load-bearing here:
+
+   | `--bare` skips | What breaks |
+   | --- | --- |
+   | Hooks | No SessionEnd distiller, so no L2 log and no L3 insight — the "Summarise" agent silently stops existing |
+   | Plugin sync | The memory plugin is not loaded, so recall never fires |
+   | CLAUDE.md auto-discovery | The agent writes PRs without the invariants its reviewer judges it by |
+   | Keychain reads | An API key must be provisioned on the VPS, and `~/.claude/.credentials.json` in rule 3 becomes dead config |
+
+   Failure if ignored: phase 3 ships, PRs appear overnight, no note is ever written, recall is never
+   consulted, and the first run dies at auth with nothing saying why. **The docs say `--bare` will
+   become the default for `-p` in a future release** — so pin the behaviour explicitly rather than
+   relying on today's default, and re-check on each Claude Code upgrade.
 
 Five agents, of which only two are new:
 
@@ -300,7 +315,7 @@ Five agents, of which only two are new:
 
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
-| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; vault has history; `~/.claude-memory/config.json` on the Mac points at the git clone, not at `SynologyDrive-Prive/AI/Claude` | weekend |
+| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; vault has history; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
 | 1 | `vault-mcp` read-only, Caddy, custom connector | CoWork answers from the vault, on the phone | 1–2 days |
 | 2 | Backlog.md, gh-dash, `Personal/` folders, research skill | One pile, and it is visible | 1 day |
 | 3 | AFK runner and triage agent | An issue becomes a PR overnight | 2–3 days |
@@ -313,11 +328,19 @@ Phase 1 is the payoff. Everything before it is plumbing.
 
 1. **The public MCP door exposes the whole brain.** Read-only first, bearer token, explicit
    **allow-list** of exposed paths. This is the risk that can actually hurt.
-2. **Never put the vault git repo inside a Synology-Drive-synced folder.** Synology fights git,
-   leaves `_CONFLICT` files, and silently replaces directory symlinks. It has already cost 24 notes
-   once. Keep the repo outside the synced tree and let Synology mirror a plain export. **This
-   applies to the Mac today**, whose `config.json` currently points inside that tree — hence the
-   extra phase-0 step.
+2. **Two separate vault hazards. Do not merge them — the plan's first draft did.**
+   - *Synology:* it fights git, and it silently replaces a directory symlink **inside** the vault
+     with an empty dir, renaming the original `<name>_<DEVICE>_<date>_Conflict`. No note count is
+     recorded for this. Keep the git repo outside the synced tree; let Synology mirror a plain
+     export. **This applies to the Mac today**, whose `config.json` still points inside that tree —
+     hence the extra phase-0 step.
+   - *The 24 notes:* those were lost on 2026-08-08 to a **relocating hook sent at the wrong vault
+     path** — `vault-memory-sync.sh` moved files and repointed the symlink after a stray
+     `CLAUDE_VAULT` resolved somewhere throwaway (`hooks/vault-memory-sync.sh:76`,
+     `scripts/memory-semantic.mjs:66`, `README.md:208`). Moving the vault out of Synology does not
+     retire this one. It stays live for every phase-0 step that changes a vault path, and the guard
+     is `/memory:doctor`, which fails loudly when the resolved vault is empty while a populated one
+     exists.
 3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3; poll every 30 minutes.
 4. **Work data must never reach the connector.** One `$CLAUDE_MEMORY_HOME` per world — see "The
    wall". A separate serve process is *not* a wall: the sockets collide by model name and the
