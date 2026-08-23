@@ -266,7 +266,7 @@ Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
  push notification -> review from the phone -> merge
 ```
 
-Five rules, each with a reason:
+Six rules, each with a reason:
 
 1. **Poll every 30 minutes, not every minute.** Note what this is *not* about: an empty tick costs
    one `gh issue list` and one `backlog task list`, and no tokens at all — `claude -p` runs per
@@ -324,6 +324,7 @@ Five rules, each with a reason:
    | --- | --- |
    | Hooks | No SessionEnd distiller, so no L2 log and no L3 insight — the "Summarise" agent silently stops existing |
    | Plugin sync | The memory plugin is not loaded, so recall never fires |
+   | Auto-memory | `MEMORY.md` — the L1 index itself — is never loaded, so the agent starts with none of this project's facts |
    | CLAUDE.md auto-discovery | The agent writes PRs without the invariants its reviewer judges it by |
    | Keychain reads | Auth becomes strictly `ANTHROPIC_API_KEY` or an `apiKeyHelper` passed via `--settings`; `~/.claude/.credentials.json` in rule 3 becomes dead config |
 
@@ -338,8 +339,8 @@ Five rules, each with a reason:
    flag**: after `claude -p` returns, check that the run left **its own** line in
    `$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`, and fail the task loudly when it did not.
 
-   Three traps in that check — two that would make it **pass** for the wrong reason, one that would
-   make it **fail** for the wrong reason:
+   Three traps in that check — the first would make it **pass** for the wrong reason, the other two
+   would make it **fail** on a run that was perfectly healthy:
 
    - **The log is machine-wide, and neither `cwd` nor `slug` narrows it.** Every project appends to
      the same daily file, and `appendJsonl` stamps `{ t, slug, ...record }` — `cwd` is an argument
@@ -354,8 +355,9 @@ Five rules, each with a reason:
      `UserPromptSubmit`, `PostToolUse`, `Stop` and `SessionEnd`, and seven hooks call `logHook()`,
      so lines land throughout the run and again as it ends. Two edges follow. The VPS runs
      Europe/Amsterdam, so a runner using `date +%F` looks for tomorrow's file between local midnight
-     and UTC midnight — one hour in CET, two in CEST, so a reproduction attempted in January at
-     01:30 local sees nothing. Use `date -u +%F`. And the **check clock can cross UTC
+     and UTC midnight, finds nothing, and raises a nightly false alarm — one hour in CET, two in
+     CEST, so a reproduction attempted in January at 01:30 local sees nothing. Use `date -u +%F`.
+     And the **check clock can cross UTC
      midnight after the last line was written** — a run finishing 23:59 and checked at 00:01 has
      every one of its lines in yesterday's file. **Scan both days for the `session` value**; keying
      the filename off the run's start time is not enough, because the lines straddle.
@@ -363,8 +365,12 @@ Five rules, each with a reason:
      `appendJsonl` swallows every error by design, so a read-only `logs/`, a full disk, or any other
      write failure produces exactly the same silence as a hook that never ran. A permissions probe
      is *not* enough: a full disk passes it and still loses the line. Write a probe record and
-     **read it back**, which is the only check that covers both, and report the outcome as "hooks
-     did not run, *or* the log could not be written" — never as a `--bare` regression on its own.
+     **read it back** — the only check covering both. Put the probe in **its own file under
+     `logs/`** (same directory, so it proves the same filesystem), never as a line in a `logHook()`
+     family: `scripts/lib/hook-stats.mjs` groups by `l.hook || '(unnamed)'`, so a probe appended to
+     `hooks-<date>.jsonl` shows up as a phantom `(unnamed)` row per AFK task in
+     `/memory:doctor --hooks`. Report the outcome as "hooks did not run, *or* the log could not be
+     written" — never as a `--bare` regression on its own.
 
    Done right, that check goes red the day the default flips, which is the only warning this design
    will get.
