@@ -188,7 +188,8 @@ read with `readStdin()` + `payload()` from `hooks/lib/hook-io.mjs` and **never**
 and nowhere else, and the hook reports itself through `logHook()` so `/memory:doctor --hooks` can
 see it.
 
-Then five behaviours — two forced by CLAUDE.md, three by what this checkout has already cost:
+Then five behaviours. Two are CLAUDE.md rules, one is a cost this checkout has already paid, and two
+are consequences of the VPS that phase 0 creates:
 
 - **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
   the session whenever the network is slow or the VPS is down.
@@ -319,7 +320,8 @@ Six rules, each with a reason:
    prompt and the PR body quotes them back.
 6. **Do not pass `--bare`, despite the docs recommending it for scripted calls.** `claude --help`:
    it skips *hooks, plugin sync, auto-memory, keychain reads and CLAUDE.md auto-discovery*, and
-   forces `ANTHROPIC_API_KEY`. Every one of those is load-bearing here:
+   narrows auth to `ANTHROPIC_API_KEY` **or an `apiKeyHelper` passed via `--settings`**. Every one
+   of those is load-bearing here:
 
    | `--bare` skips (among others) | What breaks |
    | --- | --- |
@@ -340,8 +342,8 @@ Six rules, each with a reason:
    flag**: after `claude -p` returns, check that the run left **its own** line in
    `$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`, and fail the task loudly when it did not.
 
-   Four traps in that check — the first would make it **pass** for the wrong reason, the other three
-   would make it **fail** on a run that was perfectly healthy:
+   Three traps in that check. The first makes it **pass** for the wrong reason; the second makes it
+   **fail** on a healthy run; the third makes it **claim more than it knows**:
 
    - **The log is machine-wide, and neither `cwd` nor `slug` narrows it.** Every project appends to
      the same daily file, and `appendJsonl` stamps `{ t, slug, ...record }` — `cwd` is an argument
@@ -362,32 +364,28 @@ Six rules, each with a reason:
      midnight after the last line was written** — a run finishing 23:59 and checked at 00:01 has
      every one of its lines in yesterday's file. **Scan both days for the `session` value**; keying
      the filename off the run's start time is not enough, because the lines straddle.
-   - **An absent line does not prove `--bare` — this one fails for the wrong reason.**
-     `appendJsonl` swallows every error by design, so a read-only `logs/`, a full disk, or any other
-     write failure produces exactly the same silence as a hook that never ran. A permissions probe
-     is *not* enough: a full disk passes it and still loses the line. Write a probe record and
-     **read it back** — the only check covering both. Two constraints on where it goes. It must not
-     be a line in a `logHook()` family: `scripts/lib/hook-stats.mjs` groups by
-     `l.hook || '(unnamed)'`, so a probe appended to `hooks-<date>.jsonl` shows up as a phantom
-     `(unnamed)` row per AFK task in `/memory:doctor --hooks`. And it must not be a *new dated*
-     family either: `pruneDatedLogs()` matches only `recall-` and `hooks-` on purpose ("only what we
-     write is ours to delete"), so a dated probe name leaves one unreaped file per day — ~365 a
-     year, each holding ~144 lines at three tasks every 30 minutes — under a `logs/` the doctor
-     advertises as pruned. Nor **one fixed filename**: three tasks run at once, so B truncates
-     between A's write and A's read, and A is failed loudly while healthy — or worse, passes on B's
-     identical record, proving nothing. Use **one file per run**, `logs/.probe-<session>`, created
-     with `wx`, read back, and unlinked by the runner. It collides with neither `CLAIM`
-     (`^\.retention-<date>$`) nor `DATED_LOG` (`^(recall|hooks)-…`), and the runner reaps its own.
-   - **The probe proves the runner's filesystem, not the hook's.** The hook writes from *inside* the
-     sandbox; the runner writes from *outside* it (rule 3). If the sandbox denies writes to
-     `$CLAUDE_MEMORY_HOME/logs/`, `appendJsonl` swallows it, no hook line lands, and the probe still
-     succeeds — attributing the silence to `--bare` again. Whether the sandbox permits that write is
-     on the open-questions list; until it is answered, treat a probe pass plus a missing hook line
-     as *inconclusive*, not as a flag regression. Report the outcome as "hooks did not run, *or* the log could not be
-     written" — never as a `--bare` regression on its own.
+   - **A missing line has three causes, and the check cannot tell them apart.** `appendJsonl`
+     swallows every error by design, so "hooks were skipped", "`logs/` was unwritable or full", and
+     "the sandbox denied the write" all produce identical silence — and the third is live, because
+     the hook writes from *inside* the sandbox while the runner checks from *outside* it (rule 3).
+     Whether a sandboxed agent may write to `$CLAUDE_MEMORY_HOME/logs/` is on the open-questions
+     list.
 
-   Done right, that check goes red the day the default flips, which is the only warning this design
-   will get.
+     **So report, do not adjudicate.** A missing line raises "hooks produced no line — skipped,
+     unwritable, or sandbox-denied", flags the task for a human, and stops there. It must never
+     print a `--bare` regression as though it had established one.
+
+     A read-back probe was designed here to separate those causes and then **cut**: it cannot see
+     inside the sandbox, so it never separated the one that matters, and every home for it was
+     wrong. A `logHook()` family gives `/memory:doctor --hooks` a phantom `(unnamed)` row per task
+     (`hook-stats.mjs` groups by `l.hook || '(unnamed)'`). A new dated family is reaped by nothing
+     (`pruneDatedLogs()` matches only `recall-` and `hooks-`, deliberately). One fixed filename
+     races three concurrent tasks. One dotfile per run breaks the stated invariant that nothing else
+     in `logs/` starts with a dot (`hooks/lib/hook-io.mjs`), and orphans on a killed runner. Two
+     lines of honest reporting beat all four.
+
+   Done that way, the check raises the alarm the day the default flips — which is the only warning
+   this design gets — without inventing a diagnosis it cannot support.
 
 Five agents, of which only two are new:
 
