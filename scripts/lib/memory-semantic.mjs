@@ -549,6 +549,26 @@ export function centroid(vecs) {
   return out;
 }
 
+// THE definition of "these two notes carry the same lesson", and there is exactly one so that the
+// write-time reconcile and the --dupes audit cannot disagree. An audit that scores duplicates
+// differently from the writer cannot serve as the writer's acceptance check, which is how a body
+// arm catching 0/25 survived five days of daily evidence (2026-08-23, #93).
+//
+// Raw cosine over CARD vectors, never the query path's score: searchIn() rank-fuses with BM25 and
+// returns 0 for a keyword-only hit, so `score >= dupeMin` there compares two different quantities
+// and is wrong in silence.
+//
+// Cross-layer pairs score 0 by construction: a Pattern and a Mistake on one topic are
+// complementary by design. `layer` IS the folder — see vaultSources() in the entry.
+/**
+ * @param {{ layer: string, vec: ArrayLike<number> }} a
+ * @param {{ layer: string, vec: ArrayLike<number> }} b
+ * @returns {number}
+ */
+export function dupeScore(a, b) {
+  return a.layer === b.layer ? cosine(a.vec, b.vec) : 0;
+}
+
 /**
  * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
  * @param {readonly T[]} items
@@ -560,11 +580,33 @@ export function samefolderPairs(items, minScore) {
   const out = [];
   for (let i = 0; i < items.length; i++)
     for (let j = i + 1; j < items.length; j++) {
-      if (items[i].layer !== items[j].layer) continue;
-      const s = cosine(items[i].vec, items[j].vec);
+      const s = dupeScore(items[i], items[j]);
       if (s >= minScore) out.push({ s, layer: items[i].layer, a: items[i].note, b: items[j].note });
     }
   return out.sort((x, y) => y.s - x.s);
+}
+
+/**
+ * Nearest same-layer note to a candidate card, or null when nothing reaches the bar.
+ *
+ * Top-1 by design: the runner-up is not a consolation prize. When the best match is marked
+ * `reconcile: manual` the caller writes a new note rather than folding into second place, because
+ * the mark says the human settled where this lesson's boundary sits.
+ *
+ * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
+ * @param {readonly T[]} items
+ * @param {{ layer: string, vec: ArrayLike<number> }} candidate
+ * @param {number} minScore
+ * @returns {{ note: string, s: number } | null}
+ */
+export function bestDupe(items, candidate, minScore) {
+  /** @type {{ note: string, s: number } | null} */
+  let best = null;
+  for (const it of items) {
+    const s = dupeScore(it, candidate);
+    if (s >= minScore && (!best || s > best.s)) best = { note: it.note, s };
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- lexical arm + fusion

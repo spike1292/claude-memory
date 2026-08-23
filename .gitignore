@@ -4,6 +4,10 @@ node_modules/
 # They stay machine-local under $CLAUDE_MEMORY_HOME/eval/ and are never committed.
 eval-cases-*.jsonl
 
+# Dupe-eval truth sets are hand-written from a real vault's --dupes output and name its notes.
+# Same rule as the retrieval case sets: the harness ships, the truth does not.
+dupe-truth-*.jsonl
+
 # Personal Claude Code permission grants. settings.json IS tracked — it is project policy — but
 # settings.local.json is per-machine and holds whatever tooling that developer happens to use.
 # Ignored rather than merely untracked because a stray `git add -A` is exactly how the tracked

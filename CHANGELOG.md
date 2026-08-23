@@ -11,6 +11,36 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **The distiller now dedups against embeddings, not word overlap.** Its body-overlap arm caught
+  **0 of 25** real duplicates and every one of its nine firings was a false positive; no threshold
+  separates the classes, because two notes stating one lesson in different words share almost no
+  vocabulary at ~30 tokens a note. The new reconcile embeds the note's card and asks the resident
+  search server for the nearest same-folder note at the calibrated `dupeMin`. It needs no
+  re-index — the candidate is embedded as a query against the cards already indexed — so the
+  SessionEnd latency the 2026-08-17 comment feared does not exist. The lexical body arm is deleted
+  rather than kept as a fallback; with no server or no index the slug arm is the whole dedup, and a
+  distiller that cannot dedup still writes. Measurements and the refutation of the 2026-08-17
+  calibration: `docs/decisions/2026-08-23-embedding-reconcile.md`.
+- **Two insights restating one lesson in a single distillation now produce one note.** The index is
+  rebuilt after a run, so notes written seconds earlier were invisible to it and the same event was
+  written twice — observed twice on 2026-08-22. The distiller keeps this run's vectors in memory and
+  checks them with the same predicate.
+- **One predicate decides what a duplicate is**, shared by the write-time reconcile and `--dupes`.
+  They disagreed before, which is how an arm catching 0/25 survived five days of daily evidence.
+
+### Added
+
+- **`reconcile: manual` — a per-note mark meaning "never auto-fold anything into this note".**
+  Cross-linking two notes RAISES their similarity, so an audit that correctly relates a kept pair
+  pushes it over the merge bar (0.754 → 0.762 observed). Set it with
+  `node scripts/memory-mark.mjs <note> [...]`, which `/memory:prune` now runs on every pair you keep.
+  It blocks both dedup arms, and each blocked merge is reported as a `declined` count beside
+  `wrote` and `merged`.
+- **`memory-semantic.mjs --dupe-eval --truth <file.jsonl>`** — the acceptance sweep, reporting
+  caught/total with the false count beside it over every same-folder pair, plus the keeps a bar
+  would wrongly propose. The harness ships; the truth file names a private vault's notes and is
+  gitignored, exactly like the retrieval case sets.
+
 - **`memory-eval.mjs` now refuses an argument it does not recognise instead of ignoring it.** Three
   shapes were discarded in silence, each making the run score the **default** case set while
   printing a recall figure the operator would read as belonging to the file they had just named:

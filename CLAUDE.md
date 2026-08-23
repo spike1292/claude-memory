@@ -174,6 +174,23 @@ Two facts that bite:
   scored 25% @5 mean-pooled vs 68% cls-pooled and returned confident, plausible, wrong rankings.
 - **Batch size is 1 on purpose.** Padding changes the embedding, and competing notes sit ~0.001
   apart. Verify with `--check-embedding` before touching it.
+- **There is one duplicate predicate and both callers use it.** `dupeScore()`/`bestDupe()` in
+  `scripts/lib/memory-semantic.mjs` — raw cosine over CARD chunks, same layer, `>= PROFILE.dupeMin`.
+  The distiller's write-time reconcile and `--dupes` call it, and the reason is not tidiness: while
+  the writer scored word overlap and the audit scored embeddings, the audit could not serve as the
+  writer's acceptance check, and an arm catching **0 of 25** survived five days of daily evidence.
+  The query path's score is NOT this quantity — `searchIn()` rank-fuses with BM25 and returns `0`
+  for a keyword-only hit, so gating it at `dupeMin` is wrong in silence.
+- **A dedup measurement taken on the pairs the previous arm missed is measuring the wrong
+  distribution.** The body arm scored 11/16 on exactly that set in 2026-08-17 and 0/25 on the
+  corpus. Any change here re-runs `--dupe-eval` and quotes **caught/total with the false count
+  beside it**;
+  [docs/decisions/2026-08-23-embedding-reconcile.md](docs/decisions/2026-08-23-embedding-reconcile.md).
+- **`reconcile: manual` in a note's frontmatter means "never auto-fold anything into this note",**
+  and it blocks both dedup arms. It exists because cross-linking two notes raises their similarity,
+  so an audit that correctly relates a kept pair pushes it over the bar. `/memory:prune` sets it via
+  `scripts/memory-mark.mjs` on every kept pair — as a command, not an instruction, because the
+  instruction version produced four unmarked keeps.
 
 Indexes are keyed per model (`db/semantic-<slug>-<model>.db`); a model change is refused by every
 mode except `--index`. The active model comes from `scripts/lib/model-default.mjs` — one place, on

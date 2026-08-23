@@ -30,7 +30,7 @@ if (argv.length >= 2) {
   );
   let r;
   try {
-    r = distill(argv[0], argv[1]);
+    r = await distill(argv[0], argv[1]);
   } catch (e) {
     // Caught only to RECORD it, then rethrown: the exit code and the stack in distill.log are
     // unchanged. Without this an `error` row printed no reason at all, in the same report round
@@ -39,10 +39,16 @@ if (argv.length >= 2) {
     throw e;
   }
   outcome = 'ran';
-  reason = r ? `wrote ${r.written}, merged ${r.merged}` : 'nothing to distil';
+  reason = r
+    ? `wrote ${r.written}, merged ${r.merged}` + (r.declined ? `, declined ${r.declined}` : '')
+    : 'nothing to distil';
   if (r)
     console.log(
-      `distill: wrote ${r.written} note(s), merged ${r.merged} into existing, for ${r.slug}`,
+      `distill: wrote ${r.written} note(s), merged ${r.merged} into existing` +
+        // Omitted when zero, like every other optional field in this log: a mark that never fires
+        // should not add a column, but a mark that fires must never be invisible.
+        (r.declined ? `, declined ${r.declined} (reconcile: manual)` : '') +
+        `, for ${r.slug}`,
     );
 } else if (argv.length === 1) {
   console.error('usage: distill-session.mjs <transcript> <cwd>   (or no args to gate on stdin)');

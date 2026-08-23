@@ -34,12 +34,67 @@ import {
   singleFlight,
   fuseReserved,
   samefolderPairs,
+  bestDupe,
+  dupeScore,
   socketIsLive,
   stripFrontmatter,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
 
 /** @typedef {import('./memory-semantic.mjs').LexDoc} LexDoc */
+
+test('the dedup predicate is one predicate', () => {
+  // The write-time reconcile and the --dupes audit MUST agree on what a duplicate is. They did not
+  // before: the writer scored word overlap and the audit scored embeddings, so the audit could not
+  // serve as the writer's acceptance check and an arm catching 0 of 25 survived five days of daily
+  // evidence. This test is that agreement, asserted as a round trip rather than at each end.
+  const near = new Float32Array([0.6, 0.8]);
+  const mid = new Float32Array([0.66, 0.75]); // ~0.996 with `near`
+  const far = new Float32Array([-0.8, 0.6]);
+  const items = [
+    { note: 'a', layer: 'Patterns', vec: near },
+    { note: 'b', layer: 'Patterns', vec: mid },
+    { note: 'c', layer: 'Patterns', vec: far },
+    { note: 'd', layer: 'Decisions', vec: near },
+  ];
+
+  // Cross-layer scores ZERO, never a cosine: a Pattern and a Mistake on one topic are
+  // complementary by design. Returning the real cosine and filtering elsewhere would let a caller
+  // that forgot the filter merge across folders while still looking correct.
+  assert.equal(dupeScore(items[0], items[3]), 0, 'cross-layer pairs are not duplicates');
+  assert.ok(dupeScore(items[0], items[1]) > 0.99);
+
+  const hit = bestDupe(items, { layer: 'Patterns', vec: near }, 0.9);
+  assert.ok(hit, 'the near twin is over the bar');
+  assert.equal(hit.note, 'a', 'top-1 is the BEST match, not the first over the bar');
+
+  assert.equal(
+    bestDupe(items, { layer: 'Patterns', vec: far }, 0.9)?.note,
+    'c',
+    'a candidate matching only the far note still finds it when it clears the bar',
+  );
+  assert.equal(
+    bestDupe(items, { layer: 'Mistakes', vec: near }, 0.9),
+    null,
+    'a layer with no notes has no duplicate, however close the vectors',
+  );
+  assert.equal(bestDupe([], { layer: 'Patterns', vec: near }, 0.9), null);
+
+  // The round trip: every pair the audit fires on must be a pair the writer would have merged, and
+  // nothing else. Two tests pinning one end each would both stay green while the ends drifted.
+  for (const bar of [0.5, 0.9, 0.99]) {
+    const fromAudit = new Set(samefolderPairs(items, bar).map((p) => [p.a, p.b].sort().join('/')));
+    /** @type {Set<string>} */
+    const fromWriter = new Set();
+    for (const cand of items) {
+      const others = items.filter((x) => x.note !== cand.note);
+      const best = bestDupe(others, cand, bar);
+      if (best) fromWriter.add([best.note, cand.note].sort().join('/'));
+    }
+    for (const pair of fromWriter)
+      assert.ok(fromAudit.has(pair), `writer would merge ${pair} at ${bar}, audit does not see it`);
+  }
+});
 
 test('scoring, chunking and fusion', () => {
   const fm = stripFrontmatter('---\nname: x\ndescription: "A thing"\n---\nbody here\n');
