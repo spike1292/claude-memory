@@ -194,12 +194,11 @@ happened, and the check certifies the exact failure it exists to catch. Compare 
 resolved path against the **highest-versioned directory on disk, compared as a version** — read `version` from each dir's
 `.claude-plugin/plugin.json`, or `sort -V` the names. Both of the obvious shortcuts are wrong. A
 text sort puts `0.10.0` below `0.6.0`. And **mtime measures the last write into a directory, not
-which version it holds** — anything that touches an old install lifts it above the live one. This
-machine shows it: `0.3.1`'s directory carries an mtime four days newer than its own `package.json`,
-because `scripts/share-modules.mjs` re-linked its `node_modules` long after the version was frozen.
-So an mtime sort passes a stale daemon whenever an old dir gets touched. (Highest-version-wins is
-itself wrong after a deliberate rollback; if that ever matters, take the answer from Claude Code
-rather than from a directory scan).
+which version it holds**: Claude Code keeps writing into old installs after orphaning them — `0.3.1`
+here carries `.orphaned_at` and an `.in_use` directory touched a day later — so any such write can
+lift a dead version above the live one. (The ordering on this machine happens to be correct today;
+the hazard is the write, not the version.) Highest-version-wins is itself wrong after a deliberate
+rollback; if that ever matters, take the answer from Claude Code rather than from a directory scan.
 
 ## Install, do not build
 
