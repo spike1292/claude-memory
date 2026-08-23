@@ -140,19 +140,26 @@ because nothing else will be:
 
 ```ini
 Environment=CLAUDE_MEMORY_HOME=/home/…/.claude-memory
-ExecStart=/bin/sh -c 'exec node "$(cat "$CLAUDE_MEMORY_HOME/plugin-root")/scripts/vault-mcp.mjs"'
+ExecStart=/bin/sh -c 'r=$(cat "$CLAUDE_MEMORY_HOME/plugin-root") || { echo "no plugin-root breadcrumb in $CLAUDE_MEMORY_HOME — start a Claude Code session there first" >&2; exit 1; }; exec /usr/bin/node "$r/scripts/vault-mcp.mjs"'
 ```
 
-`CLAUDE_PLUGIN_ROOT` is not worth a fallback branch here — a daemon never has it set.
-**VPS catch:** the breadcrumb is rewritten by `vault-memory-sync.sh` only when a Claude Code
-*session* starts, so a box that only runs the daemon can hold a stale one. Have phase 1 verify it
-after every plugin update.
+Three things in that line are load-bearing. `CLAUDE_PLUGIN_ROOT` gets no fallback branch — a daemon
+never has it set. The interpreter is an **absolute path**: a system unit runs with a bare `PATH` and
+no login shell, so no `fnm`/`nvm` shim is on it. And the breadcrumb is checked, because `sh` has no
+`set -e`: an absent file makes `cat` fail to stderr, `$(…)` expand to empty, and the unit exec
+`node "/scripts/vault-mcp.mjs"` into an ENOENT restart loop — a dark connector with no cause named.
+
+**VPS catch:** `vault-memory-sync.sh` writes that breadcrumb only when a Claude Code *session*
+starts in that `$CLAUDE_MEMORY_HOME`. So it can be **stale** on a box that only runs the daemon, and
+**absent** if the unit is enabled before any session has run there — or written to the *work* home
+if the work session ran first. Phase 1 verifies it, and again after every `/plugin update memory`.
 
 ## Install, do not build
 
 | Thing | Job | Note |
 | --- | --- | --- |
 | Hostinger VPS, Ubuntu 24.04, 16 GB RAM | The brain box | Sized for peak, not idle — see RAM under Risks |
+| **Node ≥ 22.5**, from nodesource or fnm | Runs `vault-mcp` and every script | `package.json` requires it for `node:sqlite`; Ubuntu 24.04's `apt install nodejs` gives 18.19, which throws on import. Claude Code bundles its own runtime and does **not** put `node` on `PATH` |
 | Tailscale | SSH and dev-server preview | Free tier |
 | Caddy | TLS and reverse proxy for `/mcp` | Auto certificates |
 | Claude Code + the `memory` plugin | Agent and memory | Same plugin, second machine |
@@ -236,13 +243,20 @@ Detailed below.
 Prose, not code. Personal backlog, research-to-note, wiki upkeep. `/memory:protocol` already defines
 the note rules; these add the folder layout and the skills that write into it.
 
-### 5. A marker-only `*_CHILD` name in `hook-io.mjs` *(this repo)*
+### 5. `CLAUDE_MEMORY_MACHINE_RUN` in `hook-io.mjs` *(this repo)*
 
 ~5 lines, and it blocks phase 3. `logHook()` reads a closed pair of env vars to decide `child: true`,
 and both are recursion guards that switch off the hook they name — so there is currently no way to
-label a machine-run session without disabling something. Add a third name that guards nothing, and
-give it a test that asserts the stamp appears **and** that the distiller still runs, which is
-precisely the round trip a test of either half alone would miss.
+label a machine-run session without disabling something.
+
+**Do not give it a `*_CHILD` name.** In this repo that suffix has one meaning: CLAUDE.md says heavy
+hooks "guard against recursing into themselves via a `*_CHILD` env var", and both existing names do
+exactly that. A third `*_CHILD` that guards nothing invites the next person to copy the wrong half
+of the pattern — wiring a guard to the label, or the label to a guard — which is the confusion this
+item exists to end. Name it for what it does.
+
+Its test asserts the stamp appears **and** that the distiller still runs. Either half alone stays
+green while the other end drifts.
 
 ## Backlog: two jobs, two tools
 
@@ -357,8 +371,8 @@ Six rules, each with a reason:
    switches the SessionEnd distiller off**, so no L2 log and no L3 insight is ever written — the
    exact row rule 6's table calls unacceptable. Worse, rule 6's guard would not catch it: the gate
    calls `logHook()` on its decline path too, so a line with that `session` still lands and the
-   check passes. This needs a third, purely-labelling name added to `hook-io.mjs` — build item 5,
-   in this repo, not a line in a unit file.
+   check passes. This needs a third, purely-labelling name added to `hook-io.mjs` —
+   `CLAUDE_MEMORY_MACHINE_RUN`, build item 5, in this repo, not a line in a unit file.
 5. **Done is defined by the task, not by the agent.** Backlog.md's acceptance criteria go into the
    prompt and the PR body quotes them back.
 6. **Do not pass `--bare`, despite the docs recommending it for scripted calls.** `claude --help`:
@@ -445,11 +459,11 @@ Five agents, of which only two are new:
 
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
-| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; vault has history; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
-| 1 | `vault-mcp` read-only, Caddy, custom connector | CoWork answers from the vault, on the phone | 1–2 days |
-| 2 | Backlog.md, gh-dash, `Personal/` folders, research skill | One pile, and it is visible | 1 day |
+| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **build item 2 (auto-commit hook)**, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit **without anyone running git**; `config.json` on the Mac points at the git clone, not inside the synced tree; `/memory:doctor` is green after the move | weekend |
+| 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector | CoWork answers from the vault, on the phone; the `plugin-root` breadcrumb is verified and the unit survives a `/plugin update memory` | 1–2 days |
+| 2 | Backlog.md, gh-dash, build item 4 (`Personal/` folders, research skill) | One pile, and it is visible | 1 day |
 | 3 | Build item 5 (marker name), then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
-| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | 1 day |
+| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** until a human answers the employment question below |
 | 5 | *Deferred:* vault-mcp writes, Obsidian command centre | — | — |
 
 Phase 1 is the payoff. Everything before it is plumbing.
