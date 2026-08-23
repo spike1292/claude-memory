@@ -52,6 +52,18 @@ if (equalsArg) {
   console.log(`${name} takes a space-separated value. Write: ${name} ${rest.join('=')}`);
   process.exit(1);
 }
+// The other half of the same hole: `val()` returns whatever follows the flag, so `--cases` at the
+// end of argv yields undefined and `--cases --mode lexical` yields `--mode`. Both scored the
+// DEFAULT set and reported a number for one the operator never named. `--generate` is absent on
+// purpose — bare `--generate` legitimately means 40.
+for (const f of ['--cases', '--out', '--vault', '--slug', '--style', '--mode', '--fetch-k']) {
+  if (!argv.includes(f)) continue;
+  const v = val(f);
+  if (!v || v.startsWith('--')) {
+    console.log(`${f} needs a value.`);
+    process.exit(1);
+  }
+}
 const repo =
   argv
     .filter((a) => !a.startsWith('--'))

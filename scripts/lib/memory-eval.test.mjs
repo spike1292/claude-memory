@@ -283,6 +283,18 @@ test('CLI --run refuses a partly-truncated case set instead of crashing on it', 
   assert.ok(!r.stdout.includes('recall@'));
 });
 
+test('CLI refuses a value-taking flag with no value', () => {
+  // `--cases` last in argv yields undefined; `--cases --mode lexical` swallows the next flag. Both
+  // scored the default set and printed a number for one the operator never named.
+  const { run } = scratch(['ours-one'], null);
+  const trailing = run('--run', '--mode', 'lexical', '--cases');
+  assert.equal(trailing.status, 1, `got:\n${trailing.stdout}`);
+  assert.match(trailing.stdout, /--cases needs a value/);
+  const swallowed = run('--run', '--cases', '--mode', 'lexical');
+  assert.equal(swallowed.status, 1, `got:\n${swallowed.stdout}`);
+  assert.match(swallowed.stdout, /--cases needs a value/);
+});
+
 test('CLI refuses --cases=X rather than silently scoring the default', () => {
   // val() reads `--flag value` and nothing rejected an unrecognised token, so the equals form was
   // dropped and the run scored the DEFAULT set — printing a number the operator would read as
@@ -346,21 +358,28 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
   // lines, `--run` on one line and `--cases` on the next passed this test while fully reinstating
   // #97 — a scan guard that reports clean because it looked at the wrong unit.
   const doc = raw.replace(/\\\r?\n\s*/g, ' ');
-  // The per-project invocations are the memory-eval ones with no --vault: a --vault line is the
-  // bench-vault walkthrough, where an explicit --cases is correct.
-  const perProject = doc
-    .split('\n')
-    .filter((l) => l.includes('memory-eval.mjs') && l.includes('--run') && !l.includes('--vault'));
+  // Whole CODE BLOCKS, not lines. Per-line, `ARGS='--cases …'` on one line and `$ARGS` on the run
+  // line matched neither filter and passed green while the doc still ran the unscoped set. The unit
+  // that has to be clean is everything the reader will paste.
+  const fences = [...doc.matchAll(/^[ \t]*```[^\n]*\n([\s\S]*?)^[ \t]*```/gm)].map((m) => m[1]);
+  // The per-project block is the one invoking memory-eval with --run and no --vault; a --vault
+  // block is the bench-vault walkthrough, where an explicit --cases is correct.
+  /** @param {string} l */
+  const isPerProjectRun = (l) =>
+    l.includes('memory-eval.mjs') && l.includes('--run') && !l.includes('--vault');
+  const blocks = fences.filter((b) => b.split('\n').some(isPerProjectRun));
   // A scan guard that matches nothing passes for the wrong reason — this repo has been bitten by
-  // exactly that, so assert the scan found the lines before asserting anything about them.
+  // exactly that, so assert the scan found its target before asserting anything about it.
+  assert.ok(blocks.length >= 1, 'found no per-project eval block in commands/eval.md');
+  const runLines = blocks.flatMap((b) => b.split('\n')).filter(isPerProjectRun);
   assert.ok(
-    perProject.length >= 2,
-    `expected the per-project --run invocations in commands/eval.md, found ${perProject.length}`,
+    runLines.length >= 2,
+    `expected both per-project --run invocations, found ${runLines.length}`,
   );
-  for (const line of perProject)
+  for (const b of blocks)
     assert.ok(
-      !line.includes('--cases') && !line.includes('--out'),
-      `commands/eval.md must let the slug-scoped default resolve, got: ${line.trim()}`,
+      !b.includes('--cases') && !b.includes('--out'),
+      `commands/eval.md must let the slug-scoped default resolve, got block:\n${b}`,
     );
 });
 
