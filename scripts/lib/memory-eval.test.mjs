@@ -253,6 +253,50 @@ test('CLI --run does not tell you to drop a --cases you never passed', () => {
   assert.match(r.stdout, /vault has moved out from under it/);
 });
 
+test('CLI --run names the override the caller actually used, including --out', () => {
+  // --out overrides the case path too, so a branch keyed on "is CASES the scoped path" told an
+  // --out caller to drop a --cases it never passed — round 1's fix reintroducing round 1's bug.
+  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['theirs'] }]);
+  const r = run('--run', '--out', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /Drop --out to use this project's own set/);
+  assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
+});
+
+test("CLI --run calls an empty case set empty, not another vault's", () => {
+  const { run, casesPath } = scratch(['ours-one'], []);
+  const r = run('--run', '--cases', /** @type {string} */ (casesPath), '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /names no gold notes at all/);
+  assert.ok(
+    !r.stdout.includes('DIFFERENT vault'),
+    'a truncated or half-written file is not a foreign one',
+  );
+});
+
+// The doc end of the round trip. Everything above pins the SCRIPT; #97 was a defect in the COMMAND
+// that overrode it, so re-adding `--cases` to commands/eval.md would reinstate the bug with every
+// other test in this file green.
+test('commands/eval.md runs the per-project eval without --cases', () => {
+  const doc = fs.readFileSync(new URL('../../commands/eval.md', import.meta.url), 'utf8');
+  // The per-project invocations are the memory-eval ones with no --vault: a --vault line is the
+  // bench-vault walkthrough, where an explicit --cases is correct.
+  const perProject = doc
+    .split('\n')
+    .filter((l) => l.includes('memory-eval.mjs') && l.includes('--run') && !l.includes('--vault'));
+  // A scan guard that matches nothing passes for the wrong reason — this repo has been bitten by
+  // exactly that, so assert the scan found the lines before asserting anything about them.
+  assert.ok(
+    perProject.length >= 2,
+    `expected the per-project --run invocations in commands/eval.md, found ${perProject.length}`,
+  );
+  for (const line of perProject)
+    assert.ok(
+      !line.includes('--cases') && !line.includes('--out'),
+      `commands/eval.md must let the slug-scoped default resolve, got: ${line.trim()}`,
+    );
+});
+
 test('CLI --run is unchanged when every gold note resolves', () => {
   const { run, casesPath } = scratch(
     ['ours-one', 'ours-two'],

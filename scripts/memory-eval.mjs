@@ -155,7 +155,10 @@ if (!flag('--run')) {
   process.exit(1);
 }
 if (!fs.existsSync(CASES)) {
-  console.log(`no case set at ${CASES}. Generate one first: --generate 40`);
+  // --author, not --generate: `--generate` emits extracted sentences, which commands/eval.md calls
+  // useless as a paraphrase test. Pointing the two branches at different tools taught half the
+  // callers the wrong one.
+  console.log(`no case set at ${CASES}. Author one first: --author (see /memory:eval)`);
   process.exit(1);
 }
 const cases = fs
@@ -171,22 +174,23 @@ const cases = fs
 // Refuse a case set that is not about this vault. `$CLAUDE_MEMORY_HOME/eval/` is machine-local and
 // shared by every project on the machine, so an unscoped case-set name is owned by whichever
 // project authored one first and every other project then scores itself against those questions —
-// 0/32 gold refs resolvable, reported as a recall figure (#97).
+// 2/32 gold refs resolvable, reported as a recall figure (#97).
 const cov = goldCoverage(cases, new Set(allNotes().map((n) => n.note)));
 if (cov.verdict === GOLD.mismatch) {
-  // Only suggest dropping the flag when one was actually passed. A project whose OWN scoped set has
-  // gone stale would otherwise be told to drop an argument it never used, and pointed at the file
-  // it just ran.
-  const fix =
-    CASES === SCOPED_CASES
-      ? `This IS ${SLUG}'s own set, so the vault has moved out from under it. Re-author it with --author.`
-      : `Drop --cases to use this project's own set: ${SCOPED_CASES}\nAuthor one with --author if it does not exist yet.`;
-  console.log(
-    `${cov.resolved}/${cov.total} gold notes in this case set exist in ${SLUG}'s vault — under the ${Math.round(GOLD_FLOOR * 100)}% floor.\n` +
-      `That is a case set built from a DIFFERENT vault, not a bad score. Refusing to report a number.\n` +
-      `  case set: ${CASES}\n` +
-      fix,
-  );
+  // Which override got us here, if any. Testing the flags rather than comparing CASES to the scoped
+  // path: `--out` overrides too, so path equality told an `--out` caller to drop a `--cases` it
+  // never passed — the very advice this branch exists to withhold.
+  const override = val('--cases') ? '--cases' : val('--out') ? '--out' : null;
+  const fix = !override
+    ? `This IS ${SLUG}'s own set, so the vault has moved out from under it. Re-author it with --author.`
+    : `Drop ${override} to use this project's own set: ${SCOPED_CASES}\nAuthor one with --author if it does not exist yet.`;
+  // An empty or gold-less file is a mismatch by the same arithmetic, but calling it another vault's
+  // case set would be a false diagnosis of a truncated or half-written one.
+  const why = cov.total
+    ? `${cov.resolved}/${cov.total} gold notes in this case set exist in ${SLUG}'s vault — under the ${Math.round(GOLD_FLOOR * 100)}% floor.\n` +
+      `That is a case set built from a DIFFERENT vault, not a bad score. Refusing to report a number.`
+    : `This case set names no gold notes at all — it is empty, truncated, or malformed. Refusing to report a number.`;
+  console.log(`${why}\n  case set: ${CASES}\n${fix}`);
   process.exit(1);
 }
 if (cov.verdict === GOLD.churn)

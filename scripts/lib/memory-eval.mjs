@@ -15,8 +15,10 @@
 //   node memory-eval.mjs --run [--cases <path>] [--mode semantic|lexical] [--json]
 //   node --test scripts/lib/memory-eval.test.mjs
 //
-// Cases live in ~/.claude/data/eval-cases-<slug>-<style>.jsonl and are GITIGNORED: they contain
-// vault content. Regenerate only with --force; a changed case set invalidates every past number.
+// Cases live at `defaultCasesPath()` under $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they
+// contain vault content. (They were under ~/.claude/data/ until commands/install.md migrated them;
+// that path was still written here on 2026-08-23, in the file that now owns the resolution.)
+// Regenerate only with --force; a changed case set invalidates every past number.
 
 // `node:fs`, `node:path`, `execFileSync`, `model-default.mjs` and `paths.mjs` were all imported and
 // none of them referenced — dead since the entry/lib split moved the CLI out. Dropped 2026-08-19.
