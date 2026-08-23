@@ -24,7 +24,7 @@ These were settled in the design interview and are not open for re-litigation wi
 
 | Decision | Choice | Why |
 | --- | --- | --- |
-| This repo's scope | Memory layer only | Vault decision note `2026-08-22-be-the-memory-layer-not-the-agentic-os` — agentic OS is wrapper + automation + memory; this project is the third layer |
+| This repo's scope | Memory layer only | An agentic OS is three layers — a visual wrapper, a skill/automation backbone, and memory. This project commits to being a good third layer (readable Markdown, documented architecture, queryable vault) and leaves the other two to whoever builds them. Same judgement that rejected obsidian-second-brain's 46 commands: a different product, not a missing feature |
 | Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; see "the wall" below — a separate *process* is not enough |
 | Always-on host | Hostinger VPS, Ubuntu 24.04, 16 GB | Must be publicly reachable; see the CoWork finding below |
 | Vault sync | Private git repo, VPS canonical | Three writers now exist; git is the only sync that gives history and an undo |
@@ -175,9 +175,12 @@ turns `git revert` into the undo button.
 
 It is a new hook, so the repo's own shape rules apply before anything else: the logic goes in
 `hooks/lib/vault-autocommit.mjs` with `hooks/vault-autocommit.mjs` owning argv and stdin only, a
-`vault-autocommit.test.mjs` sits beside the lib, the lib imports without side effects, the timeout
-is written in `hooks/hooks.json` and nowhere else, and the hook reports itself through `logHook()`
-so `/memory:doctor --hooks` can see it.
+`vault-autocommit.test.mjs` sits beside the lib, the lib imports without side effects, the payload is
+read with `readStdin()` + `payload()` from `hooks/lib/hook-io.mjs` and **never** with
+`new Response(process.stdin)` (~18 ms of web-streams bootstrap for a 100-byte payload, measured
+2026-08-20 — and this hook fires on every vault write), the timeout is written in `hooks/hooks.json`
+and nowhere else, and the hook reports itself through `logHook()` so `/memory:doctor --hooks` can
+see it.
 
 Then four behaviours, all forced by rules already in CLAUDE.md:
 
@@ -305,10 +308,16 @@ Five rules, each with a reason:
    | Keychain reads | Auth becomes strictly `ANTHROPIC_API_KEY` or an `apiKeyHelper` passed via `--settings`; `~/.claude/.credentials.json` in rule 3 becomes dead config |
 
    Failure if ignored: phase 3 ships, PRs appear overnight, no note is ever written, recall is never
-   consulted, and the first run dies at auth with nothing saying why. The
-   [headless docs](https://docs.claude.com/en/docs/claude-code/headless) say `--bare` **will become
-   the default for `-p` in a future release** — so pin the behaviour explicitly rather than relying
-   on today's default, and re-check it on each Claude Code upgrade.
+   consulted, and the first run dies at auth with nothing saying why.
+
+   **And omitting the flag is not a defence that lasts.** The
+   [headless docs](https://docs.claude.com/en/docs/claude-code/headless) say `--bare` will become
+   the **default** for `-p` in a future release, and there is no opt-out to pin against: Claude Code
+   2.1.231 has `--bare` and no `--no-bare`, no setting, and nothing a hook could read — hooks do not
+   run under `--bare` at all. So the runner must **assert the side effect instead of trusting the
+   flag**: after `claude -p` returns, check that the run left its `hooks-<date>.jsonl` line, and
+   fail the task loudly when it did not. That check goes red the day the default flips, which is the
+   only warning this design will get.
 
 Five agents, of which only two are new:
 
