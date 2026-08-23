@@ -227,13 +227,21 @@ malformed frames, oversized bodies, and a request for a path outside the allow-l
 **Read-only in phase 1.** Bearer token. An explicit **allow-list** of exposed paths. Binds the
 personal `$CLAUDE_MEMORY_HOME` and no other. Writes are phase 5.
 
-**Verifying a cold start** (phase 1's real check): after 30+ minutes with no query from any client —
-`bump()` resets the idle timer on every connection, including your own test queries — ask the
-connector a question, then ask `memory-semantic.mjs --query` the same question locally. Same top
-result means the server answered. A reply alone proves nothing: the miss path falls through to
-keyword search, MRR 0.158 against 0.546 (English paraphrases, n=28, `README.md`). Do not assert the
-socket instead: a socket *file* outlives a SIGKILLed server, and `socketIsLive()` returns true on
-timeout.
+**Verifying a cold start** (phase 1's real check). After 30+ minutes with no query from any client —
+`bump()` resets the idle timer on every connection, including your own test queries — ask **two**
+questions:
+
+1. The first triggers the detached spawn. **Throw its answer away**: after an idle exit the first
+   reply is keyword-only *by design*, so grading it fails a correct build.
+2. Wait for warm-up, then ask the second, and compare its top result against
+   `memory-semantic.mjs --query` for the same question locally. The local query never touches the
+   socket, so it is always the full hybrid — a fair reference for the second reply and a guaranteed
+   mismatch against the first.
+
+Same top result means the server answered. A reply alone proves nothing: the miss path falls through
+to keyword search, MRR 0.158 against 0.546 (English paraphrases, n=28, `README.md`). Do not assert
+the socket instead — a socket *file* outlives a SIGKILLed server, and `socketIsLive()` returns true
+on timeout.
 
 ### 2. Vault auto-commit hook *(this repo)*
 
@@ -417,7 +425,7 @@ That check has traps:
 
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
-| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **create the `agentic-os` repo**, build item 2, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit without anyone running git; the Mac's `config.json` points at the git clone, not inside the synced tree; `/memory:doctor` green after the move | weekend |
+| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **create the `agentic-os` repo**, build item 2, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit without anyone running git; the Mac's `config.json` points at the git clone, not inside the synced tree; `/memory:doctor` reports **no WARN and no FAIL** on both boxes after the move — a bare "no FAIL" is not enough, since on a fresh VPS a real loss prints only a WARN (Risk 2) | weekend |
 | 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector, unit + wrapper committed to `agentic-os` | CoWork answers from the vault, on the phone; the cold-start check under item 1 passes; the update procedure leaves the daemon on the highest-versioned directory | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 | One pile, and it is visible | 1 day |
 | 3 | Build item 5, then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
