@@ -14,7 +14,7 @@ Five goals, stated by the owner:
 2. A personal second brain — personal research, personal backlog, a wiki.
 3. An AFK software factory: agents pick up backlog work while the laptop is shut.
 4. Remote access from laptop and phone.
-5. Essent development, on the same machine but walled off.
+5. Employer development work, on the same machine but walled off.
 
 Big refactors stay local on the Mac. That is not a goal for this system; it is a carve-out.
 
@@ -25,7 +25,7 @@ These were settled in the design interview and are not open for re-litigation wi
 | Decision | Choice | Why |
 | --- | --- | --- |
 | This repo's scope | Memory layer only | Vault decision note `2026-08-22-be-the-memory-layer-not-the-agentic-os` — agentic OS is wrapper + automation + memory; this project is the third layer |
-| Work/personal split | Shared machine, separate vaults | Cheaper than two boxes; the wall is process-level, not config-level |
+| Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; see "the wall" below — a separate *process* is not enough |
 | Always-on host | Hostinger VPS, Ubuntu 24.04, 16 GB | Must be publicly reachable; see the CoWork finding below |
 | Vault sync | Private git repo, VPS canonical | Three writers now exist; git is the only sync that gives history and an undo |
 | AFK factory | Claude Code native, not OpenHands | Reuses existing skills, hooks, plugin; the sandbox is already shipped |
@@ -69,9 +69,9 @@ for Claude Code that hop is unnecessary.
         |  Caddy (TLS)  -->  /mcp   vault-mcp  <-- custom connector |
         |  Claude Code in tmux  (Remote Control on)                 |
         |  AFK runner: queue -> worktree -> claude -p -> PR         |
-        |  ~/vault        git working copy, canonical               |
-        |  ~/vault-essent git working copy, walled                  |
-        |  claude-memory plugin + semantic index                    |
+        |  ~/vault      + $CLAUDE_MEMORY_HOME=~/.claude-memory      |
+        |  ~/vault-work + $CLAUDE_MEMORY_HOME=~/.claude-memory-work |
+        |  claude-memory plugin, one index per home                 |
         +---------------------------+-------------------------------+
                                     | git push/pull
                         +-----------v-----------+
@@ -88,14 +88,45 @@ Four rules fall out:
 2. **Two doors, on purpose.** Tailscale is the private door for the human. Public HTTPS `/mcp` is the
    narrow door for Anthropic's cloud. Nothing else is public.
 3. **Git is the sync.** Every vault write is a commit. A bad agent run is one `git revert`.
-4. **Essent lives on the same box in its own world** — own vault, own repos, own index, own serve
-   process, and never behind the public connector.
+4. **Work lives on the same box in its own world** — see the next section. It is never behind the
+   public connector.
+
+## The wall, and why a separate process is not one
+
+The first draft said work and personal get "separate serve processes". That is wrong, and the code
+says why.
+
+- The socket is `search-${MODEL_KEY}.sock` (`scripts/memory-semantic.mjs:73`) — **keyed by model, not
+  by project**. Both worlds use bge-m3, so both want the same filename.
+- A starting server **evicts every sibling `search-*.sock`** in the same `run/` dir
+  (`scripts/lib/memory-semantic.mjs:91`). The second server does not coexist; it kills the first.
+- The slug is a **request field**, not a startup argument. Whichever server survives will answer for
+  any slug whose index it can find.
+
+Composed, that is the failure: the work server starts, kills the personal one, and then answers a
+work-slug query arriving through the **public** `/mcp` door.
+
+**The wall is `$CLAUDE_MEMORY_HOME`.** It is the one setting that can only be an environment variable
+(`hooks/lib/paths.mjs:161`), because it relocates `config.json` itself — and it relocates `run/`,
+`db/` and `models/` with it. Two homes means two `run/` dirs, so two sockets that cannot see or evict
+each other, and two `db/` dirs, so neither server can load the other's index at all.
+
+```bash
+# personal
+CLAUDE_MEMORY_HOME=~/.claude-memory
+# work
+CLAUDE_MEMORY_HOME=~/.claude-memory-work
+```
+
+`vault-mcp` binds to exactly one home, set in its systemd unit. Only the personal one is ever
+published. Two homes also means two copies of the 722 MB of model weights; that is the price, and it
+is worth it.
 
 ## Install, do not build
 
 | Thing | Job | Note |
 | --- | --- | --- |
-| Hostinger VPS, Ubuntu 24.04, 16 GB RAM | The brain box | bge-m3 is ~1.3 GB resident before any agent runs |
+| Hostinger VPS, Ubuntu 24.04, 16 GB RAM | The brain box | Sized for peak, not idle — see RAM under Risks |
 | Tailscale | SSH and dev-server preview | Free tier |
 | Caddy | TLS and reverse proxy for `/mcp` | Auto certificates |
 | Claude Code + the `memory` plugin | Agent and memory | Same plugin, second machine |
@@ -122,13 +153,23 @@ is now redundant.
 already holds the model, answers per-slug queries, and caches indexes on demand; this is a thin
 HTTP + MCP shell over that socket.
 
-**Read-only in phase 1.** Bearer token. A deny-list that excludes `Personal/Private/` and every
-Essent path. Writes are phase 5, after the door has been trusted for a while.
+**Read-only in phase 1.** Bearer token. An explicit **allow-list** of exposed paths, not a deny-list.
+It binds to the personal `$CLAUDE_MEMORY_HOME` and no other. Writes are phase 5, after the door has
+been trusted for a while.
 
 ### 2. Vault auto-commit hook *(this repo)*
 
-~20 lines. Every vault write becomes a commit and a push. This is what turns `git revert` into the
-undo button, and it is the only reason the git-canonical decision pays for itself.
+~60 lines, not the ~20 first estimated. Every vault write becomes a commit and a push, which is what
+turns `git revert` into the undo button. Four things it must do, all forced by rules already in
+CLAUDE.md:
+
+- **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
+  the session whenever the network is slow or the VPS is down.
+- **`pull --rebase` before push.** The VPS commits too, so a plain push is rejected non-fast-forward.
+- **Scoped `git add <path>`, never `git add -A`.** Several sessions share a working tree here; a
+  blanket add has already shipped another session's file to `main` once.
+- **Tolerate `.git/index.lock`.** Two sessions saving a note in the same second will collide. Skip
+  the round, do not wait — the next write picks it up.
 
 ### 3. AFK runner *(new repo)*
 
@@ -178,12 +219,12 @@ Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
         |
         +--> git worktree add ~/worktrees/<task-id>
         |
-        +--> claude -p --bare
+        +--> claude -p --bare --output-format json
         |      --plugin-dir <memory plugin>
         |      --settings ~/afk/sandbox.json
         |      "<task body + acceptance criteria>"
         |
-        +--> push branch, open PR, link the issue
+        +--> RUNNER (outside the sandbox) pushes branch, opens PR, links issue
         |
         +--> label ready-for-human, comment what it did
         |
@@ -198,21 +239,35 @@ Five rules, each with a reason:
 
 1. **Poll every 30 minutes, not every minute.** A headless `claude -p` run costs a near-fixed ~40k
    tokens of context whatever the prompt (measured 2026-08-20). A one-minute poller burns money
-   finding nothing.
+   finding nothing. `--output-format json` is what makes the real per-run cost readable, so the cap
+   in rule 3 rests on a measurement rather than an estimate.
 2. **Worktrees go in `~/worktrees/`, never `.claude/worktrees/`.** Claude Code's default puts them
    inside the project, and `node_modules` resolution then walks up into the parent and loads the
    wrong version.
-3. **The sandbox is nailed shut, not merely on:**
+3. **The sandbox is nailed shut, not merely on** — but it must not strangle the step after it:
    ```json
    { "sandbox": {
        "enabled": true,
        "failIfUnavailable": true,
        "allowUnsandboxedCommands": false,
        "network": { "allowedDomains": ["registry.npmjs.org", "api.github.com"] },
-       "credentials": ["~/.ssh", "~/.aws", "~/.claude"] } }
+       "credentials": ["~/.ssh", "~/.aws", "~/.claude/.credentials.json"] } }
    ```
-   The docs warn that a broad `github.com` allow is an exfiltration path, because the proxy decides
-   from the client-supplied hostname without inspecting TLS. Keep the list short.
+   The docs warn that a broad `github.com` allow is an exfiltration path: the proxy decides from the
+   client-supplied hostname without inspecting TLS, so domain fronting gets past it. Keep the list
+   short. Three consequences of keeping it short:
+
+   - **`git push` is not covered.** It reaches `github.com` over HTTPS, or port 22 over SSH, and
+     neither is on the list. Left as written, every AFK run does the work and then dies at "push
+     branch, open PR", leaving a stale worktree and no PR. **Push and PR-open run outside the agent,
+     in the runner**, after `claude -p` returns. The runner is our code and does not need the
+     sandbox; widening the agent's allow-list to fix this trades a real boundary for convenience.
+   - **Credentials is `~/.claude/.credentials.json`, not `~/.claude`.** Blocking the whole directory
+     starves the memory plugin: L1 loads through `~/.claude/projects/<slug>/memory/MEMORY.md`, and
+     `vault-memory-sync.sh` repoints that symlink every session. **Verify the exact `credentials`
+     semantics against a real run before phase 3** — this entry is reasoned, not measured.
+   - **`api.github.com` is enough for `gh issue`/`gh pr` reads** inside the agent, which is all it
+     needs.
 4. **The agent never touches `main` and never touches the vault repo.** Code work and memory work are
    separate runners with separate permissions.
 5. **Done is defined by the task, not by the agent.** Backlog.md's acceptance criteria go into the
@@ -232,39 +287,49 @@ Five agents, of which only two are new:
 
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
-| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git | Phone drives the VPS with the laptop shut; vault has history | weekend |
+| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; vault has history; `~/.claude-memory/config.json` on the Mac points at the git clone, not at `SynologyDrive-Prive/AI/Claude` | weekend |
 | 1 | `vault-mcp` read-only, Caddy, custom connector | CoWork answers from the vault, on the phone | 1–2 days |
 | 2 | Backlog.md, gh-dash, `Personal/` folders, research skill | One pile, and it is visible | 1 day |
 | 3 | AFK runner and triage agent | An issue becomes a PR overnight | 2–3 days |
-| 4 | Essent walled setup | Work never crosses the wall | 1 day |
+| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | 1 day |
 | 5 | *Deferred:* vault-mcp writes, Obsidian command centre | — | — |
 
 Phase 1 is the payoff. Everything before it is plumbing.
 
 ## Risks
 
-1. **The public MCP door exposes the whole brain.** Read-only first, bearer token, deny-list
-   `Personal/Private/` and all Essent paths. This is the risk that can actually hurt.
+1. **The public MCP door exposes the whole brain.** Read-only first, bearer token, explicit
+   **allow-list** of exposed paths. This is the risk that can actually hurt.
 2. **Never put the vault git repo inside a Synology-Drive-synced folder.** Synology fights git,
    leaves `_CONFLICT` files, and silently replaces directory symlinks. It has already cost 24 notes
-   once. Keep the repo outside the synced tree and let Synology mirror a plain export.
+   once. Keep the repo outside the synced tree and let Synology mirror a plain export. **This
+   applies to the Mac today**, whose `config.json` currently points inside that tree — hence the
+   extra phase-0 step.
 3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3; poll every 30 minutes.
-4. **Essent data must never reach the connector.** Separate vault, separate index, separate serve
-   process — a separate process, not a config flag.
-5. **Claude Code auth sits on a public box.** Put `~/.claude` in `sandbox.credentials` so agents
-   cannot read their own credentials.
-6. **RAM.** 16 GB, not 8. The model is ~1.3 GB resident before any agent starts.
+4. **Work data must never reach the connector.** One `$CLAUDE_MEMORY_HOME` per world — see "The
+   wall". A separate serve process is *not* a wall: the sockets collide by model name and the
+   survivor answers any slug.
+5. **Claude Code auth sits on a public box.** Put `~/.claude/.credentials.json` in
+   `sandbox.credentials`. Do not block all of `~/.claude` — the memory plugin reads L1 through
+   `~/.claude/projects/<slug>/memory/`.
+6. **RAM: 16 GB, not 8 — sized for peak.** At idle the server is cheap: `modelIdleMs` (5 min)
+   disposes the model and ~450 MB of `MALLOC_LARGE` drops to ~2.4 MB while the socket and indexes
+   survive (measured 2026-08-17). The peak is what needs headroom — model loaded, indexes cached,
+   and up to three sandboxed agents building at once.
 
 Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the variable.
 
 ## Open questions
 
-- Does the Essent employment agreement permit work repos on a personally-owned VPS? Phase 4 is
-  blocked until this is answered by a human, not inferred.
-- Which vault paths are safe to expose read-only through the connector? Needs an explicit allow-list
-  written before phase 1 ships, not a deny-list bolted on after.
-- Does `memory-semantic.mjs --serve` need a slug allow-list so one connector cannot query the Essent
-  index by passing its slug as a request field?
+- Does the employer's agreement permit work repos on a personally-owned VPS? Phase 4 is blocked
+  until a human answers this; it is not something to infer. The specifics stay in the private
+  `agentic-os` repo.
+- Which vault paths are safe to expose read-only through the connector? The allow-list must be
+  written before phase 1 ships.
+- Do the `sandbox.credentials` semantics block reads outright or mask values? Rule 3 assumes an entry
+  can be scoped to a single file. Verify against a real run before phase 3.
+- Should `vault-mcp` also carry a slug allow-list as defence in depth? `$CLAUDE_MEMORY_HOME` already
+  makes the work index unreachable — a second check is belt-and-braces, not a substitute.
 
 ## Sources
 
