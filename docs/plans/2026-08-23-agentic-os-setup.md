@@ -112,8 +112,9 @@ sometimes bites — it is the steady state.
 
 **The wall is `$CLAUDE_MEMORY_HOME`.** It is the one setting that can only be an environment variable
 (`hooks/lib/paths.mjs:161`), because it relocates `config.json` itself — and it relocates `run/`,
-`db/`, `models/` and `node_modules/` with it. Two homes means two `run/` dirs, so two sockets that cannot see or evict
-each other, and two `db/` dirs, so neither server can load the other's index at all.
+`db/` and `models/` with it. Two homes means two `run/` dirs, so two sockets that cannot see or evict
+each other, and two `db/` dirs, so neither server can load the other's index at all. (`node_modules`
+also lives under `$CLAUDE_MEMORY_HOME`, but it is **not** walled by it — see below.)
 
 ```bash
 # personal
@@ -123,10 +124,11 @@ CLAUDE_MEMORY_HOME=~/.claude-memory-work
 ```
 
 `vault-mcp` binds to exactly one home, set in its systemd unit. Only the personal one is ever
-published. Two homes also means two copies of the 722 MB of model weights, and two `node_modules`
-runtimes — with the caveat under step 2 of the update procedure, since a version dir can only be
-symlinked at one of them. That is the price, and it
-is worth it.
+published. Two homes means two copies of the 722 MB of model weights — that is the whole price. It
+does **not** buy two runtimes: `node_modules` is **shared, not walled**. A version dir carries one
+symlink, and `if (isLink(dir)) continue` stops a second world repointing it, so both worlds load
+through whichever home consolidated first (see step 2 of the update procedure). Two runtimes on
+disk would be the failure state, not the cost.
 
 **The unit must not hardcode a plugin path.** Every release installs into its own version-pinned
 cache dir, and `${CLAUDE_PLUGIN_ROOT}` is reliable only inside `hooks/hooks.json` command strings —
@@ -187,7 +189,7 @@ re-reads the *old* path and serves the old version again.
    success. There is exactly **one** `vault-mcp` unit and it binds the personal home, so the
    personal breadcrumb is the only one this procedure cares about. (The path written is the plugin
    cache dir, identical in both worlds; the wall is `$CLAUDE_MEMORY_HOME` — config, `db/`,
-   `models/`, `run/`, `logs/`, and `node_modules/`.)
+   `models/`, `run/`, `logs/`. **`node_modules` is the known exception — see below.**)
 
    **One thread does cross the wall, and it is `node_modules`.** `scripts/share-modules.mjs` puts
    the shared runtime in `$CLAUDE_MEMORY_HOME/node_modules` and symlinks version dirs at it, so a
@@ -254,6 +256,11 @@ healthy — `systemctl status vault-mcp` says `active (running)` throughout.
 So `vault-mcp` spawns `--serve` detached on a miss, the same contract `memory-recall.mjs` already
 uses, and falls through rather than failing while the server warms. Do not "fix" this by removing
 the idle exit; the exit is what stops orphaned models accumulating, and the respawn is the design.
+
+**Unverified, and cheap to check:** a process spawned by a systemd service normally stays in that
+unit's cgroup, so `systemctl restart vault-mcp` (step 3) may take the `--serve` down with it. If so
+the next miss respawns it and the only cost is one slow query — but confirm rather than assume,
+the same way rule 3's `credentials` entry is marked reasoned-not-measured.
 
 **`node:http` plus hand-rolled JSON-RPC — no new dependency.** Publishing a vault over MCP is a
 general feature and belongs here; the *dependency* is what must not ship. Every release installs into
