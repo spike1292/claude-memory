@@ -25,7 +25,7 @@ Settled in the design interview. Not open for re-litigation without new facts.
 | Decision | Choice | Why |
 | --- | --- | --- |
 | This repo's scope | Memory layer only | An agentic OS is a visual wrapper, an automation backbone, and memory. This project commits to being a good third layer and leaves the others to whoever builds them — the same judgement that rejected obsidian-second-brain's command set: a different product, not a missing feature |
-| Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; a separate *process* is not a wall — see "The wall" |
+| Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; a separate *process* is not a wall — see "The wall". The VPS is Codebakkers-owned, so this is permitted; the binding constraint is **deletion at contract end** — see "Deleting the work data" |
 | Always-on host | Hostinger VPS, Ubuntu 24.04, 16 GB | Must be publicly reachable — see the CoWork finding |
 | Vault sync | Private git repo, VPS canonical | Mac and VPS both write from phase 0, the AFK runner from phase 3; git is the only sync giving history and an undo |
 | AFK factory | Claude Code native, not OpenHands | Reuses existing skills, hooks, plugin; the sandbox already ships |
@@ -173,6 +173,40 @@ its path from there, so they match whether or not step 2 happened. Not by text s
 below `0.6.0`). Not by mtime — Claude Code writes into old installs after orphaning them, so mtime
 records the last write, not the version. After a deliberate rollback, highest-version-wins is itself
 wrong; take the answer from Claude Code instead.
+
+## Deleting the work data
+
+The VPS belongs to Codebakkers; the client work arrives through a Codecask contract. **When that
+contract ends the client data must be deleted.** That makes deletability a design constraint, not an
+afterthought — and the wall above is most of the answer, because one `$CLAUDE_MEMORY_HOME` plus one
+vault directory is a small, enumerable footprint.
+
+But **deletion is not one action**, and two of these places are not on the VPS at all:
+
+| Location | Deletes with | Note |
+| --- | --- | --- |
+| `~/vault-work` | `rm -rf` | Notes themselves |
+| `~/.claude-memory-work/` | `rm -rf` | `db/` (index), `models/`, `run/`, `logs/` — including the work world's `hooks-*.jsonl` and `recall-*.jsonl`, which are per-home |
+| `~/worktrees/*` for work repos | `git worktree remove` | Checkouts, plus their `.git` |
+| Work repos' git **history** | Delete the repo, not the files | `rm` of a tracked file leaves every earlier version in `.git` |
+| **GitHub remote** | Delete the repository | *Not on the VPS.* See the open question — this copy may not be permitted at all |
+| **Synology mirror** | Delete there too | *Not on the VPS.* The mirror is a copy by design |
+| **Anthropic-side transcripts** | Cannot be deleted by you | See below |
+
+Three things that are easy to miss:
+
+- **Remote Control stores the session transcript on Anthropic servers** while connected — messages,
+  responses and tool activity — retained under the Data usage policy. Execution and filesystem
+  access stay local, but the transcript does not. If the contract forbids that, **do not enable
+  Remote Control for work sessions**; it is per-session, so the personal side can keep it.
+- **Embeddings are local** (bge-m3 via transformers.js), so indexing work notes sends nothing out.
+  `claude -p` does send content, which is ordinary API use, but it is worth knowing which is which.
+- **`node_modules` crosses the wall** (see above). It holds no client data, but it means "delete the
+  work home" can break the personal daemon if the work world consolidated the runtime. Re-run
+  `share-modules` from the personal world after deleting, or check the symlink first.
+
+Write the drill down in the private `agentic-os` repo and dry-run it in phase 4 — a deletion
+procedure first executed under time pressure at contract end is one that gets a location wrong.
 
 ## Install, do not build
 
@@ -429,7 +463,7 @@ That check has traps:
 | 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector, unit + wrapper committed to `agentic-os` | CoWork answers from the vault, on the phone; the cold-start check under item 1 passes; the update procedure leaves the daemon on the highest-versioned directory | 1–2 days |
 | 2 | Backlog.md, gh-dash, build item 4 | One pile, and it is visible | 1 day |
 | 3 | Build item 5, then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
-| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault | Work never crosses the wall | **BLOCKED** on the employment question |
+| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault, **and the deletion drill** | Work never crosses the wall, and a dry-run deletion accounts for every location below | 1 day |
 | 5 | *Deferred:* vault-mcp writes, Obsidian command centre | — | — |
 
 Phase 1 is the payoff. Everything before it is plumbing.
@@ -467,8 +501,11 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
 
 ## Open questions
 
-- Does the employer's agreement permit work repos on a personally-owned VPS? Phase 4 is blocked until
-  a human answers; the specifics stay in the private `agentic-os` repo.
+- May client data be pushed to a GitHub remote at all, even a private one, and under which account?
+  The deletion obligation below is satisfiable on the VPS; a GitHub remote adds a copy that is not
+  on the VPS. Answer before phase 4 creates the work vault's remote, not after.
+- Does the contract set a retention or deletion deadline, and does it require evidence of deletion?
+  That decides whether the drill needs a written record or just an action.
 - Which vault paths are safe to expose read-only? The allow-list must exist before phase 1 ships.
 - Do `sandbox.credentials` semantics block reads or mask values? The plan assumes an entry can be
   scoped to a single file.
