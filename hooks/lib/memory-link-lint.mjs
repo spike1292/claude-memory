@@ -99,6 +99,24 @@ export function findOrphans(memDir, noteNames, corpus) {
 }
 
 /**
+ * The note a MOC bullet points at, in either link form, or null when the line is not one.
+ *
+ * A `- [[wikilink]]` gate was the only form here until 2026-08-22, and a real `MEMORY.md` is written
+ * with markdown links — so `findDrift` matched NOTHING on every real vault, and every one of its
+ * tests passed because each used the wikilink form. `readNote` was called 0 times on this repo's own
+ * MOC. Found in review of #94, which fixed the same parser drift in `memory-audit-checks.mjs`.
+ *
+ * @param {string} line
+ * @returns {string | null}
+ */
+function bulletTarget(line) {
+  if (!line.startsWith('- [')) return null;
+  if (line.startsWith('- [[')) return line.slice(4).split(']]')[0];
+  const md = line.match(/^- \[[^\]]*\]\(([^)]+?)\.md(?:#[^)]*)?\)/);
+  return md ? md[1].replace(/^\.\//, '') : null;
+}
+
+/**
  * Bolded figures in a MOC hook that the note it points at does not contain.
  *
  * MOC hooks restate figures, then the note body moves and the hook does not. /memory:health caught
@@ -113,8 +131,8 @@ export function findDrift(mocText, readNote) {
   /** @type {{ target: string, n: string }[]} */
   const drift = [];
   for (const line of mocText.split('\n')) {
-    if (!line.startsWith('- [[')) continue;
-    const target = line.slice(4).split(']]')[0];
+    const target = bulletTarget(line);
+    if (target === null) continue;
     const body = readNote(target);
     if (body === null) continue;
     /** @type {Set<string>} */

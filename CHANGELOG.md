@@ -13,10 +13,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`/memory:health` reported every L1 note as missing from the MOC.** `MEMORY.md` is written with
   markdown links (`[Title](note.md)`), but `memory-audit-checks.mjs` scanned it for `[[wikilinks]]`
-  only — so it called all 8 notes orphaned on 2026-08-22 while `hooks/lib/memory-link-lint.mjs` read
-  the same file correctly. Two parsers, one file format. MOC membership now accepts both forms;
+  only — so it called all 8 notes orphaned on 2026-08-22. MOC membership now accepts both forms;
   the note-graph checks stay wikilink-only, because a markdown link from the MOC is exactly what
   does *not* make a note reachable from a sibling.
+- **The same parser drift had silently disabled the MEMORY.md figure-drift check.** `findDrift()` in
+  `hooks/lib/memory-link-lint.mjs` gated on `line.startsWith('- [[')`, which is never true on a real
+  MOC — `readNote` was called **0 times** against this repo's own `MEMORY.md`, so a check
+  `/memory:health` had raised in four consecutive audits had been reporting nothing ever since the
+  MOC moved to markdown links. Every one of its tests passed throughout, because each used the
+  wikilink form: the "test written against the copy stays green while the dependency goes dead"
+  failure this repo already documents. Both link forms are now accepted, and the new test asserts
+  `readNote` is actually reached.
 - **A bash `[[ $var =~ … ]]` test inside a fenced code block was reported as a dangling wikilink.**
   Link scanning now strips fenced and inline code first.
 
