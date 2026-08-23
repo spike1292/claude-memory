@@ -262,3 +262,14 @@ export function checkFile(f) {
     out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
   return out;
 }
+
+// A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
+// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
+// and inline code with them: a literal `[[wikilink]]` in REFLECTIONS.md false-positives otherwise.
+// ponytail: backtick fences only — 0 of 442 notes use `~~~`; add it when one does.
+/** @param {string} text @returns {string} */
+export function stripCodeBlocks(text) {
+  return text
+    .replace(/^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, '')
+    .replace(/`[^`\n]*`/g, '');
+}

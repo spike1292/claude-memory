@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as paths from '../hooks/lib/paths.mjs';
+import { noteTargets } from '../hooks/lib/memory-link-lint.mjs';
 import {
   isStandingNegative,
   hasConfidence,
@@ -22,6 +23,7 @@ import {
   isUnprovenancedMetric,
   buildSuffixIndex,
   checkFile,
+  stripCodeBlocks,
 } from './lib/memory-audit-checks.mjs';
 
 if (process.argv.includes('--check-file')) {
@@ -137,21 +139,25 @@ const resolves = (n) => notes.has(n) || permanent.has(n);
 // ---------------------------------------------------------------- MOC + graph
 const mocPath = path.join(MEM, 'MEMORY.md');
 const moc = fs.existsSync(mocPath) ? read(mocPath) : '';
-const mocLinks = new Set(linksIn(moc));
+// MEMORY.md is written with markdown links, not wikilinks; a wikilink-only parser reported all 8 L1
+// notes as missing from the MOC on 2026-08-22. `noteTargets` reads both forms and is the only parser
+// for this — `linksIn` below stays wikilink-only, since a markdown link from the MOC is exactly what
+// does NOT make a note reachable from a sibling.
+const mocLinks = new Set(noteTargets(moc));
 section(
   'Not in the MOC',
   memNames.filter((n) => !mocLinks.has(n)).map((n) => `${n} — add a one-line pointer to MEMORY.md`),
 );
 section(
   'Dangling wikilinks',
-  [...new Set([...notes.values()].flatMap((v) => linksIn(v.body)))]
+  [...new Set([...notes.values()].flatMap((v) => linksIn(stripCodeBlocks(v.body))))]
     .filter((n) => !resolves(n))
     .map((n) => `[[${n}]] — no such note in Memory, Insights or permanent/`),
 );
 
 const inbound = new Map([...notes.keys()].map((k) => /** @type {[string, number]} */ ([k, 0])));
 for (const [k, v] of notes)
-  for (const l of new Set(linksIn(v.body)))
+  for (const l of new Set(linksIn(stripCodeBlocks(v.body))))
     if (inbound.has(l) && l !== k && path.basename(v.file) !== 'MEMORY.md')
       inbound.set(l, /** @type {number} */ (inbound.get(l)) + 1);
 section(

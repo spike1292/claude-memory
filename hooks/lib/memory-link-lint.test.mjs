@@ -8,6 +8,7 @@ import {
   linkTargets,
   findOrphans,
   findDrift,
+  noteTargets,
   mocSize,
   findOversize,
   reportFor,
@@ -66,6 +67,44 @@ test('findOrphans counts sibling links but not the MOC or self', () => {
   );
   // MEMORY is never reported as an orphan itself
   assert.deepStrictEqual(findOrphans(M, ['MEMORY'], corpus([['MEMORY.md', 'x']])), []);
+});
+
+test('noteTargets returns both link forms in document order', () => {
+  // #94 review round 3: two passes put every wikilink before every markdown link, so
+  // bulletTarget()'s [0] picked the wrong target on a bullet that mixed both forms.
+  assert.deepStrictEqual(noteTargets('- [md](first.md) then [[second]]'), ['first', 'second']);
+  assert.deepStrictEqual(noteTargets('- [[first]] then [md](second.md)'), ['first', 'second']);
+  assert.deepStrictEqual(noteTargets('[[a|alias]] and [[b#head]]'), ['a', 'b']);
+  assert.deepStrictEqual(noteTargets('[site](https://e.com)'), [], 'no .md, no target');
+  assert.deepStrictEqual(noteTargets('[x](./y.md#z)'), ['y'], './ stripped, anchor dropped');
+});
+
+test('findDrift reads the markdown links a real MEMORY.md is written with', () => {
+  // Regression for #94 review: the bullet gate was `- [[` only, so on a real vault findDrift
+  // matched nothing and readNote was never called — while every test here passed on wikilinks.
+  /** @type {Record<string, string>} */
+  const notes = { a: 'the count is 1172 today' };
+  /** @type {string[]} */
+  const seen = [];
+  const read = (/** @type {string} */ tgt) => {
+    seen.push(tgt);
+    return tgt in notes ? notes[tgt] : null;
+  };
+  assert.deepStrictEqual(findDrift('- [Title](a.md) holds **999** notes', read), [
+    { target: 'a', n: '999' },
+  ]);
+  assert.deepStrictEqual(findDrift('- [Title](./a.md#x) holds **999** notes', read), [
+    { target: 'a', n: '999' },
+  ]);
+  assert.deepStrictEqual(findDrift('- [Title](a.md) holds **1,172** notes', read), []);
+  // the guard that the old tests lacked: the check must actually REACH a note
+  seen.length = 0;
+  findDrift('- [Title](a.md) holds **999** notes', read);
+  assert.deepStrictEqual(seen, ['a'], 'readNote must be called — a silent no-match is the bug');
+  // non-note links are not bullets to follow
+  seen.length = 0;
+  assert.deepStrictEqual(findDrift('- [site](https://e.com) says **999**', read), []);
+  assert.deepStrictEqual(seen, [], 'a link with no .md target is not a MOC bullet');
 });
 
 test('findDrift only flags bolded multi-digit figures a note contradicts', () => {
