@@ -383,7 +383,11 @@ if (flag('--json')) {
         n: perCase.length,
         goldResolved: cov.resolved,
         goldTotal: cov.total,
-        recall,
+        // KS, not every k. The comment on KS says a k=5 fetch cannot answer @10 — and the human
+        // path honours that while this one printed the lot, so `--fetch-k 3 --json` reported an
+        // @5 and an @10 that were @3 censored to the window. Indistinguishable from a measurement
+        // to whatever reads this, which is the whole failure #97 is about.
+        recall: Object.fromEntries(KS.map((k) => [k, recall[k]])),
         mrr: +mrr.toFixed(3),
       },
       null,

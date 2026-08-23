@@ -358,6 +358,23 @@ test('CLI --run refuses a --cases pointing at a directory', () => {
   assert.ok(!r.stderr.includes('EISDIR'), `crashed instead of refusing:\n${r.stderr}`);
 });
 
+test('CLI --json reports only the ks the fetch window can answer', () => {
+  // The human path filters to KS; this one printed every k, so `--fetch-k 3` emitted an @5 and an
+  // @10 that were @3 censored to the window — indistinguishable from measurements to a reader.
+  const { run, casesPath } = scratch(
+    ['ours-one', 'ours-two'],
+    [
+      { q: 'a', gold: ['ours-one'] },
+      { q: 'b', gold: ['ours-two'] },
+    ],
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--fetch-k', '3', '--json');
+  assert.equal(r.status, 0, `got:\n${r.stdout}${r.stderr}`);
+  const json = JSON.parse(r.stdout);
+  assert.equal(json.fetchK, 3);
+  assert.deepEqual(Object.keys(json.recall), ['1', '3'], 'a k=3 fetch cannot answer @5 or @10');
+});
+
 test('CLI refuses a --fetch-k that is not a positive number', () => {
   // NaN emptied the recall-k list: no bars printed, --json reported every k as 0, exit 0.
   const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
