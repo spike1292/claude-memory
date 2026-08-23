@@ -27,7 +27,7 @@ These were settled in the design interview and are not open for re-litigation wi
 | This repo's scope | Memory layer only | An agentic OS is three layers — a visual wrapper, a skill/automation backbone, and memory. This project commits to being a good third layer (readable Markdown, documented architecture, queryable vault) and leaves the other two to whoever builds them. Same judgement that rejected obsidian-second-brain's 46 commands: a different product, not a missing feature |
 | Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; see "the wall" below — a separate *process* is not enough |
 | Always-on host | Hostinger VPS, Ubuntu 24.04, 16 GB | Must be publicly reachable; see the CoWork finding below |
-| Vault sync | Private git repo, VPS canonical | Three writers now exist; git is the only sync that gives history and an undo |
+| Vault sync | Private git repo, VPS canonical | Two writers from phase 0 (Mac, VPS) and a third from phase 3 (the AFK runner); git is the only sync that gives history and an undo. The phone writes through the VPS, and `vault-mcp` is read-only until phase 5 |
 | AFK factory | Claude Code native, not OpenHands | Reuses existing skills, hooks, plugin; the sandbox is already shipped |
 | Personal content | Same vault, new top-level folders | One index, one connector, cross-links work |
 | Visual wrapper | Deferred | Plumbing first |
@@ -391,7 +391,7 @@ Six rules, each with a reason:
    ```
    The docs warn that a broad `github.com` allow is an exfiltration path: the proxy decides from the
    client-supplied hostname without inspecting TLS, so domain fronting gets past it. Keep the list
-   short. Three consequences of keeping it short:
+   short. Four consequences of keeping it short:
 
    - **`git push` is not covered.** It reaches `github.com` over HTTPS, or port 22 over SSH, and
      neither is on the list. Left as written, every AFK run does the work and then dies at "push
@@ -404,6 +404,12 @@ Six rules, each with a reason:
      semantics against a real run before phase 3** — this entry is reasoned, not measured.
    - **`api.github.com` is enough for `gh issue`/`gh pr` reads** inside the agent, which is all it
      needs.
+   - **`api.anthropic.com` is deliberately absent.** The memory plugin's heavy hooks spawn a
+     headless `claude` of their own, but hooks run outside the Bash sandbox (see rule 6, trap 3), so
+     that spawn does not need the agent's domain list — and adding it would hand the sandboxed agent
+     a channel it has no reason to hold. If the open question about hook sandboxing comes back the
+     other way, this entry and `~/.claude/.credentials.json` both have to be revisited together:
+     without them the distiller would die unreachable while the gate still logged `spawned`.
 4. **The agent never touches `main` and never touches the vault repo**, and the runner **marks its
    runs as machine work** before spawning them. Code work and memory work are separate runners with
    separate permissions. The marker matters as much: `hook-stats.mjs` counts a session only when
@@ -467,20 +473,19 @@ Six rules, each with a reason:
      midnight after the last line was written** — a run finishing 23:59 and checked at 00:01 has
      every one of its lines in yesterday's file. **Scan both days for the `session` value**; keying
      the filename off the run's start time is not enough, because the lines straddle.
-   - **A missing line has three causes, and the check cannot tell them apart.** `appendJsonl`
-     swallows every error by design, so "hooks were skipped", "`logs/` was unwritable or full", and
-     "the sandbox denied the write" all produce identical silence — and the third is live, because
-     the hook writes from *inside* the sandbox while the runner checks from *outside* it (rule 3).
-     Whether a sandboxed agent may write to `$CLAUDE_MEMORY_HOME/logs/` is on the open-questions
-     list.
+   - **A missing line has two causes, and the check cannot tell them apart.** `appendJsonl`
+     swallows every error by design, so "hooks were skipped" and "`logs/` was unwritable or full"
+     produce identical silence. The sandbox is *not* a third cause: it is scoped to the Bash tool
+     and its child processes, and hooks are spawned by Claude Code rather than through Bash, so they
+     write outside it. (Read/Edit/Write bypass it too. Confirm once on the box before phase 3 leans
+     on it — the docs say what the sandbox covers, not what it excludes.)
 
-     **So report, do not adjudicate.** A missing line raises "hooks produced no line — skipped,
-     unwritable, or sandbox-denied", flags the task for a human, and stops there. It must never
+     **So report, do not adjudicate.** A missing line raises "hooks produced no line — skipped, or
+     the log could not be written", flags the task for a human, and stops there. It must never
      print a `--bare` regression as though it had established one.
 
-     A read-back probe was designed here to separate those causes and then **cut**: it cannot see
-     inside the sandbox, so it never separated the one that matters, and every home for it was
-     wrong. A `logHook()` family gives `/memory:doctor --hooks` one phantom `(unnamed) · (no event)`
+     A read-back probe was designed here to separate those two causes and then **cut**: every home
+     for it was wrong. A `logHook()` family gives `/memory:doctor --hooks` one phantom `(unnamed) · (no event)`
      row whose count grows with every task (`hook-stats.mjs` keys the table by
      `l.hook || '(unnamed)'` plus the event). A new dated family is reaped by nothing
      (`pruneDatedLogs()` matches only `recall-` and `hooks-`, deliberately). One fixed filename
@@ -568,9 +573,9 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
   written before phase 1 ships.
 - Do the `sandbox.credentials` semantics block reads outright or mask values? Rule 3 assumes an entry
   can be scoped to a single file. Verify against a real run before phase 3.
-- May a sandboxed agent write to `$CLAUDE_MEMORY_HOME/logs/`? If not, every hook line is silently
-  dropped and rule 6's guard flags every healthy task for review. The rule already refuses to call
-  that a `--bare` regression, so this decides how noisy the guard is, not whether it lies.
+- Confirm on the box that hooks really do run outside the Bash sandbox. The docs scope the sandbox
+  to "every Bash command and its child processes" and never list hooks either way, so this is read
+  from what is covered rather than stated. Rule 6's trap 3 and rule 3's domain list both assume it.
 - Should `vault-mcp` also carry a slug allow-list as defence in depth? `$CLAUDE_MEMORY_HOME` already
   makes the work index unreachable — a second check is belt-and-braces, not a substitute.
 
