@@ -171,8 +171,15 @@ been trusted for a while.
 ### 2. Vault auto-commit hook *(this repo)*
 
 ~60 lines, not the ~20 first estimated. Every vault write becomes a commit and a push, which is what
-turns `git revert` into the undo button. Four things it must do, all forced by rules already in
-CLAUDE.md:
+turns `git revert` into the undo button.
+
+It is a new hook, so the repo's own shape rules apply before anything else: the logic goes in
+`hooks/lib/vault-autocommit.mjs` with `hooks/vault-autocommit.mjs` owning argv and stdin only, a
+`vault-autocommit.test.mjs` sits beside the lib, the lib imports without side effects, the timeout
+is written in `hooks/hooks.json` and nowhere else, and the hook reports itself through `logHook()`
+so `/memory:doctor --hooks` can see it.
+
+Then four behaviours, all forced by rules already in CLAUDE.md:
 
 - **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
   the session whenever the network is slow or the VPS is down.
@@ -252,8 +259,9 @@ Five rules, each with a reason:
    task, not per tick. The reason is human throughput. Every task that fires produces a PR that
    wants reviewing, and a headless run costs a near-fixed ~40k tokens whatever the prompt (measured
    2026-08-20), so a fast tick converts a morning of labelling into a queue of PRs and a bill. Read
-   the real per-run figure from `--output-format json`; the concurrency cap under Risks rests on a
-   measurement, never an estimate.
+   the real per-run figure from `--output-format json`. The concurrency cap under Risks is
+   **provisional** — a guess at three, not a measurement — and the first week's JSON output is what
+   replaces it with one.
 2. **Worktrees go in `~/worktrees/`, never `.claude/worktrees/`.** Claude Code's default puts them
    inside the project, and `node_modules` resolution then walks up into the parent and loads the
    wrong version.
@@ -294,12 +302,13 @@ Five rules, each with a reason:
    | Hooks | No SessionEnd distiller, so no L2 log and no L3 insight — the "Summarise" agent silently stops existing |
    | Plugin sync | The memory plugin is not loaded, so recall never fires |
    | CLAUDE.md auto-discovery | The agent writes PRs without the invariants its reviewer judges it by |
-   | Keychain reads | An API key must be provisioned on the VPS, and `~/.claude/.credentials.json` in rule 3 becomes dead config |
+   | Keychain reads | Auth becomes strictly `ANTHROPIC_API_KEY` or an `apiKeyHelper` passed via `--settings`; `~/.claude/.credentials.json` in rule 3 becomes dead config |
 
    Failure if ignored: phase 3 ships, PRs appear overnight, no note is ever written, recall is never
-   consulted, and the first run dies at auth with nothing saying why. **The docs say `--bare` will
-   become the default for `-p` in a future release** — so pin the behaviour explicitly rather than
-   relying on today's default, and re-check on each Claude Code upgrade.
+   consulted, and the first run dies at auth with nothing saying why. The
+   [headless docs](https://docs.claude.com/en/docs/claude-code/headless) say `--bare` **will become
+   the default for `-p` in a future release** — so pin the behaviour explicitly rather than relying
+   on today's default, and re-check it on each Claude Code upgrade.
 
 Five agents, of which only two are new:
 
@@ -336,12 +345,15 @@ Phase 1 is the payoff. Everything before it is plumbing.
      hence the extra phase-0 step.
    - *The 24 notes:* those were lost on 2026-08-08 to a **relocating hook sent at the wrong vault
      path** — `vault-memory-sync.sh` moved files and repointed the symlink after a stray
-     `CLAUDE_VAULT` resolved somewhere throwaway (`hooks/vault-memory-sync.sh:76`,
-     `scripts/memory-semantic.mjs:66`, `README.md:208`). Moving the vault out of Synology does not
-     retire this one. It stays live for every phase-0 step that changes a vault path, and the guard
-     is `/memory:doctor`, which fails loudly when the resolved vault is empty while a populated one
-     exists.
-3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3; poll every 30 minutes.
+     `CLAUDE_VAULT` resolved somewhere throwaway (`hooks/vault-memory-sync.sh:73-78`,
+     `scripts/memory-semantic.mjs:61-64`, `README.md:208`). **The data-loss half is retired**: the
+     hook now copies (`cp -n`) before repointing, so a stray duplicate is the worst case. What
+     survives phase 0 is the *recoverable* half — a memory symlink left pointing at the wrong vault,
+     which every path-changing step can still cause. The guard is `/memory:doctor`, which fails
+     loudly when the resolved vault is empty while a populated one exists.
+3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3 and poll every 30 minutes. Both
+   numbers are **provisional guesses**, not measurements; replace them from the first week of
+   `--output-format json` output.
 4. **Work data must never reach the connector.** One `$CLAUDE_MEMORY_HOME` per world — see "The
    wall". A separate serve process is *not* a wall: the sockets collide by model name and the
    survivor answers any slug.
