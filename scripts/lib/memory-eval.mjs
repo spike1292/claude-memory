@@ -16,13 +16,11 @@
 //   node --test scripts/lib/memory-eval.test.mjs
 //
 // Cases live at `defaultCasesPath()` under $CLAUDE_MEMORY_HOME/eval/ and are GITIGNORED: they
-// contain vault content. (They were under ~/.claude/data/ until commands/install.md migrated them;
-// that path was still written here on 2026-08-23, in the file that now owns the resolution.)
-// Regenerate only with --force; a changed case set invalidates every past number.
+// contain vault content. Regenerate only with --force; a changed case set invalidates every past
+// number.
 
-// `node:fs`, `node:path`, `execFileSync`, `model-default.mjs` and `paths.mjs` were all imported and
-// none of them referenced — dead since the entry/lib split moved the CLI out. Dropped 2026-08-19.
-// `node:path` came back 2026-08-23 with `defaultCasesPath()` and IS referenced; the rest stay out.
+// `node:fs`, `execFileSync`, `model-default.mjs` and `paths.mjs` were all imported and none of them
+// referenced — dead since the entry/lib split moved the CLI out. Dropped 2026-08-19.
 import path from 'node:path';
 import { bm25, lexTokens } from './lexical.mjs';
 
@@ -171,11 +169,12 @@ export const GOLD_FLOOR = 0.5;
 // against 53/53 for the same project's slug-scoped set (#97). The 2 are notes in `permanent/`,
 // which is cross-project by design — which is why the floor is a FRACTION and not "any miss".
 //
-// Counts, never NOTE NAMES: the missing notes may belong to another project's private vault — the
-// same leak already recorded in the mistakes layer when `--stats` printed vault paths into a
-// paste-into-issues report. The caller still echoes the case-set PATH it was handed, which is what
-// tells the operator which file to stop using; that path is machine-local, so read it before
-// pasting a refusal anywhere public.
+// The REFUSAL reports counts, never note names: the missing notes may belong to another project's
+// private vault — the same leak recorded in the mistakes layer when `--stats` printed vault paths
+// into a paste-into-issues report. Two limits on that claim, both deliberate. The caller echoes the
+// case-set PATH, which is what tells the operator which file to stop using. And the `churn` band
+// scores rather than refusing, so the normal misses block prints gold names — that band assumes the
+// set is this project's, which below the floor is exactly what stops being true.
 /**
  * `gold` is `unknown` because these come from JSON.parse of a file the user pointed us at — the
  * shape is a claim, not a guarantee, and this is the boundary that checks it.

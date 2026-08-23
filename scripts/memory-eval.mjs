@@ -38,6 +38,17 @@ const val = (n) => {
   const i = argv.indexOf(n);
   return i >= 0 ? argv[i + 1] : null;
 };
+// `val()` matches `--flag value` and never `--flag=value`, and nothing here rejects an argument it
+// does not recognise. So `--cases=other.jsonl` was dropped in silence: the run scored the DEFAULT
+// case set and printed a number the operator read as belonging to the file they had just named.
+// That is #97's own failure — a figure attributed to a case set that was never opened — reached by
+// a typo instead of by a doc. Refuse the form rather than guess which half was meant.
+const equalsArg = argv.find((a) => /^--[\w-]+=/.test(a));
+if (equalsArg) {
+  const [name, ...rest] = equalsArg.split('=');
+  console.log(`${name} takes a space-separated value. Write: ${name} ${rest.join('=')}`);
+  process.exit(1);
+}
 const repo =
   argv
     .filter((a) => !a.startsWith('--'))
@@ -184,13 +195,11 @@ if (!known.size) {
 }
 const cov = goldCoverage(cases, known);
 if (cov.verdict === GOLD.mismatch) {
-  // Which override got us here, if any — and it takes BOTH tests, each having been the whole answer
-  // once. The path says WHETHER an override matters: passing --cases with the scoped path is not an
-  // override, and advising "drop it" hands back the identical file. The flag says WHICH to name:
-  // --out overrides too, so path equality alone told an --out caller to drop a --cases it never
-  // passed. Either test alone reintroduces the other's bug.
+  // Both tests, because either alone reintroduces the other's bug. The path says WHETHER an
+  // override matters — `--cases <the scoped path>` is not one, and "drop it" hands back the same
+  // file. The flag says WHICH to name — `--out` overrides too.
   const override =
-    CASES === SCOPED_CASES ? null : val('--cases') ? '--cases' : val('--out') ? '--out' : null;
+    CASES === SCOPED_CASES ? null : (['--cases', '--out'].find((f) => val(f)) ?? null);
   const fix = !override
     ? `This IS ${SLUG}'s own set, so the vault has moved out from under it. Re-author it with --author.`
     : `Drop ${override} to use this project's own set: ${SCOPED_CASES}\nAuthor one with --author if it does not exist yet.`;
@@ -271,6 +280,10 @@ if (flag('--json')) {
 console.log(
   `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
 );
+// Name the file the number came from, the way the `project:` echo names the vault. Every failure
+// in #97 is a figure attributed to a case set nobody checked; a number printed beside its source
+// cannot be silently misread, whatever routed us to the wrong one.
+console.log(`  cases: ${CASES}`);
 for (const k of KS)
   console.log(
     `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,

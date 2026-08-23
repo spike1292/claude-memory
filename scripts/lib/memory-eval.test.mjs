@@ -180,13 +180,10 @@ function scratch(notes, cases) {
   // Through the resolver, not a hand-written copy: the whole bug was a second copy of this path
   // drifting from where the script looks.
   const scopedPath = defaultCasesPath(evalDir, SLUG, 'semantic');
-  // Always a real path, written only when there are cases: five casts to satisfy one nullable
-  // caller is the tail wagging the dog.
   const casesPath = path.join(tmp, 'cases.jsonl');
   if (cases) fs.writeFileSync(casesPath, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
-  // Built, never spread. This is the isolation — an inherited CLAUDE_VAULT would point the child at
-  // the real vault. (A `vault !== process.env.CLAUDE_VAULT` assert used to sit here; under mkdtemp
-  // it could never fire, and a guard that cannot fail reads as protection that is not there.)
+  // Built, never spread: an inherited CLAUDE_VAULT would point the child at the real vault. This is
+  // the isolation.
   const env = {
     PATH: process.env.PATH,
     HOME: path.join(tmp, 'home'),
@@ -198,7 +195,7 @@ function scratch(notes, cases) {
       encoding: 'utf8',
       env,
     });
-  return { run, casesPath, scopedPath, vault };
+  return { run, casesPath, scopedPath };
 }
 
 test('CLI --run refuses a case set built from another vault, and names no notes', () => {
@@ -261,16 +258,37 @@ test('CLI --run does not tell you to drop a --cases you never passed', () => {
 });
 
 test('CLI --run treats an explicit --cases at the scoped path as no override', () => {
-  // The symmetric hole. Round 1 keyed this on path equality, round 2 swapped it for flag-testing,
-  // and each alone reintroduced the other's bug: pasting the scoped path back — which both the
-  // refusal and the "no case set at" branch hand you — got "Drop --cases" pointing at that same
-  // file, and "DIFFERENT vault" for a set that is this project's own.
+  // Passing --cases with the scoped path is not an override — both the refusal and the "no case set
+  // at" branch hand you that path, so pasting it back must not answer "drop --cases" and name the
+  // same file.
   const { run, scopedPath } = scratch(['ours-one'], null);
   fs.writeFileSync(scopedPath, JSON.stringify({ q: 'a', gold: ['long-gone'] }) + '\n');
   const r = run('--run', '--cases', scopedPath);
   assert.equal(r.status, 1);
   assert.ok(!r.stdout.includes('Drop --cases'), `got:\n${r.stdout}`);
   assert.match(r.stdout, /vault has moved out from under it/);
+});
+
+test('CLI refuses --cases=X rather than silently scoring the default', () => {
+  // val() reads `--flag value` and nothing rejected an unrecognised token, so the equals form was
+  // dropped and the run scored the DEFAULT set — printing a number the operator would read as
+  // belonging to the file they had just named. #97's failure, reached by a typo.
+  const { run, casesPath, scopedPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'z', gold: ['ours-one'] }) + '\n');
+  const r = run('--run', '--mode', 'lexical', `--cases=${casesPath}`);
+  assert.equal(r.status, 1, `equals form must not score:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /--cases takes a space-separated value/);
+  assert.ok(!r.stdout.includes('recall@'), 'it must not report a number for a set it never read');
+});
+
+test('CLI --run prints the case set beside the number it reports', () => {
+  // Every failure in #97 is a figure attributed to a set nobody checked. A number printed beside
+  // its source cannot be silently misread, whatever routed us to the wrong file.
+  const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /recall@/);
+  assert.ok(r.stdout.includes(casesPath), `summary must name its case set, got:\n${r.stdout}`);
 });
 
 test('CLI --run says the vault is empty rather than blaming the case set', () => {
@@ -313,7 +331,7 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
   // Join shell line-continuations FIRST, so a scan line is a whole logical command. Scanning raw
   // lines, `--run` on one line and `--cases` on the next passed this test while fully reinstating
   // #97 — a scan guard that reports clean because it looked at the wrong unit.
-  const doc = raw.replace(/\\\n\s*/g, ' ');
+  const doc = raw.replace(/\\\r?\n\s*/g, ' ');
   // The per-project invocations are the memory-eval ones with no --vault: a --vault line is the
   // bench-vault walkthrough, where an explicit --cases is correct.
   const perProject = doc
