@@ -188,7 +188,7 @@ read with `readStdin()` + `payload()` from `hooks/lib/hook-io.mjs` and **never**
 and nowhere else, and the hook reports itself through `logHook()` so `/memory:doctor --hooks` can
 see it.
 
-Then four behaviours, all forced by rules already in CLAUDE.md:
+Then five behaviours, all forced by rules already in CLAUDE.md:
 
 - **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
   the session whenever the network is slow or the VPS is down.
@@ -280,8 +280,9 @@ Six rules, each with a reason:
    **Do not read that against CLAUDE.md's 2026-08-20 figure** (18,078 cache-creation + 22,363
    cache-read at $0.0389) as a trend. The two are not comparable and the arithmetic says so: tokens
    rose 3.5× while dollars rose 16×, which at one price per token is impossible — the model and the
-   cache TTL differ, not the overhead. Measure the runner's own model before budgeting, and quote no
-   figure without naming what produced it.
+   cache TTL differ, not the overhead. (Precisely: *cache-creation* rose 3.5×; against the older
+   run's full 40,441-token mix it is 1.56×. Either way, nowhere near 16×.) Measure the runner's own
+   model before budgeting, and quote no figure without naming what produced it.
 
    Budget per *task*, never per prompt length. The concurrency cap under Risks is **provisional** —
    a guess at three, not a measurement — and the first week's JSON output is what replaces it.
@@ -365,11 +366,15 @@ Six rules, each with a reason:
      `appendJsonl` swallows every error by design, so a read-only `logs/`, a full disk, or any other
      write failure produces exactly the same silence as a hook that never ran. A permissions probe
      is *not* enough: a full disk passes it and still loses the line. Write a probe record and
-     **read it back** — the only check covering both. Put the probe in **its own file under
-     `logs/`** (same directory, so it proves the same filesystem), never as a line in a `logHook()`
-     family: `scripts/lib/hook-stats.mjs` groups by `l.hook || '(unnamed)'`, so a probe appended to
-     `hooks-<date>.jsonl` shows up as a phantom `(unnamed)` row per AFK task in
-     `/memory:doctor --hooks`. Report the outcome as "hooks did not run, *or* the log could not be
+     **read it back** — the only check covering both. Two constraints on where it goes. It must not
+     be a line in a `logHook()` family: `scripts/lib/hook-stats.mjs` groups by
+     `l.hook || '(unnamed)'`, so a probe appended to `hooks-<date>.jsonl` shows up as a phantom
+     `(unnamed)` row per AFK task in `/memory:doctor --hooks`. And it must not be a *new dated*
+     family either: `pruneDatedLogs()` matches only `recall-` and `hooks-` on purpose ("only what we
+     write is ours to delete"), so a dated probe name is a file nothing ever reaps — about 144 a day
+     at three tasks every 30 minutes, forever, under a `logs/` the doctor advertises as pruned. Use
+     **one fixed filename** under `logs/` — same directory, so it proves the same filesystem —
+     truncated and re-read on each check. Report the outcome as "hooks did not run, *or* the log could not be
      written" — never as a `--bare` regression on its own.
 
    Done right, that check goes red the day the default flips, which is the only warning this design
@@ -417,8 +422,13 @@ Phase 1 is the payoff. Everything before it is plumbing.
      "$dest"/` (`hooks/vault-memory-sync.sh:83`) — and it fires whenever `~/.claude/projects/<slug>/
      memory/` exists as a real directory rather than a symlink, which is exactly what a path-changing
      phase-0 step can leave behind. The guard is `/memory:doctor`, which fails loudly when the
-     resolved vault is empty while a populated one exists. **Run it after every step that moves a
-     vault path, not only at the end of phase 0.**
+     resolved vault is empty while a populated one exists — **but only on the Mac**. That FAIL needs
+     a populated candidate to point at, and the candidate list is `~/Documents/ClaudeVault`,
+     `$STATE/vault`, and a macOS-only `CloudStorage` glob that matches nothing on Linux
+     (`scripts/doctor.sh`). On the VPS the same state prints a WARN reading "vault is empty —
+     expected on a first install", which is exactly the sentence a real loss would hide behind.
+     **Run the doctor after every step that moves a vault path, and on the VPS read that WARN as a
+     FAIL.**
 3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3 and poll every 30 minutes. Both
    numbers are **provisional guesses**, not measurements; replace them from the first week of
    `--output-format json` output.
