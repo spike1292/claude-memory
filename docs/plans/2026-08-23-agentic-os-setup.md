@@ -164,6 +164,12 @@ entry lands in every user's cache whether or not they ever serve anything. `devD
 an escape hatch: `npm ci` installs those too. If the shell ever outgrows a few hundred hand-written
 lines, that is the signal to move the item to the new repo rather than take the dependency.
 
+**The same shape rules as item 2 apply, and harder.** Logic in `scripts/lib/vault-mcp.mjs` with
+`scripts/vault-mcp.mjs` owning argv and stdin only, `vault-mcp.test.mjs` beside the lib, no side
+effects on import. A hand-rolled JSON-RPC parser on a **public** endpoint is the last thing in this
+repo that should ship untested: its test is the one that feeds it malformed frames, oversized
+bodies, and a request for a path outside the allow-list.
+
 **Read-only in phase 1.** Bearer token. An explicit **allow-list** of exposed paths, not a deny-list.
 It binds to the personal `$CLAUDE_MEMORY_HOME` and no other. Writes are phase 5, after the door has
 been trusted for a while.
@@ -267,12 +273,18 @@ Five rules, each with a reason:
    task, not per tick. The reason is human throughput. Every task that fires produces a PR that
    wants reviewing, and a headless run costs a near-fixed ~40k tokens whatever the prompt (measured
    2026-08-20), so a fast tick converts a morning of labelling into a queue of PRs and a bill. Read
-   the real per-run figure from `--output-format json`. A run measured that way in this repo on
-   2026-08-23 — a two-token prompt in a checkout with CLAUDE.md and plugins loaded, which is the
-   AFK runner's exact shape — billed **63,204 cache-creation tokens at $0.63**, so the overhead has
-   grown since the 2026-08-20 figure rather than shrunk. Budget per *task*, never per prompt length.
-   The concurrency cap under Risks is **provisional** — a guess at three, not a measurement — and
-   the first week's JSON output is what replaces it with one.
+   the real per-run figure from `--output-format json`. One measured that way, 2026-08-23, **Claude
+   Opus 5, 1-hour prompt-cache TTL**: a two-token prompt in a checkout with CLAUDE.md and plugins
+   loaded — the AFK runner's exact shape — billed **63,204 cache-creation tokens at $0.63**.
+
+   **Do not read that against CLAUDE.md's 2026-08-20 figure** (18,078 cache-creation + 22,363
+   cache-read at $0.0389) as a trend. The two are not comparable and the arithmetic says so: tokens
+   rose 3.5× while dollars rose 16×, which at one price per token is impossible — the model and the
+   cache TTL differ, not the overhead. Measure the runner's own model before budgeting, and quote no
+   figure without naming what produced it.
+
+   Budget per *task*, never per prompt length. The concurrency cap under Risks is **provisional** —
+   a guess at three, not a measurement — and the first week's JSON output is what replaces it.
 2. **Worktrees go in `~/worktrees/`, never `.claude/worktrees/`.** Claude Code's default puts them
    inside the project, and `node_modules` resolution then walks up into the parent and loads the
    wrong version.
@@ -308,7 +320,7 @@ Five rules, each with a reason:
    it skips *hooks, plugin sync, auto-memory, keychain reads and CLAUDE.md auto-discovery*, and
    forces `ANTHROPIC_API_KEY`. Every one of those is load-bearing here:
 
-   | `--bare` skips | What breaks |
+   | `--bare` skips (among others) | What breaks |
    | --- | --- |
    | Hooks | No SessionEnd distiller, so no L2 log and no L3 insight — the "Summarise" agent silently stops existing |
    | Plugin sync | The memory plugin is not loaded, so recall never fires |
@@ -336,9 +348,13 @@ Five rules, each with a reason:
      (`hooks/lib/hook-io.mjs`, omitted only when absent) and `claude -p --output-format json`
      returns the same `session_id` in the envelope rule 1 already parses. One value, one run, exact.
      CLAUDE.md's own rule: a scan-based guard must assert that it found something.
-   - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`. The VPS runs
-     Europe/Amsterdam, so a runner using `date +%F` looks for tomorrow's file between local midnight
-     and 02:00 and finds nothing — reporting a `--bare` regression every night. Use `date -u +%F`.
+   - **`<date>` is UTC**, from `new Date().toISOString().slice(0, 10)`, and it names the day the
+     line was *written*. Two edges, not one. The VPS runs Europe/Amsterdam, so a runner using
+     `date +%F` looks for tomorrow's file between local midnight and 02:00 — a nightly false alarm;
+     use `date -u +%F`. And the hooks line is written at session **start** while the runner checks
+     after `claude -p` **returns**, so a task spanning UTC midnight writes into yesterday's file and
+     is checked against today's. Derive the filename from the run's own start time, or scan both
+     days for the `session` value.
 
    Done right, that check goes red the day the default flips, which is the only warning this design
    will get.
