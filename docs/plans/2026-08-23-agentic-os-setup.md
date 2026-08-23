@@ -188,7 +188,7 @@ read with `readStdin()` + `payload()` from `hooks/lib/hook-io.mjs` and **never**
 and nowhere else, and the hook reports itself through `logHook()` so `/memory:doctor --hooks` can
 see it.
 
-Then five behaviours, all forced by rules already in CLAUDE.md:
+Then five behaviours — two forced by CLAUDE.md, three by what this checkout has already cost:
 
 - **Detach and debounce.** Hooks are best-effort and must never block. A synchronous `git push` hangs
   the session whenever the network is slow or the VPS is down.
@@ -340,7 +340,7 @@ Six rules, each with a reason:
    flag**: after `claude -p` returns, check that the run left **its own** line in
    `$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`, and fail the task loudly when it did not.
 
-   Three traps in that check — the first would make it **pass** for the wrong reason, the other two
+   Four traps in that check — the first would make it **pass** for the wrong reason, the other three
    would make it **fail** on a run that was perfectly healthy:
 
    - **The log is machine-wide, and neither `cwd` nor `slug` narrows it.** Every project appends to
@@ -371,10 +371,19 @@ Six rules, each with a reason:
      `l.hook || '(unnamed)'`, so a probe appended to `hooks-<date>.jsonl` shows up as a phantom
      `(unnamed)` row per AFK task in `/memory:doctor --hooks`. And it must not be a *new dated*
      family either: `pruneDatedLogs()` matches only `recall-` and `hooks-` on purpose ("only what we
-     write is ours to delete"), so a dated probe name is a file nothing ever reaps — about 144 a day
-     at three tasks every 30 minutes, forever, under a `logs/` the doctor advertises as pruned. Use
-     **one fixed filename** under `logs/` — same directory, so it proves the same filesystem —
-     truncated and re-read on each check. Report the outcome as "hooks did not run, *or* the log could not be
+     write is ours to delete"), so a dated probe name leaves one unreaped file per day — ~365 a
+     year, each holding ~144 lines at three tasks every 30 minutes — under a `logs/` the doctor
+     advertises as pruned. Nor **one fixed filename**: three tasks run at once, so B truncates
+     between A's write and A's read, and A is failed loudly while healthy — or worse, passes on B's
+     identical record, proving nothing. Use **one file per run**, `logs/.probe-<session>`, created
+     with `wx`, read back, and unlinked by the runner. It collides with neither `CLAIM`
+     (`^\.retention-<date>$`) nor `DATED_LOG` (`^(recall|hooks)-…`), and the runner reaps its own.
+   - **The probe proves the runner's filesystem, not the hook's.** The hook writes from *inside* the
+     sandbox; the runner writes from *outside* it (rule 3). If the sandbox denies writes to
+     `$CLAUDE_MEMORY_HOME/logs/`, `appendJsonl` swallows it, no hook line lands, and the probe still
+     succeeds — attributing the silence to `--bare` again. Whether the sandbox permits that write is
+     on the open-questions list; until it is answered, treat a probe pass plus a missing hook line
+     as *inconclusive*, not as a flag regression. Report the outcome as "hooks did not run, *or* the log could not be
      written" — never as a `--bare` regression on its own.
 
    Done right, that check goes red the day the default flips, which is the only warning this design
@@ -422,11 +431,13 @@ Phase 1 is the payoff. Everything before it is plumbing.
      "$dest"/` (`hooks/vault-memory-sync.sh:83`) — and it fires whenever `~/.claude/projects/<slug>/
      memory/` exists as a real directory rather than a symlink, which is exactly what a path-changing
      phase-0 step can leave behind. The guard is `/memory:doctor`, which fails loudly when the
-     resolved vault is empty while a populated one exists — **but only on the Mac**. That FAIL needs
-     a populated candidate to point at, and the candidate list is `~/Documents/ClaudeVault`,
-     `$STATE/vault`, and a macOS-only `CloudStorage` glob that matches nothing on Linux
-     (`scripts/doctor.sh`). On the VPS the same state prints a WARN reading "vault is empty —
-     expected on a first install", which is exactly the sentence a real loss would hide behind.
+     resolved vault is empty while a populated one exists — **but do not count on that FAIL on the
+     VPS**. It fires only when a populated candidate is found, and the candidates are
+     `~/Documents/ClaudeVault`, `$STATE/vault` and a `CloudStorage` glob (`scripts/doctor.sh`). On a
+     fresh VPS none of the three exists: the glob matches nothing off macOS, and `$STATE/vault` is a
+     legacy breadcrumb this repo no longer writes. The same state then prints a WARN reading "vault
+     is empty — expected on a first install", which is exactly the sentence a real loss would hide
+     behind.
      **Run the doctor after every step that moves a vault path, and on the VPS read that WARN as a
      FAIL.**
 3. **Tokens are the real bill, not the VPS.** Cap concurrency at 3 and poll every 30 minutes. Both
@@ -455,6 +466,9 @@ Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the 
   written before phase 1 ships.
 - Do the `sandbox.credentials` semantics block reads outright or mask values? Rule 3 assumes an entry
   can be scoped to a single file. Verify against a real run before phase 3.
+- May a sandboxed agent write to `$CLAUDE_MEMORY_HOME/logs/`? If not, every hook line is silently
+  dropped and rule 6's guard reports a `--bare` regression that never happened. Answer this before
+  the guard is trusted, not after.
 - Should `vault-mcp` also carry a slug allow-list as defence in depth? `$CLAUDE_MEMORY_HOME` already
   makes the work index unreachable — a second check is belt-and-braces, not a substitute.
 
