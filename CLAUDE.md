@@ -378,8 +378,14 @@ fires SessionStart again.
   measures the questions. Any figure quoted anywhere names the case set it came from.
 - Load `/memory:protocol` (`skills/protocol/SKILL.md`) before writing or auditing a vault note —
   filename/frontmatter rules, per-claim recency and supersession, aliases, graduation to `permanent/`.
-- Comments here carry the *why*, usually with the date and measurement that settled it. Keep that
-  when editing; several of them are the only record of a silent failure.
+- **A comment's home is reader distance, never length.** It stays if someone editing *this
+  function* needs the fact now — one line where it fits, more where the mechanism needs them; it
+  moves out if the fact is only needed when *changing the design*, to `docs/decisions/` for a past
+  choice and to `docs/architecture.md` for a hack or a silent failure still true today; it dies if
+  it restates the code. Several surviving comments are the only record of a silent failure — keep
+  those. The pointer forms (a bare `// see docs/...` is not one), the JSDoc carve-out, and the
+  count that rejected the length test:
+  [docs/decisions/2026-08-23-comment-reader-distance.md](docs/decisions/2026-08-23-comment-reader-distance.md).
 - `jq` is assumed by hooks but not by `vault-env.sh`, which parses config with sed as a fallback
   (BSD sed — use `sed -E`, basic regex has no `\|`).
 - Porting between the two runtimes is not mechanical. JS `\w` is ASCII-only where Python's is

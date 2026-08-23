@@ -27,6 +27,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
   checks them with the same predicate.
 - **One predicate decides what a duplicate is**, shared by the write-time reconcile and `--dupes`.
   They disagreed before, which is how an arm catching 0/25 survived five days of daily evidence.
+- **A comment's home is decided by reader distance, not by its length** (#36). A fact needed by
+  whoever edits the function stays, in one line where it fits; a table, sweep or weighed alternative
+  moves to
+  `docs/decisions/` (a past choice) or `docs/architecture.md` (a hack or silent failure still true);
+  a restatement of the code dies. The length rule this replaces would have deleted the most
+  load-bearing blocks first — the three longest in the tree are a baseline table, a before/after
+  bench and a model comparison. JSDoc *annotations* are out of scope — `@param` restates the code by
+  design and `tsc` reads it — but prose inside a JSDoc block is still prose and still governed, most
+  of `trimLog`'s 30 lines among it. `claude-review.yml`'s prompt carries the new
+  rule, since it is the reviewer that gates the sweep. Rule and measurement:
+  `docs/decisions/2026-08-23-comment-reader-distance.md`. Policy only; the sweep is a second PR.
 
 ### Added
 
