@@ -30,6 +30,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **A malformed or misdirected case set now refuses with a message instead of crashing or
+  reporting zeros.** Four inputs used to escape: a truncated JSONL line threw `SyntaxError` from
+  inside a `.map()`, `--cases` pointing at a directory threw `EISDIR`, a case line with no `gold`
+  array threw `TypeError` part-way through scoring, and a non-numeric `--fetch-k` emptied the
+  recall-k list so `--json` reported every k as 0 at exit 0. That last one is the dangerous shape —
+  a confident all-zero figure attributed to a named case set.
 - **`--generate` followed by another flag overwrote the case set with an empty file, exit 0.**
   `--generate --force` made `Number('--force')`, so the stride was `NaN` and the sample loop never
   ran — destroying the authored baseline every past number was measured against. A flag after

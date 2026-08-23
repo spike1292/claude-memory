@@ -60,6 +60,29 @@ if (equalsArg) {
   console.log(`${name} takes a space-separated value. Write: ${name} ${rest.join('=')}`);
   process.exit(1);
 }
+// And the last shape: a misspelled flag NAME. `--casess other.jsonl` matched nothing, was dropped,
+// and the run scored the default set — #97's core failure reached by a typo. This list can drift
+// as the earlier one did, but it drifts LOUDLY: forget to add a new flag and that flag errors on
+// its first use, where the old list's omission was a silent hole.
+const KNOWN_FLAGS = new Set([
+  '--run',
+  '--author',
+  '--generate',
+  '--force',
+  '--json',
+  '--cases',
+  '--out',
+  '--vault',
+  '--slug',
+  '--style',
+  '--mode',
+  '--fetch-k',
+]);
+const unknownFlag = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
+if (unknownFlag) {
+  console.log(`unknown flag ${unknownFlag}. Known: ${[...KNOWN_FLAGS].join(' ')}`);
+  process.exit(1);
+}
 const repo =
   argv
     .filter((a) => !a.startsWith('--'))
@@ -111,19 +134,18 @@ function allNotes() {
  * @param {string} src
  * @returns {{ q: string, gold?: unknown, layer?: string, style?: string }[]}
  */
-const parseJsonl = (text, src) =>
-  text
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((l, i) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        console.log(`${src}: line ${i + 1} is not valid JSON — truncated or malformed.`);
-        return process.exit(1);
-      }
-    });
+const parseJsonl = (text, src) => {
+  const out = [];
+  for (const [i, l] of text.trim().split('\n').filter(Boolean).entries()) {
+    try {
+      out.push(JSON.parse(l));
+    } catch {
+      console.log(`${src}: line ${i + 1} is not valid JSON — truncated or malformed.`);
+      process.exit(1);
+    }
+  }
+  return out;
+};
 
 // ---------------------------------------------------------------- generate
 
@@ -136,10 +158,12 @@ if (flag('--author')) {
   const cases = [],
     bad = [];
   for (const c of lines) {
-    // Same trust boundary as --run: this is a file someone wrote, not a shape we can assume.
-    if (!Array.isArray(c.gold)) {
+    // Same trust boundary as --run: this is input someone wrote, not a shape we can assume. Both
+    // fields, because guarding `gold` and then dereferencing `c.q` two lines later just moves the
+    // TypeError down the function.
+    if (typeof c.q !== 'string' || !Array.isArray(c.gold)) {
       console.log(
-        `every case needs a gold array — this one has none: ${JSON.stringify(c).slice(0, 80)}`,
+        `every case needs a question and a gold array — got: ${JSON.stringify(c).slice(0, 80)}`,
       );
       process.exit(1);
     }
@@ -152,6 +176,14 @@ if (flag('--author')) {
   }
   if (bad.length) {
     console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`);
+    process.exit(1);
+  }
+  // Never write an empty set. `--author` has no --force gate, so an upstream producer that failed,
+  // a `< /dev/null`, or a filter that matched nothing would silently replace the authored baseline
+  // every past number was measured against — the same data loss `--generate` was just given a
+  // guard for, still live on the branch that shares its parser.
+  if (!cases.length) {
+    console.log(`no cases on stdin — refusing to overwrite ${CASES} with nothing.`);
     process.exit(1);
   }
   fs.writeFileSync(CASES, cases.map((c) => JSON.stringify(c)).join('\n') + '\n');
@@ -221,9 +253,10 @@ if (!fs.existsSync(CASES)) {
   process.exit(1);
 }
 // existsSync is true for a directory, and readFileSync then threw EISDIR with a stack. A mistyped
-// --cases is bad input, not a crash.
-if (!fs.statSync(CASES).isFile()) {
-  console.log(`${CASES} is not a file. --cases takes a .jsonl case set.`);
+// --cases is bad input, not a crash. Testing for a DIRECTORY rather than for a regular file, so
+// `--cases <(jq …)` and `--cases /dev/stdin` — a pipe and a character device — still work.
+if (fs.statSync(CASES).isDirectory()) {
+  console.log(`${CASES} is a directory. --cases takes a .jsonl case set.`);
   process.exit(1);
 }
 const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: string }[]} */ (

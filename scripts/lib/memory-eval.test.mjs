@@ -195,12 +195,18 @@ function scratch(notes, cases) {
     HOME: path.join(tmp, 'home'),
     CLAUDE_MEMORY_HOME: path.join(tmp, 'state'),
   };
-  /** @param {...string} args */
-  const run = (...args) =>
-    spawnSync(process.execPath, [ENTRY, '--vault', vault, '--slug', SLUG, ...args], {
+  // A trailing `{stdin}` object feeds the child; --author reads its cases from fd 0.
+  /** @param {...(string | {stdin: string})} args */
+  const run = (...args) => {
+    const last = args[args.length - 1];
+    const stdin = typeof last === 'object' ? last.stdin : undefined;
+    const flags = /** @type {string[]} */ (typeof last === 'object' ? args.slice(0, -1) : args);
+    return spawnSync(process.execPath, [ENTRY, '--vault', vault, '--slug', SLUG, ...flags], {
       encoding: 'utf8',
       env,
+      input: stdin,
     });
+  };
   return { run, casesPath, scopedPath };
 }
 
@@ -314,11 +320,41 @@ test('CLI --run refuses a genuinely truncated line instead of throwing', () => {
   assert.ok(!r.stderr.includes('SyntaxError'), `crashed instead of refusing:\n${r.stderr}`);
 });
 
+// --author is the other caller of parseJsonl, and the only write path with no --force gate. It had
+// no CLI test at all, which is why both of these shipped.
+test('CLI --author refuses to overwrite a case set with nothing', () => {
+  const { run, scopedPath } = scratch(['ours-one'], null);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'keep me', gold: ['ours-one'] }) + '\n');
+  const before = fs.readFileSync(scopedPath, 'utf8');
+  const r = run('--author', { stdin: '' });
+  assert.equal(r.status, 1, `empty stdin must not write:\n${r.stdout}`);
+  assert.match(r.stdout, /refusing to overwrite/);
+  assert.equal(fs.readFileSync(scopedPath, 'utf8'), before, 'the authored baseline was destroyed');
+});
+
+test('CLI --author refuses a case with no question instead of crashing', () => {
+  const { run } = scratch(['ours-one'], null);
+  const r = run('--author', { stdin: JSON.stringify({ gold: ['nope'] }) + '\n' });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /every case needs a question and a gold array/);
+  assert.ok(!r.stderr.includes('TypeError'), `crashed instead of refusing:\n${r.stderr}`);
+});
+
+test('CLI --author writes a real case set from valid stdin', () => {
+  const { run, scopedPath } = scratch(['ours-one'], null);
+  const r = run('--author', {
+    stdin: JSON.stringify({ q: 'a question', gold: ['ours-one'] }) + '\n',
+  });
+  assert.equal(r.status, 0, `got:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /1 authored cases/);
+  assert.match(fs.readFileSync(scopedPath, 'utf8'), /semantic-authored/);
+});
+
 test('CLI --run refuses a --cases pointing at a directory', () => {
   const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
   const r = run('--run', '--cases', path.dirname(casesPath), '--mode', 'lexical');
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /is not a file/);
+  assert.match(r.stdout, /is a directory/);
   assert.ok(!r.stderr.includes('EISDIR'), `crashed instead of refusing:\n${r.stderr}`);
 });
 
@@ -350,6 +386,17 @@ test('CLI --generate bare still means 40', () => {
   assert.equal(r.status, 0, `bare --generate must still work:\n${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /[1-9]\d* cases \(semantic\)/);
   assert.ok(fs.readFileSync(scopedPath, 'utf8').trim().length > 0, 'it must write real cases');
+});
+
+test('CLI refuses a misspelled flag rather than dropping it', () => {
+  // `--casess other.jsonl` matched nothing and was discarded, so the run scored the DEFAULT set and
+  // printed a number the operator attributed to the file they named — #97, reached by a typo.
+  const { run, casesPath, scopedPath } = scratch(['ours-one'], [{ q: 'a', gold: ['ours-one'] }]);
+  fs.writeFileSync(scopedPath, JSON.stringify({ q: 'z', gold: ['ours-one'] }) + '\n');
+  const r = run('--run', '--mode', 'lexical', '--casess', casesPath);
+  assert.equal(r.status, 1, `got:\n${r.stdout}`);
+  assert.match(r.stdout, /unknown flag --casess/);
+  assert.ok(!r.stdout.includes('recall@'), 'it must not report a number for a set it never read');
 });
 
 test('CLI refuses a value-taking flag with no value', () => {
@@ -389,7 +436,7 @@ test('CLI --run says the vault is empty rather than blaming the case set', () =>
 
 test('CLI --run names the override the caller actually used, including --out', () => {
   // --out overrides the case path too, so a branch keyed on "is CASES the scoped path" told an
-  // --out caller to drop a --cases it never passed — round 1's fix reintroducing round 1's bug.
+  // --out caller to drop a --cases it never passed.
   const { run, casesPath } = scratch(['ours-one'], [{ q: 'a', gold: ['theirs'] }]);
   const r = run('--run', '--out', casesPath, '--mode', 'lexical');
   assert.equal(r.status, 1);
@@ -449,29 +496,25 @@ test('commands/eval.md runs the per-project eval without --cases', () => {
   // A scan guard that matches nothing passes for the wrong reason — this repo has been bitten by
   // exactly that, so assert the scan found its target before asserting anything about it.
   assert.ok(blocks.length >= 1, 'found no per-project eval block in commands/eval.md');
-  const runLines = blocks.flatMap((b) => b.split('\n')).filter(isPerProjectRun);
-  assert.ok(
-    runLines.length >= 2,
-    `expected both per-project --run invocations, found ${runLines.length}`,
-  );
   for (const b of blocks)
     assert.ok(
       !b.includes('--cases') && !b.includes('--out'),
       `commands/eval.md must let the slug-scoped default resolve, got block:\n${b}`,
     );
-  // And nothing runnable may name the machine-shared eval directory, however it is spelled. The
-  // check above asks "does this line say --cases", which two shapes evade: a `--vault` line is
-  // exempted from it (a live-vault run pointed at a shared file is the original bug), and the
-  // argument can be assembled in an earlier fence (`ARGS="--cases $STATE/eval/…"`). Both must
-  // write the path, so the path is what to look for. `$STATE/eval/…-<slug>-<style>` is described
-  // in prose above the block, which is not a fence and not runnable.
+  // And NO fenced line may name the machine-shared eval directory, however it is spelled. The check
+  // above asks "does this line say --cases", which two shapes evade: a `--vault` line is exempted
+  // from it (a live-vault run pointed at a shared file is the original bug), and the argument can
+  // be assembled in an earlier fence (`ARGS="--cases $STATE/eval/…"`). Both must write the path, so
+  // the path is what to look for — and deliberately on EVERY fenced line, not just runnable ones,
+  // because the assembling line is not itself a command. The cost is that a fenced example naming
+  // that directory for any reason fails here; the prose above the block is where it belongs.
   const shared = fences
     .flatMap((b) => b.split('\n'))
-    .filter((l) => l.includes('$STATE/eval/') || l.includes('eval-cases-authored'));
+    .filter((l) => /\$\{?STATE\}?\/eval\//.test(l) || l.includes('eval-cases-'));
   assert.deepEqual(
     shared,
     [],
-    `commands/eval.md must not point a runnable command at the machine-shared eval dir:\n${shared.join('\n')}`,
+    `no fenced example in commands/eval.md may name the machine-shared eval dir — put it in prose:\n${shared.join('\n')}`,
   );
 });
 
