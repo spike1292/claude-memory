@@ -53,8 +53,21 @@ jobs:
             Review this pull request. The PR branch is already checked out.
 
             Read CLAUDE.md first — it holds the invariants below and the reasoning behind
-            them. Most comments in this repo record a dated measurement that settled a
-            question; treat deleting one as a change that needs justifying.
+            them. A comment's home is decided by reader distance, never by its length: it
+            stays if whoever edits that function needs the fact now, with the number at
+            the reader's eye — one line is the target, not a cap, so do not flag a
+            three-line mechanism that cannot be said in one. It moves to
+            `docs/decisions/` or `docs/architecture.md` if the fact is only needed
+            when changing the design, and it dies only if it restates the code or a
+            fact another comment already carries.
+            JSDoc ANNOTATIONS are exempt — `@param` restates the code by design and
+            `tsc` reads it — but prose inside a JSDoc block is prose and is governed,
+            which is where several load-bearing facts actually live.
+            Treat a deleted measurement as a change that needs justifying; treat a comment
+            reduced to a bare `// see docs/...` — a pointer carrying no fact and naming no
+            ceiling — as a finding; and when a block moves, check that references pointing
+            AT it (CLAUDE.md, docs/, README.md, this file, other modules) moved with it.
+            docs/decisions/2026-08-23-comment-reader-distance.md is the rule.
 
             Weight the review toward the things that break silently here. In rough order:
 

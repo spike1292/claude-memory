@@ -19,6 +19,8 @@ Dated, and superseded rather than edited when the answer changes.
 | [Hook startup cost](decisions/2026-08-20-hook-startup-cost.md) | What a hook actually pays before its first line runs, and why no hook is import-bound. |
 | [Types and linting](decisions/2026-08-20-types-and-linting.md) | JSDoc checked by `tsc --noEmit`, still no build step, and the measurements that declined a linter. |
 | [Claude Code's auto memory reads our `MEMORY.md`](decisions/2026-08-22-auto-memory.md) | Co-operate rather than separate, the 25 KB load cap that becomes ours to report, and what to do about a second writer's frontmatter stamps. |
+| [The distiller dedups on embeddings](decisions/2026-08-23-embedding-reconcile.md) | Why the body-overlap arm caught 0 of 25, and why one predicate now serves both callers. |
+| [Where a comment lives](decisions/2026-08-23-comment-reader-distance.md) | Reader distance decides, not line count — and the count that shows why length would have deleted the load-bearing blocks first. |
 
 ## Guides
 
@@ -71,4 +73,6 @@ stays as it was written; it is not updated to track what shipped.
   nobody has to re-derive it — including the part everyone gets wrong (the native dependencies are
   fine).
 - **A decision record is a snapshot.** If the answer changes, add a new dated record and link back
-  rather than quietly editing history.
+  rather than quietly editing history. Appending *evidence* on a subject a record already covers is
+  not editing history and is preferred to a second file on the same subject — it is what a comment
+  moved out of the code does. It is the answer changing that needs a new record.
