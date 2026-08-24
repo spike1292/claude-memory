@@ -18,20 +18,42 @@ Google Cloud announced the **Open Knowledge Format** on 2026-06-12. v0.1, quotin
 > Just markdown … Just files … Just YAML frontmatter — for the small set of structured fields that
 > need to be queryable: `type`, `title`, `description`, `resource`, `tags`, and `timestamp`
 
-That is this vault, described by someone else. **Conformance is a frontmatter mapping, not a
-migration:**
+That is this vault, described by someone else.
 
-| OKF v0.1 | This vault today |
-| --- | --- |
-| `title` | the filename, which already equals `name:` |
-| `description` | `description:` — same field, same meaning |
-| `type` | `metadata.type` — `user` / `feedback` / `project` / `reference` |
-| `timestamp` | `metadata.modified` |
-| `tags` | **absent** |
-| `resource` | **absent** |
+**Corrected after reading the specification, same day.** The blog describes **v0.1**; the spec has
+moved to **v0.2**, and the field list above is not what it says. Read from the verbatim spec at
+`serradura/okf` → `gems/okf/lib/okf/skill/reference/SPEC.md`:
 
-Two missing fields and a rename. Nothing about the note protocol, the layers, or `permanent/` has to
-change.
+| OKF v0.2 §4.1 | Required? | This vault today |
+| --- | --- | --- |
+| `type` | **REQUIRED — the only one** | `metadata.type`, one level down |
+| `title` | optional | the filename, which already equals `name:` |
+| `description` | optional | `description:` — same field, same meaning |
+| `resource` | optional | absent |
+| `tags` | optional | absent |
+| trust · lifecycle · provenance · attestation | optional families, new in v0.2 | `confidence`, per-claim supersession, `originSessionId` — the same ideas under other names |
+| *"other producer-defined key/value pairs"* | — | **the whole `metadata:` block is already legal** |
+
+So conformance is smaller than the first pass suggested: **promote one field and add two.** Nothing
+has to be removed, because the spec explicitly admits producer-defined keys.
+
+Three things the blog did not say, and they matter:
+
+- **`index.md` and `log.md` are reserved filenames** at any level, for a directory listing and an
+  update history. `MEMORY.md` is doing `index.md`'s job under a different name — and cannot simply be
+  renamed, because Claude Code's auto-memory reads it at a fixed path.
+- **A Link is "a standard markdown link from one concept to another."** This vault's protocol says
+  `[[wikilinks]]`, never markdown links. OKF does not forbid wikilinks, but a conforming consumer
+  parsing links per spec **will not see this vault's graph at all**. This is the one genuine conflict
+  and it is not cosmetic — the note graph is the part with the most hand-work in it.
+- **A Concept ID is the file path minus `.md`**, so the vault's "filename equals `name:`" rule already
+  satisfies identity; the layer folders become path prefixes for free.
+
+**Tooling exists and is Claude Code-native**, which means conformance can be measured rather than
+argued: `scaccogatto/okf-skills` (MIT, 334 stars) ships a deterministic conformance checker, a graph
+renderer and a GitHub Action, and is v0.2 throughout — it notes that everything in Google's community
+list at `GoogleCloudPlatform/knowledge-catalog` was still v0.1 on 2026-07-27. `serradura/okf`
+(Apache-2.0) is a Ruby CLI with `validate` and `lint` exit codes plus an MCP server.
 
 **Why it is worth doing.** The gap that keeps recurring in this design is that the memory layer serves
 Claude Code and nothing else, while four agents now run on this machine. OKF is the interchange format
@@ -40,8 +62,9 @@ exists: `scaccogatto/okf-skills` (334, an authoring and validation toolkit for C
 `serradura/okf` (135, Apache-2.0), `Sudhakaran88/okf-conformance` (16), `zosmaai/pi-llm-wiki` (525,
 Obsidian-compatible).
 
-**Not verified:** the field list above is quoted from the announcement, not from the specification
-itself. Read the spec before mapping frontmatter.
+**Open:** whether to keep `[[wikilinks]]`, emit markdown links as well, or treat the wikilink graph as
+a producer-defined extension a conforming consumer is allowed to miss. Run the conformance checker
+before deciding — the answer should come from a report, not from this note.
 
 ## LLM Wiki v2 — independent arrival at this protocol, plus four things missing
 
