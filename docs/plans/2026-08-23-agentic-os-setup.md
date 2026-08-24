@@ -2,6 +2,12 @@
 
 **Status:** designed 2026-08-23, nothing built. Phase 0 not started.
 
+**v1 is personal-only** (owner, 2026-08-24). The work world — a second vault, a second
+`$CLAUDE_MEMORY_HOME`, a second `PASEO_HOME`, and the deletion drill — is **deferred until client work
+actually moves here**. Goal 5 and phase 4 below are the design for that day, kept because the
+reasoning was expensive and stays correct; nothing in phases 0–3 depends on any of it. Sections that
+describe the work world are marked.
+
 This plan spans two repos. It lives here because the memory layer is the foundation and most build
 items are memory-layer work; the operational half moves to a new private `agentic-os` repo, which
 phase 0 creates. Each build item is marked with its repo.
@@ -14,7 +20,7 @@ Goals, stated by the owner:
 2. A personal second brain — personal research, personal backlog, a wiki.
 3. An AFK software factory: agents pick up backlog work while the laptop is shut.
 4. Remote access from laptop and phone.
-5. Employer development work, on the same machine but walled off.
+5. Employer development work, on the same machine but walled off. **Deferred — not in v1.**
 
 Big refactors stay local on the Mac. That is a carve-out, not a goal.
 
@@ -25,9 +31,9 @@ Settled in the design interview. Not open for re-litigation without new facts.
 | Decision | Choice | Why |
 | --- | --- | --- |
 | This repo's scope | Memory layer only | An agentic OS is a visual wrapper, an automation backbone, and memory. This project commits to being a good third layer and leaves the others to whoever builds them — the same judgement that rejected obsidian-second-brain's command set: a different product, not a missing feature |
-| Work/personal split | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; a separate *process* is not a wall — see "The wall". The VPS is Codebakkers-owned, so this is permitted; the binding constraint is **deletion at contract end** — see "Deleting the work data" |
+| Work/personal split *(deferred, not v1)* | Shared machine, one `$CLAUDE_MEMORY_HOME` per world | Cheaper than two boxes; a separate *process* is not a wall — see "The wall". The VPS is Codebakkers-owned, so this is permitted; the binding constraint is **deletion at contract end** — see "Deleting the work data" |
 | Always-on host | Hostinger VPS, Ubuntu 24.04, 16 GB | Must be publicly reachable — see the CoWork finding |
-| Vault sync | Private git repo, VPS canonical | Mac and VPS both write from phase 0, the AFK runner from phase 3; git is the only sync giving history and an undo |
+| Vault sync | Private git repo, VPS canonical | Mac and VPS both write from phase 0, the scheduled runs from phase 3; git is the only sync giving history and an undo |
 | AFK factory | Claude Code native, not OpenHands | Reuses existing skills, hooks, plugin; the sandbox already ships |
 | Personal content | Same vault, new top-level folders | One index, one connector, cross-links work |
 | Visual wrapper | Deferred | Plumbing first |
@@ -63,10 +69,11 @@ because it targets the ChatGPT/Codex app; for Claude Code that hop is unnecessar
         |              HOSTINGER VPS  -  "the brain box"            |
         |                                                           |
         |  Caddy (TLS)  -->  /mcp   vault-mcp  <-- custom connector |
-        |  Claude Code in tmux  (Remote Control on)                 |
-        |  AFK runner: queue -> worktree -> claude -p -> PR         |
+        |  Paseo daemon: sessions, worktrees, schedules              |
+        |    <- native iOS/Android/desktop clients, direct over      |
+        |       Tailscale for work; relay is optional and personal   |
         |  ~/vault      + $CLAUDE_MEMORY_HOME=~/.claude-memory      |
-        |  ~/vault-work + $CLAUDE_MEMORY_HOME=~/.claude-memory-work |
+        |  ~/vault-work + …-work   (deferred, not v1)                |
         |  claude-memory plugin, one index per home                 |
         +---------------------------+-------------------------------+
                                     | git push/pull
@@ -86,7 +93,7 @@ Rules that fall out:
 - **Git is the sync.** Every vault write is a commit; a bad agent run is one `git revert`.
 - **Work lives on the same box in its own world**, never behind the public connector.
 
-## The wall
+## The wall *(deferred with the work world — nothing in v1 builds this)*
 
 A separate serve process is **not** a wall:
 
@@ -174,7 +181,7 @@ below `0.6.0`). Not by mtime — Claude Code writes into old installs after orph
 records the last write, not the version. After a deliberate rollback, highest-version-wins is itself
 wrong; take the answer from Claude Code instead.
 
-## Deleting the work data
+## Deleting the work data *(deferred with the work world)*
 
 The VPS belongs to Codebakkers; the client work arrives through a Codecask contract. **When that
 contract ends the client data must be deleted, and the contract carries a fine if the data is found
@@ -260,9 +267,10 @@ fine on *use* would land on. A hit is usually not a note to delete — it is a n
 | `bubblewrap` | Backs the Claude Code sandbox on Linux | `apt install bubblewrap` |
 | GitHub private repos + Issues | Vault storage, code, code backlog | Triage labels already exist |
 | `gh` CLI | How agents read and write the backlog | |
-| [gh-dash](https://github.com/dlvhdr/gh-dash) | Terminal board for issues and PRs | One tmux pane on the VPS |
+| [Paseo](https://github.com/getpaseo/paseo) | Sessions, worktrees, schedules, and every client | `npm i -g @getpaseo/cli`, or the Docker image. **Connect work hosts directly over Tailscale, not through the relay** — the relay is a third party in the path of client sessions, and the "no inbound port" property holds either way |
+| [gh-dash](https://github.com/dlvhdr/gh-dash) | Terminal board for issues and PRs | One Paseo terminal on the VPS |
 | [Backlog.md](https://github.com/MrLesk/Backlog.md) | Personal backlog and agent work queue | MCP server, terminal + web kanban, MIT |
-| tmux | Sessions survive disconnect | |
+| ~~tmux~~ — **not needed** | Would keep sessions alive across disconnects | The Paseo daemon already does; clients attach and detach |
 | [last30days-skill](https://github.com/mvanhorn/last30days-skill) | Personal research agent | Drop-in, serves goal 2 on day one |
 | [graphify](https://github.com/Graphify-Labs/graphify) *(optional)* | Wiki and graph from docs, SQL, PDFs | `--obsidian` and `--wiki` fit the vault |
 | ~~chezmoi~~ — **not needed** | Would sync `~/.claude` across machines | `~/.claude` here is already a private git repo. Two mechanisms over one directory means the loser is overwritten with no error; `git pull` does this job |
@@ -340,9 +348,12 @@ Then the behaviours:
   user's vault today is a plain folder. Without this, release 0.x gives them a detached `git commit`
   per note write that fails forever in silence, because the hook swallows errors by design.
 
-### 3. AFK runner *(new repo)*
+### 3. ~~AFK runner~~ — **not built**
 
-~200 lines of glue. Queue, worktrees and sandbox are off the shelf. Detailed below.
+Paseo's daemon schedules the runs and owns the worktrees; the queue and the sandbox were already off
+the shelf. [docs/decisions/2026-08-24-paseo-orchestrator.md](../decisions/2026-08-24-paseo-orchestrator.md)
+has the comparison and what it costs. What is left of this item is configuration, described under
+*The AFK factory*, plus the unowned push step named there.
 
 ### 4. `Personal/` conventions and skills *(this repo)*
 
@@ -369,19 +380,29 @@ scriptable via `gh api graphql`, worth adding only when several repos start to h
 GitHub Issues. It keeps plain markdown in git, matching the vault decision, and carries acceptance
 criteria and a Definition of Done per task — which is how a headless agent knows it has finished.
 
-```bash
-claude mcp add backlog --scope user -- backlog mcp start
-```
+**Wire it with CLI instructions, not MCP.** `backlog init` offers both; its own README makes the
+instruction file the recommendation and MCP the alternative "for teams that prefer MCP". The
+instruction file tells any agent to run `backlog instructions overview`, which works for all four
+harnesses on this box — MCP would cover only the ones that speak it.
 
-`backlog browser` binds `127.0.0.1` and is not reachable from the LAN or Tailscale; phone access
-needs Caddy or an SSH tunnel.
+**It lives in the vault, as `Backlog/`** — `backlog_directory: Backlog` in `backlog.config.yml`, the
+same "new top-level folder" decision as `Personal/`. Two consequences, both good:
+
+- **The semantic index ignores it and should.** `vaultSources()` in `scripts/memory-semantic.mjs` is
+  an allow-list — `Memory/<slug>/`, the three `Insights/` folders, `permanent/` — so several hundred
+  task files never reach recall, with no exclusion rule to maintain. `backlog search` is their search.
+  Task filenames (`back-102 - Title.md`) also cannot collide with kebab-case note stems.
+- **SilverBullet serves the tasks to the phone.** `backlog browser` binds `127.0.0.1` and is not
+  reachable from the LAN or Tailscale, which used to mean Caddy or an SSH tunnel. With the tasks
+  inside the vault they are just markdown, so the phone reads and edits them through SilverBullet
+  instead. The kanban stays on the box; the tasks do not.
 
 Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
 
 ## The AFK factory
 
 ```
- systemd timer (every 30 min)
+ paseo schedule (every 30 min)
         |
         v
  collect ready work
@@ -391,13 +412,12 @@ Rejected: Linear, Jira, Todoist — a second source of truth, off the machine.
         v
  for each task, max 3 concurrent
         |
-        +--> git worktree add ~/worktrees/<task-id>
+        +--> Paseo workspace -> its own worktree and branch
         |
-        +--> claude -p --output-format json          (NOT --bare)
-        |      --settings ~/afk/sandbox.json
+        +--> claude, with --settings ~/afk/sandbox.json    (NOT --bare)
         |      "<task body + acceptance criteria>"
         |
-        +--> RUNNER (outside the sandbox) pushes branch, opens PR, links issue
+        +--> push branch, open PR, link issue   (outside the sandbox — see below)
         |
         +--> label ready-for-human, comment what it did
         |
@@ -435,8 +455,12 @@ version.
 The docs warn that a broad `github.com` allow is an exfiltration path — the proxy decides from the
 client-supplied hostname without inspecting TLS. Keeping the list short has consequences:
 
-- **`git push` is not covered**, so push and PR-open run **in the runner, outside the agent**, after
-  `claude -p` returns. Widening the agent's allow-list would trade a real boundary for convenience.
+- **`git push` is not covered**, so push and PR-open run **outside the agent**, after the turn
+  returns. Widening the agent's allow-list would trade a real boundary for convenience.
+  **Dropping the runner left this step without an owner.** Paseo runs git itself and its worktrees
+  take setup hooks and scripts, so a post-run script is the obvious home — but the documented hooks
+  fire on *creation*. This is the first thing to settle on the box; until it is, the loop stops at a
+  committed branch nobody pushed.
 - **Credentials is `~/.claude/.credentials.json`, not `~/.claude`** — blocking the whole directory
   starves the plugin, which loads L1 through `~/.claude/projects/<slug>/memory/`. Reasoned, not
   measured; verify before phase 3.
@@ -445,7 +469,7 @@ client-supplied hostname without inspecting TLS. Keeping the list short has cons
   question on hook sandboxing comes back the other way, this and the credentials entry are revisited
   **together** — without both, the distiller dies unreachable while the gate still logs `spawned`.
 
-**The agent never touches `main` or the vault repo**, and the runner **marks its runs as machine
+**The agent never touches `main` or the vault repo**, and a scheduled run **marks itself as machine
 work**. `hook-stats.mjs` counts a session only when `l.session && !l.child`, and its comment records
 that headless runs once "roughly doubled every count here" — so unmarked runs would show as human
 sessions and wreck every per-session figure. Build item 5 exists because no marker-only env var does.
@@ -468,8 +492,10 @@ auth to `ANTHROPIC_API_KEY` or an `apiKeyHelper` via `--settings`. Each of those
 **Omitting the flag is not a defence that lasts.** The
 [headless docs](https://docs.claude.com/en/docs/claude-code/headless) say `--bare` will become the
 **default** for `-p`, and there is no opt-out: Claude Code 2.1.231 has no `--no-bare`, no setting,
-and hooks do not run under `--bare` to read one. So the runner **asserts the side effect**: after
-`claude -p` returns, check the run left its own line in `$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`.
+and hooks do not run under `--bare` to read one. So the post-run step **asserts the side effect**:
+after the turn returns, check the run left its own line in
+`$CLAUDE_MEMORY_HOME/logs/hooks-<date>.jsonl`. This lands on the same owner as the push above, and is
+the second reason that step has to exist.
 
 That check has traps:
 
@@ -499,14 +525,19 @@ That check has traps:
 
 | Phase | What | Done means | Rough |
 | --- | --- | --- | --- |
-| 0 | VPS, Tailscale, Claude Code, Remote Control, vault into private git, **create the `agentic-os` repo**, build item 2, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a note written on either box lands as a commit without anyone running git; the Mac's `config.json` points at the git clone, not inside the synced tree; `/memory:doctor` reports **no WARN and no FAIL** on both boxes after the move — a bare "no FAIL" is not enough, since on a fresh VPS a real loss prints only a WARN (Risk 2) | weekend |
+| 0 | VPS, Tailscale, Claude Code, **Paseo daemon + phone client**, vault into private git, **create the `agentic-os` repo**, build item 2, **and move the Mac's vault out of the Synology tree** | Phone drives the VPS with the laptop shut; a Paseo-launched session loads the `memory` plugin's hooks — **verified on the Mac 2026-08-24, all six lifecycle lines**, so repeat it on the VPS rather than re-deriving it; a note written on either box lands as a commit without anyone running git; the Mac's `config.json` points at the git clone, not inside the synced tree; `/memory:doctor` reports **no WARN and no FAIL** on both boxes after the move — a bare "no FAIL" is not enough, since on a fresh VPS a real loss prints only a WARN (Risk 2) | weekend |
 | 1 | Build item 1 (`vault-mcp`) read-only, Caddy, custom connector, unit + wrapper committed to `agentic-os` | CoWork answers from the vault, on the phone; the cold-start check under item 1 passes; the update procedure leaves the daemon on the highest-versioned directory | 1–2 days |
-| 2 | Backlog.md, gh-dash, build item 4 | One pile, and it is visible | 1 day |
-| 3 | Build item 5, then the AFK runner and triage agent | An issue becomes a PR overnight, and `/memory:doctor --hooks` still separates machine runs from yours | 2–3 days |
-| 4 | Work-side walled setup: second `$CLAUDE_MEMORY_HOME`, second vault, **and the deletion drill** | Work never crosses the wall, and a dry-run deletion accounts for every location below | 1 day |
+| 2 | Backlog.md, gh-dash, build item 4, **SilverBullet on the vault folder** | One pile, and it is visible; the vault opens in a phone browser without Obsidian — see [the second-brain decision](../decisions/2026-08-24-second-brain-surfaces.md) | 1 day |
+| 3 | Build item 5, then the `paseo schedule` entries, the push step's owner, and the triage agent | An issue becomes a PR overnight — a *pushed* one, not a branch left sitting in a worktree — and `/memory:doctor --hooks` still separates machine runs from yours | 1–2 days |
+| 4 | *Deferred:* work-side walled setup — second `$CLAUDE_MEMORY_HOME`, second vault, a second `PASEO_HOME` so the provider wall runs both ways (Copilot is on the client's account, so personal work must not reach it), and the deletion drill | Work never crosses the wall, and a dry-run deletion accounts for every location above | — |
 | 5 | *Deferred:* vault-mcp writes, Obsidian command centre | — | — |
 
-Phase 1 is the payoff. Everything before it is plumbing.
+Phase 1 is the payoff. Everything before it is plumbing. Phases 4 and 5 are deferred, so **v1 ends at
+phase 3**.
+
+**Do not start the work world by half.** Its value is that it is enumerable — one vault, one memory
+home, one Paseo home, all deletable. A work checkout dropped into the personal world "just for now"
+is the failure the wall exists to prevent, and it is invisible until the contract ends.
 
 ## Risks
 
@@ -534,8 +565,9 @@ Phase 1 is the payoff. Everything before it is plumbing.
    because the plugin reads L1 through `~/.claude/projects/<slug>/memory/`.
 6. **RAM: 16 GB, not 8 — sized for peak.** Idle is cheap: `modelIdleMs` (5 min) disposes the model
    and ~450 MB of `MALLOC_LARGE` drops to ~2.4 MB while socket and indexes survive (measured
-   2026-08-17). Peak is model loaded, indexes cached, three sandboxed agents — and from phase 4 a
-   **second** resident model, since both worlds can hold a `--serve` at once.
+   2026-08-17). Peak is model loaded, indexes cached, three sandboxed agents. **v1 is one world, so
+   the second resident model is not in play** — 8 GB may well do until phase 4 happens. Size on the
+   first month's measurements rather than on this paragraph.
 
 Running cost: VPS €10–20/month, Tailscale free, GitHub free. Tokens are the variable.
 

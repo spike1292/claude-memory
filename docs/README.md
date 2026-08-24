@@ -19,6 +19,8 @@ Dated, and superseded rather than edited when the answer changes.
 | [Hook startup cost](decisions/2026-08-20-hook-startup-cost.md) | What a hook actually pays before its first line runs, and why no hook is import-bound. |
 | [Types and linting](decisions/2026-08-20-types-and-linting.md) | JSDoc checked by `tsc --noEmit`, still no build step, and the measurements that declined a linter. |
 | [Claude Code's auto memory reads our `MEMORY.md`](decisions/2026-08-22-auto-memory.md) | Co-operate rather than separate, the 25 KB load cap that becomes ours to report, and what to do about a second writer's frontmatter stamps. |
+| [Paseo is the orchestrator](decisions/2026-08-24-paseo-orchestrator.md) | Why the AFK runner is not built, the four tools measured against the file trees rather than their READMEs, and the two steps deleting the runner left unowned. |
+| [The second brain is one folder, two surfaces](decisions/2026-08-24-second-brain-surfaces.md) | Obsidian to write, SilverBullet in the browser, Quartz deferred — and why the folder of markdown, not the app, was always the requirement. |
 
 ## Guides
 
@@ -65,6 +67,7 @@ stays as it was written; it is not updated to track what shipped.
 | [obsidian-second-brain](research/2026-08-21-obsidian-second-brain.md) | The repo several of our own checks came from. What is already ours, what was deliberately rejected, and the three items left. |
 | [Seven agent-memory systems](research/2026-08-21-agent-memory-systems-survey.md) | claude-mem, Mem0, Graphiti, Zep, memory-mcp, memsearch and the above, adversarially verified. Four mechanisms survive; the vendor benchmark numbers do not. |
 | [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
+| [OKF, LLM Wiki v2, agentmemory](research/2026-08-24-okf-and-llm-wiki-v2.md) | Google published a spec for the format this vault already writes. Conformance is two frontmatter fields. Plus the four lifecycle mechanisms the gist names and we do not have. |
 
 ## Conventions for these documents
 
