@@ -62,9 +62,36 @@ exists: `scaccogatto/okf-skills` (334, an authoring and validation toolkit for C
 `serradura/okf` (135, Apache-2.0), `Sudhakaran88/okf-conformance` (16), `zosmaai/pi-llm-wiki` (525,
 Obsidian-compatible).
 
-**Open:** whether to keep `[[wikilinks]]`, emit markdown links as well, or treat the wikilink graph as
-a producer-defined extension a conforming consumer is allowed to miss. Run the conformance checker
-before deciding — the answer should come from a report, not from this note.
+**Measured, same day, so nobody re-runs it.** `Sudhakaran88/okf-conformance` — Node, zero
+dependencies, aligned to v0.2 and green against Google's four published reference bundles — over
+`Memory/<slug>/`, 17 notes. Use `--json`: it otherwise writes `okf-report.json` *into the bundle*.
+
+```
+concepts 17 · links 16 · errors 17 · warnings 2 · conformant: false
+  16  M3  missing required `type`
+   1  M2  missing YAML frontmatter block
+   1  S1  no root index.md
+   1  S3  internal link does not resolve
+```
+
+**The wikilink question is answered, and the answer is total.** Those same 17 notes hold **48
+wikilinks and 19 markdown links; the validator counted 16.** It sees markdown links only, so a
+conforming consumer gets every document and **none of the graph**.
+
+That reframes the cost. The interop goal was documents readable by four agents, which top-level
+`type` alone buys. The edges were never what the other agents needed: recall here is semantic + BM25
+over note *text*, and the graph's real consumers are Obsidian and this repo's own link lint, both of
+which read wikilinks natively. Treating the wikilink graph as a producer-defined extension is
+therefore the cheap and honest reading — not a compromise.
+
+Two findings point at `MEMORY.md` (M2 and S1) and **neither is fixable**: Claude Code's auto-memory
+pins both its path and its frontmatter-free shape. Accept them.
+
+The S3 warning was a **real bug, unrelated to OKF** — a markdown link in the vault climbing four
+levels out of it into the checkout. Fixed on sight.
+
+**Deferred** (owner, 2026-08-24): conformance is not being done now. What it costs is measured and
+recorded above; `Insights/`, `permanent/` and `Logs/` remain unvalidated.
 
 ## LLM Wiki v2 — independent arrival at this protocol, plus four things missing
 
