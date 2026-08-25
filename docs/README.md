@@ -69,6 +69,7 @@ stays as it was written; it is not updated to track what shipped.
 | [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
 | [OKF, LLM Wiki v2, agentmemory](research/2026-08-24-okf-and-llm-wiki-v2.md) | Google published a spec for the format this vault already writes. Conformance is two frontmatter fields. Plus the four lifecycle mechanisms the gist names and we do not have. |
 | [Agent-memory leaderboards](research/2026-08-25-agent-memory-leaderboards.md) | Five supplied URLs are one board. Hindsight places 10/15 and 15/15 on it — but a plain SQLite full-text baseline ties for first, and most top entries are the board's own partners. |
+| [claude-mem and MemOS](research/2026-08-25-claude-mem-and-memos.md) | The two that place highest. claude-mem is this plugin with a database instead of a vault, now wired to seven agents, and its runaway-capture bug is closed. MemOS supports none of our agents. |
 
 ## Conventions for these documents
 
