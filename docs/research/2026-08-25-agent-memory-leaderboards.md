@@ -105,9 +105,22 @@ serve as the neutral referee between two vendors' claims.
 ## What it settles
 
 **Not** which memory system is best. Both available sources are interested parties: Hindsight's
-LongMemEval standing comes from its own harness (independently reproduced by Virginia Tech's Sanghani
-Center and The Washington Post, which is better than most), and this board is run by an organisation
-whose partners hold most of its top places.
+LongMemEval standing comes from its own harness, and this board is run by an organisation whose
+partners hold most of its top places.
+
+**"Independently reproduced" does not survive checking, and this note asserted it before checking.**
+Hindsight's README says its benchmark performance "has been independently reproduced by research
+collaborators at the Virginia Tech Sanghani Center … and The Washington Post". Researchers from both
+institutions are **co-authors of Hindsight's own paper** (arXiv 2512.12818, "Hindsight is 20/20"),
+and the launch coverage describes the result as "validated by research with collaborators from
+Vectorize, The Washington Post and Virginia Tech". A co-author is not an independent reproducer, and
+the vendor's own sentence contains the word *collaborators*. The claim as originally written here
+came from the README and nowhere else — the same failure this note criticises elsewhere.
+
+Two related facts, since anyone re-reading that claim will want them. The headline gains (+211%
+multi-session, +316% temporal, from 91.4% overall, announced 2025-12-16) are quoted against a
+baseline none of the coverage names, so their size means nothing without it. And **LongMemEval has a
+successor** — LongMemEval-V2, arXiv 2605.12493 — so the standing is on V1.
 
 **What does survive** is the baseline result, because it is the one number nobody had an incentive to
 inflate: on the coding board a stock full-text search finishes within 2.7 points of the winner, and a

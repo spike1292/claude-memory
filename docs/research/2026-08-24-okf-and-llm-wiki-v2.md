@@ -135,8 +135,11 @@ Relevant details:
 
 - **Keyless by default**, in which case recall is BM25 only. `EMBEDDING_PROVIDER=local` downloads
   `Xenova/all-MiniLM-L6-v2` and runs on device.
-- Claims 95.2% R@5 and 92% fewer tokens. **Self-reported**, unlike Hindsight's LongMemEval standing,
-  which was independently reproduced.
+- Claims 95.2% R@5 and 92% fewer tokens, **self-reported**. This originally read "unlike Hindsight's
+  LongMemEval standing, which was independently reproduced" — **corrected 2026-08-25: that contrast
+  does not hold.** The Virginia Tech and Washington Post researchers are co-authors of Hindsight's
+  own paper, not independent reproducers; see
+  [the leaderboard note](2026-08-25-agent-memory-leaderboards.md). Both numbers are vendor-run.
 - MiniLM-L6-v2 is a much smaller model than the bge-m3 this repo settled on after measuring; this
   project's own evidence is that model and pooling choice moves recall by tens of points and fails
   silently when wrong.
