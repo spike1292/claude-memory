@@ -68,6 +68,7 @@ stays as it was written; it is not updated to track what shipped.
 | [Seven agent-memory systems](research/2026-08-21-agent-memory-systems-survey.md) | claude-mem, Mem0, Graphiti, Zep, memory-mcp, memsearch and the above, adversarially verified. Four mechanisms survive; the vendor benchmark numbers do not. |
 | [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
 | [OKF, LLM Wiki v2, agentmemory](research/2026-08-24-okf-and-llm-wiki-v2.md) | Google published a spec for the format this vault already writes. Conformance is two frontmatter fields. Plus the four lifecycle mechanisms the gist names and we do not have. |
+| [Agent-memory leaderboards](research/2026-08-25-agent-memory-leaderboards.md) | Five supplied URLs are one board. Hindsight places 10/15 and 15/15 on it — but a plain SQLite full-text baseline ties for first, and most top entries are the board's own partners. |
 
 ## Conventions for these documents
 
