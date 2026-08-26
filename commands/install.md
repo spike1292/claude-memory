@@ -82,17 +82,7 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    Expect ~59 MB. It is idempotent and prints nothing on a second run. If it reports a failure,
    nothing is broken — you keep a 380 MB install.
 
-8. **Warm the model into `$STATE/models`.** First use otherwise downloads ~700 MB at an
-   unpredictable moment, and — if the cache dir were wrong — into the plugin dir, where the next
-   `/plugin update` would discard it.
-   ```bash
-   cd "$MEM" && node --test scripts/lib/memory-semantic.test.mjs
-   du -sh "$STATE/models"
-   ```
-   Report the size. If `$STATE/models` is empty but a model loaded, the cache redirect is broken —
-   say so loudly rather than moving on.
-
-9. **Write the settings file.** Ask the user for the vault path — it is theirs, not a guess to make.
+8. **Write the settings file.** Ask the user for the vault path — it is theirs, not a guess to make.
    Preserve any keys already in the file rather than overwriting it wholesale.
    ```bash
    cat > "$STATE/config.json" <<'JSON'
@@ -108,6 +98,34 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    session's hooks, and the SessionStart hook built an empty vault at the default path.
 
    Omit `vault` only if it really is `~/Documents/ClaudeVault`.
+
+   This comes **before** warming the model: a clean machine has no vault until this file names one,
+   and the checks below resolve it through `paths.vault()`.
+
+9. **Warm the model into `$STATE/models`.** First use otherwise downloads ~700 MB at an
+   unpredictable moment, and — if the cache dir were wrong — into the plugin dir, where the next
+   `/plugin update` would discard it.
+   ```bash
+   cd "$MEM" && node scripts/memory-semantic.mjs --check-embedding
+   du -sh "$STATE/models"
+   ```
+   `--check-embedding` is the only step here that calls `pipeline()`, so it is the one that fetches
+   the weights. It also proves the vector is stable — same text twice, and alone versus in a batch,
+   must both give cosine 1.000000.
+
+   Report the size. Expect ~560 MB for `Xenova/bge-m3`. If `$STATE/models` is empty but a model
+   loaded, the cache redirect is broken — say so loudly rather than moving on.
+
+   > Do **not** use `node --test scripts/lib/memory-semantic.test.mjs` to warm the model. That suite
+   > covers the scoring maths and chunking only — its own header says the embedding pipeline lives
+   > elsewhere — so it passes in ~300 ms, downloads nothing, and leaves `$STATE/models` empty while
+   > appearing to succeed. `/memory:doctor` then reports "no model weights — run `/memory:install` to
+   > warm them", which sends the reader back to the step that cannot do it.
+   >
+   > It is also the wrong shape for a clean install: it "asserts against real notes on purpose and
+   > hard-fails when it matches none" (`docs/ci-and-releases.md`), which is why CI builds a synthetic
+   > vault first. Run before step 8 on a fresh machine, it fails with `real-note check matched no
+   > notes and gave no reason — it is not running`.
 
 10. **Optionally arm per-prompt recall** by setting `"recall": true`. It ships inert, because
    injecting into every prompt changes how every session reads. Mention it; do not enable it unasked.
