@@ -26,6 +26,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
   node 24.19.0: the old command left `models/` at 0 B, the new one produced 561 MB under
   `Xenova/bge-m3`.
 
+- **`vault-env.sh` silently resolved the wrong vault when sourced from zsh.** It located
+  `scripts/env.mjs` via `BASH_SOURCE`, which is bash-only; under zsh that is unset, `dirname ""`
+  is `.`, the entry is never found, and `_memory_env_load` falls into DEGRADED — which by design
+  ignores `config.json` and returns `~/Documents/ClaudeVault` plus a cwd-slug instead of the
+  git-remote project key. The two shell files that source it are bash, so hooks were unaffected;
+  the reachable surface is the command files — nine of them, including `/memory:save` and
+  `/memory:resume`, tell the agent to source it directly, and an agent's Bash tool may be zsh.
+  A save then wrote to an empty scaffold at the default path under the wrong slug, and
+  `/memory:doctor` reported the vault correctly the whole time because `doctor.sh` runs under bash.
+  Path derivation is now shell-agnostic, with zsh's `${(%):-%x}` kept inside `eval` so bash never
+  parses it. `hooks/lib/vault-env.test.mjs` covers it and fails without the fix.
+
 ### Changed
 
 - **The distiller now dedups against embeddings, not word overlap.** Its body-overlap arm caught

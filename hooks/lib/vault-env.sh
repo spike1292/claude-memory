@@ -19,11 +19,30 @@
 _memory_env_dir=""      # which directory the cached answer is for
 MEMORY_ENV_DEGRADED=0   # 1 when Node could not be asked; see the fallback below
 
+# Where this file is, resolved once at source time.
+#
+# BASH_SOURCE is bash-only. The two shell files that source this are bash, but
+# every commands/*.md tells the agent to source it too — and an agent's Bash
+# tool may be zsh, where BASH_SOURCE is unset. `dirname ""` is then `.`, the
+# env.mjs path misses, and _memory_env_load falls into DEGRADED: no config.json,
+# so the vault silently becomes ~/Documents/ClaudeVault and the project key
+# becomes a cwd-slug. That is the exact failure mode the vault resolution is
+# built to prevent, arriving through the command surface instead of a hook.
+#
+# ${(%):-%x} is zsh's equivalent, kept inside eval so bash never parses it.
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  _memory_env_self="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  eval '_memory_env_self="${(%):-%x}"'
+else
+  _memory_env_self="$0"
+fi
+
 # Ask Node once per directory. Callers use a single cwd each, so this is one fork per script.
 _memory_env_load() {
   _d="${1:-$PWD}"
   [ "${_memory_env_dir:-}" = "$_d" ] && return 0
-  _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  _root="$(cd "$(dirname "$_memory_env_self")/../.." && pwd)"
   _entry="$_root/scripts/env.mjs"
 
   if command -v node >/dev/null 2>&1 && [ -f "$_entry" ]; then
