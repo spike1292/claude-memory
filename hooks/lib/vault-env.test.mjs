@@ -7,7 +7,11 @@ import path from 'node:path';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, 'vault-env.sh');
 
-/** Source vault-env.sh in `shell` and print MEMORY_ENV_DEGRADED. */
+/**
+ * Source vault-env.sh in `shell` and print MEMORY_ENV_DEGRADED.
+ * @param {string} shell
+ * @returns {string}
+ */
 function degradedUnder(shell) {
   return execFileSync(shell, ['-c', `. '${SCRIPT}'; printf '%s' "$MEMORY_ENV_DEGRADED"`], {
     encoding: 'utf8',
@@ -15,6 +19,10 @@ function degradedUnder(shell) {
   }).trim();
 }
 
+/**
+ * @param {string} shell
+ * @returns {boolean}
+ */
 function have(shell) {
   try {
     execFileSync('command', ['-v', shell], { shell: '/bin/sh', stdio: 'ignore' });
@@ -42,7 +50,7 @@ test('resolves without degrading under zsh', (t) => {
 
 test('both shells agree on the vault and the project key', (t) => {
   if (!have('zsh')) return t.skip('zsh not installed');
-  const read = (shell) =>
+  const read = (/** @type {string} */ shell) =>
     execFileSync(
       shell,
       ['-c', `. '${SCRIPT}'; printf '%s\\n%s' "$(resolve_vault)" "$(project_key "$PWD")"`],
