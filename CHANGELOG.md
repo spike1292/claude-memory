@@ -9,6 +9,23 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/memory:install` never warmed the model, and failed outright on a clean machine.** Step 8 ran
+  `node --test scripts/lib/memory-semantic.test.mjs`, a suite that covers the scoring maths and
+  chunking only — its own header says the embedding pipeline lives elsewhere. It passed in ~300 ms,
+  downloaded nothing, and left `$CLAUDE_MEMORY_HOME/models` empty while appearing to succeed;
+  `/memory:doctor` then reported "no model weights — run `/memory:install` to warm them", pointing
+  back at the step that could not do it. The same suite also "asserts against real notes on purpose
+  and hard-fails when it matches none" (`docs/ci-and-releases.md`, which is why CI builds a
+  synthetic vault first), so on a fresh machine — where step 9 had not yet written `config.json` —
+  it failed with `real-note check matched no notes and gave no reason`. Warming now uses
+  `node scripts/memory-semantic.mjs --check-embedding`, the only step that calls `pipeline()`,
+  which doubles as a stability check (same text twice, and alone vs batched, must both be cosine
+  `1.000000`). Steps 8 and 9 are swapped so the vault is named first. Verified on macOS 26 /
+  node 24.19.0: the old command left `models/` at 0 B, the new one produced 561 MB under
+  `Xenova/bge-m3`.
+
 ### Changed
 
 - **The distiller now dedups against embeddings, not word overlap.** Its body-overlap arm caught
