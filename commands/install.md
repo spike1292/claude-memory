@@ -99,8 +99,12 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
 
    Omit `vault` only if it really is `~/Documents/ClaudeVault`.
 
-   This comes **before** warming the model: a clean machine has no vault until this file names one,
-   and the checks below resolve it through `paths.vault()`.
+   This comes **before** warming the model so the vault is named before anything reads it. Note
+   what does *not* require it: `--check-embedding` embeds fixed strings and never touches
+   `paths.vault()`, and the model cache dir comes from `paths.memoryHome()`, which resolves from
+   `$CLAUDE_MEMORY_HOME` or the default and ignores `config.json`'s `vault` key. So step 9 warms
+   fine with no `config.json` at all. The old order was broken because the *old* step 8 command
+   asserted against real vault notes; that command is gone.
 
 9. **Warm the model into `$STATE/models`.** First use otherwise downloads ~700 MB at an
    unpredictable moment, and — if the cache dir were wrong — into the plugin dir, where the next
