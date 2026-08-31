@@ -411,13 +411,19 @@ Everything else — what CI checks, the two review workflows, why a PR that edit
 never gets reviewed (per-file, so `ci.yml` edits *are* reviewed), and the release process — is in
 [docs/ci-and-releases.md](docs/ci-and-releases.md).
 
-Three of those matter while you are still editing:
+Four of those matter while you are still editing:
 
 - **`claude-review.yml`'s prompt carries this repo's invariants. When a rule here changes, change
   it there too.** It stays *inline* in that workflow — `claude-code-action` validates only the file
   that invokes it, so a prompt in its own file could be rewritten by the PR it reviews. Read it with
   `node scripts/review-prompt.mjs`, and run it locally before pushing: it is the reviewer that gates
   the PR, and the only one a PR editing `claude-review.yml` can get.
+- **PR descriptions, commit messages, and review replies are terse, not code comments.** State
+  what changed and why, and how it was verified — no walkthrough, no restating the diff, no
+  narrating obvious steps. This is separate from the reader-distance rule above, which governs
+  comments *in code*: a load-bearing measurement stays in the `.mjs` file it explains, it does not
+  move to the PR body. `docs/decisions/2026-08-23-comment-reader-distance.md`'s "No CI guard"
+  applies to code; nothing here proposes lint-checking prose length automatically.
 - **Never bump versions by hand.** `scripts/release.sh` writes all five; CI fails on drift.
 - **Merging the release PR publishes.** There is no manual tagging step.
 - **Put the changelog entry under `## [Unreleased]` in the same PR** — that section becomes the
