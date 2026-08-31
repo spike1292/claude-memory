@@ -35,10 +35,10 @@ DEFAULT = bge-m3 since 2026-08-15. It was rejected twice before that, and **both
 bugs in the harness, not the model**:
 
 1. "Too slow" — its profile carried `maxChars` 4000 while every other model had 1800, so it alone
-   processed the long tail at quadratic attention cost. At equal length it is 9.6x bge-small, below
-   its 17x parameter ratio. Aligned: 3.8h extrapolated → 7 min actual. Benchmarked at EQUAL length
-   it is 9.6x bge-small (384ms vs 40ms per 1800-char text), below its 17x parameter ratio. Aligned
-   to 1800 so the A/B varies the model and nothing else.
+   processed the long tail at quadratic attention cost. Benchmarked at EQUAL length (aligned to
+   1800 so the A/B varies the model and nothing else) it is 9.6x bge-small (384ms vs 40ms per
+   1800-char text), below its 17x parameter ratio — 3.8h extrapolated at the old, unequal length
+   became 7 min actual once aligned.
 2. "Worse retrieval" — mean pooling on a CLS-trained model. @5 25.0% → 67.9% once fixed (see
    `CLAUDE.md` "Model profiles are not interchangeable" for this figure).
 
