@@ -68,6 +68,7 @@ TRANSCRIPT:
  *   aliases?: unknown,
  * }} InsightItem
  * @typedef {{ patterns?: InsightItem[], mistakes?: InsightItem[], decisions?: InsightItem[] }} Insights
+ * @typedef {{ file: string, title: string, action: 'written'|'merged' }} WrittenNote
  */
 
 /**
@@ -654,15 +655,13 @@ export function dupeClient(cwd, slug) {
  * @param {Insights} insights
  * @param {string} slug
  * @param {string} cwd
- * @returns {Promise<{ written: number, merged: number, declined: number, notes: { file: string, title: string, action: 'written'|'merged' }[] }>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, notes: WrittenNote[] }>}
  */
 async function writeNotes(insights, slug, cwd) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
-  let written = 0,
-    merged = 0,
-    declined = 0;
-  /** @type {{ file: string, title: string, action: 'written'|'merged' }[]} */
+  let declined = 0;
+  /** @type {WrittenNote[]} */
   const notes = [];
 
   const ask = dupeClient(cwd, slug);
@@ -755,7 +754,6 @@ async function writeNotes(insights, slug, cwd) {
         declined++;
       } else {
         reconcile(hit.file, title, body, line, today);
-        merged++;
         notes.push({ file: hit.file, title, action: 'merged' });
         return;
       }
@@ -765,7 +763,6 @@ async function writeNotes(insights, slug, cwd) {
     fs.writeFileSync(file, raw);
     if (vec) thisRun.push({ note: name, layer: folder, vec, file });
     notes.push({ file, title, action: 'written' });
-    written++;
   };
 
   for (const it of insights.patterns || []) {
@@ -798,6 +795,8 @@ async function writeNotes(insights, slug, cwd) {
         it.aliases,
       );
   }
+  const written = notes.filter((n) => n.action === 'written').length;
+  const merged = notes.filter((n) => n.action === 'merged').length;
   return { written, merged, declined, notes };
 }
 
@@ -810,7 +809,7 @@ async function writeNotes(insights, slug, cwd) {
  * vault not a git work tree, no git identity configured, nothing to commit — degrades to a
  * silent no-op, exactly like every other hook here. A session must never fail because of this.
  *
- * @param {{ file: string, title: string, action: 'written'|'merged' }[]} notes
+ * @param {WrittenNote[]} notes
  * @param {string} slug
  * @returns {void}
  */
