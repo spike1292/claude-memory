@@ -428,6 +428,10 @@ test('the ctx source label carries the same key as the directory it indexes', (t
       CLAUDE_MEMORY_HOME: path.join(root, 'state'),
       DISTILL_VAULT: vault,
       DISTILL_DRYRUN: '1',
+      // Neutralised, not just left unset in this object: GIT_ENV spreads the real process.env, so
+      // an ambient CLAUDE_CONFIG_DIR (plausible in a Claude Code session) would otherwise leak
+      // through and this assertion would fail on a machine setting, not the code.
+      CLAUDE_CONFIG_DIR: undefined,
     },
   });
 
