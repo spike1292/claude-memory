@@ -654,7 +654,7 @@ export function dupeClient(cwd, slug) {
  * @param {Insights} insights
  * @param {string} slug
  * @param {string} cwd
- * @returns {Promise<{ written: number, merged: number, declined: number }>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, notes: { file: string, title: string, action: 'written'|'merged' }[] }>}
  */
 async function writeNotes(insights, slug, cwd) {
   const today = todayStr();
@@ -662,6 +662,8 @@ async function writeNotes(insights, slug, cwd) {
   let written = 0,
     merged = 0,
     declined = 0;
+  /** @type {{ file: string, title: string, action: 'written'|'merged' }[]} */
+  const notes = [];
 
   const ask = dupeClient(cwd, slug);
   // Notes written EARLIER IN THIS RUN. The index is rebuilt after the distillation, so the server
@@ -754,6 +756,7 @@ async function writeNotes(insights, slug, cwd) {
       } else {
         reconcile(hit.file, title, body, line, today);
         merged++;
+        notes.push({ file: hit.file, title, action: 'merged' });
         return;
       }
     }
@@ -761,6 +764,7 @@ async function writeNotes(insights, slug, cwd) {
     const file = path.join(d, `${name}.md`);
     fs.writeFileSync(file, raw);
     if (vec) thisRun.push({ note: name, layer: folder, vec, file });
+    notes.push({ file, title, action: 'written' });
     written++;
   };
 
@@ -794,7 +798,38 @@ async function writeNotes(insights, slug, cwd) {
         it.aliases,
       );
   }
-  return { written, merged, declined };
+  return { written, merged, declined, notes };
+}
+
+/**
+ * Commit, in one commit, exactly the notes this run wrote or merged — never `git add -A`. A
+ * human may hand-edit files elsewhere in the same vault repo; a blanket add would ship that by
+ * accident, which is the one thing this function exists to avoid.
+ *
+ * Off unless explicitly armed (paths.gitAutoCommitEnabled()), and any failure — git missing, the
+ * vault not a git work tree, no git identity configured, nothing to commit — degrades to a
+ * silent no-op, exactly like every other hook here. A session must never fail because of this.
+ *
+ * @param {{ file: string, title: string, action: 'written'|'merged' }[]} notes
+ * @param {string} slug
+ * @returns {void}
+ */
+function autoCommit(notes, slug) {
+  if (!paths.gitAutoCommitEnabled() || notes.length === 0) return;
+  try {
+    execFileSync('git', ['-C', VAULT, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
+    const rel = notes.map((n) => path.relative(VAULT, n.file));
+    execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { cwd: VAULT, stdio: 'ignore' });
+    const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
+    const mergedCount = notes.filter((n) => n.action === 'merged').length;
+    const msg =
+      `distill(${slug}): wrote ${writtenTitles.length} note(s)` +
+      (writtenTitles.length ? ` — ${writtenTitles.join(', ')}` : '') +
+      (mergedCount ? `; merged ${mergedCount} into existing` : '');
+    execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], { stdio: 'ignore' });
+  } catch {
+    /* git missing, vault not a repo, no identity, nothing staged — all no-op */
+  }
 }
 
 /**
@@ -940,7 +975,8 @@ export async function distill(transcript, cwd) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd);
-  const { written, merged, declined } = await writeNotes(insights, slug, cwd);
+  const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
+  autoCommit(notes, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need

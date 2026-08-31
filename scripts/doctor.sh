@@ -223,6 +223,13 @@ echo "vault"
 echo "  resolved from: $(vault_source)"
 if [ -d "$VAULT" ]; then
   ok "vault exists"
+  # #83: a vault may itself be a git repo — auto-commit only matters, and only makes sense,
+  # when this is true. Detects a checkout at any depth, not just a `.git` at $VAULT exactly.
+  if command -v git >/dev/null 2>&1 && git -C "$VAULT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    ok "vault kind: git-backed"
+  else
+    ok "vault kind: plain directory"
+  fi
   [ -w "$VAULT" ] && ok "vault writable" || fail "vault not writable" "hooks cannot write notes. Check permissions on $VAULT"
 
   # "Pointed at the WRONG vault" is the failure that matters, and an existence check

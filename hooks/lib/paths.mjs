@@ -36,6 +36,7 @@ export function configFile() {
  * @property {number} [modelIdleMs]
  * @property {number} [serveIdleMs]
  * @property {number} [logRetentionDays]
+ * @property {boolean} [gitAutoCommit]
  */
 
 /** @type {MemoryConfig|undefined} */
@@ -74,6 +75,12 @@ export function vaultSource() {
 /** Per-prompt recall is off unless explicitly armed. */
 export function recallEnabled() {
   return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;
+}
+
+/** Auto-commit is off unless explicitly armed — a hook writing git history unattended must
+ *  never be the default. */
+export function gitAutoCommitEnabled() {
+  return process.env.MEMORY_GIT_AUTO_COMMIT === '1' || config().gitAutoCommit === true;
 }
 
 // env -> config.json -> default, the order every setting resolves in. Anything unparseable or
