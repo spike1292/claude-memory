@@ -405,10 +405,10 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     fs.mkdirSync(path.join(vault, layer, slug), { recursive: true });
   fs.mkdirSync(path.join(vault, 'permanent'), { recursive: true });
 
-  // Records argv instead of indexing. `context-mode` is optional and never installed by CI.
+  // Records argv and $CONTEXT_MODE_DIR instead of indexing. context-mode is never on CI's PATH.
   fs.writeFileSync(
     path.join(bin, 'context-mode'),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\n`,
+    `#!/bin/sh\nprintf '%s\\t%s\\n' "$CONTEXT_MODE_DIR" "$*" >> ${JSON.stringify(log)}\n`,
   );
   fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
 
@@ -428,11 +428,19 @@ test('the ctx source label carries the same key as the directory it indexes', (t
       CLAUDE_MEMORY_HOME: path.join(root, 'state'),
       DISTILL_VAULT: vault,
       DISTILL_DRYRUN: '1',
+      // Neutralised, not just left unset in this object: GIT_ENV spreads the real process.env, so
+      // an ambient CLAUDE_CONFIG_DIR (plausible in a Claude Code session) would otherwise leak
+      // through and this assertion would fail on a machine setting, not the code.
+      CLAUDE_CONFIG_DIR: undefined,
     },
   });
 
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
-  const sources = calls.map((l) => l.split(' --source ')[1]);
+  const contextModeDirs = calls.map((l) => l.split('\t')[0]);
+  const sources = calls.map((l) => l.split('\t')[1].split(' --source ')[1]);
+  // Default lands under HOME/.claude/context-mode with no override in env.
+  for (const d of contextModeDirs)
+    assert.strictEqual(d, path.join(root, '.claude', 'context-mode'));
   assert.deepStrictEqual(sources.slice(0, 4), [
     `vault-insights-${slug}`,
     `vault-memory-${slug}`,
@@ -448,6 +456,54 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     );
   // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
   assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
+});
+
+test('an existing CONTEXT_MODE_DIR in the parent env is passed through, not overridden', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-override-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'mem-checkout');
+  const vault = path.join(root, 'vault');
+  const bin = path.join(root, 'bin');
+  const log = path.join(root, 'ctx.log');
+  const customDir = path.join(root, 'custom-context-mode-dir');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
+  const slug = 'github.com-spike1292-claude-memory';
+  fs.mkdirSync(path.join(vault, 'Insights', slug), { recursive: true });
+
+  fs.writeFileSync(
+    path.join(bin, 'context-mode'),
+    `#!/bin/sh\nprintf '%s\\n' "$CONTEXT_MODE_DIR" >> ${JSON.stringify(log)}\n`,
+  );
+  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
+
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  execFileSync(process.execPath, [entry, transcript, repo], {
+    stdio: 'pipe',
+    env: {
+      ...GIT_ENV,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+      CONTEXT_MODE_DIR: customDir,
+    },
+  });
+
+  const dirs = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.ok(dirs.length > 0);
+  for (const d of dirs) assert.strictEqual(d, customDir);
 });
 
 // The whole mark, end to end through the real entry: an existing note the slug arm WOULD have

@@ -11,6 +11,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`reindex()` trusted `context-mode`'s own platform auto-detection for its storage root.** The
+  hook subprocess carries none of the env vars that detection keys on, so under some harnesses it
+  guessed a different installed CLI's home dir and silently wrote the index somewhere `ctx_search`
+  never reads. `reindex()` now pins `CONTEXT_MODE_DIR` explicitly on both `execFileSync` calls:
+  respects an existing override, else `<CLAUDE_CONFIG_DIR or ~/.claude>/context-mode`. (#108)
+
 - **`/memory:install` never warmed the model, and failed outright on a clean machine.** Step 8 ran
   `node --test scripts/lib/memory-semantic.test.mjs`, a suite that covers the scoring maths and
   chunking only — its own header says the embedding pipeline lives elsewhere. It passed in ~300 ms,
