@@ -979,6 +979,10 @@ test('auto-commit stages exactly the notes written this run, in one commit, by p
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const vault = path.join(root, 'vault');
   gitVault(vault);
+  // A human-edited file the distiller never touched. `git add -A` would sweep this in too; only
+  // an exact-path add leaves it untracked — this is what actually distinguishes the two, since an
+  // otherwise-empty fresh vault can't (git add -A and git add -- <notes> stage the same set).
+  fs.writeFileSync(path.join(vault, 'human-edit.txt'), 'not written by the distiller\n');
   const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
   assert.strictEqual(notes.length, 3, 'the three canned DISTILL_DRYRUN insights');
   const commits = commitsOf(vault);
@@ -1000,6 +1004,15 @@ test('auto-commit stages exactly the notes written this run, in one commit, by p
     .split('\n')
     .sort();
   const wantPaths = [...notes].sort();
+  assert.ok(
+    !staged.includes('human-edit.txt'),
+    'a file the distiller never touched must never be staged',
+  );
+  const status = execFileSync('git', ['-C', vault, 'status', '--porcelain'], {
+    encoding: 'utf8',
+    env: GIT_ENV,
+  });
+  assert.match(status, /\?\? human-edit\.txt/, 'it stays untracked, never git add -A');
   assert.deepStrictEqual(
     staged,
     wantPaths,
