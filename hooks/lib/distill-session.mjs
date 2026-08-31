@@ -19,6 +19,7 @@
 // exists twice, and this file imports paths.mjs instead of re-deriving anything. project_key in
 // particular is a non-trivial sed over git remote URLs — there is one copy of it again.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { execFileSync } from 'node:child_process';
@@ -813,6 +814,14 @@ async function writeNotes(insights, slug, cwd) {
  */
 function reindex(cwd, slug) {
   const cm = which('context-mode');
+  // Pin the storage root explicitly rather than trust context-mode's own platform
+  // auto-detection: this hook subprocess carries none of the env vars (CLAUDE_CODE_ENTRYPOINT,
+  // PI_*, ...) that detection keys on, so under some harnesses it silently guessed a different
+  // installed CLI's home dir and wrote the index somewhere ctx_search never reads.
+  const cmEnv = {
+    ...process.env,
+    CONTEXT_MODE_DIR: process.env.CONTEXT_MODE_DIR || path.join(os.homedir(), '.claude', 'context-mode'),
+  };
   if (!cm) {
     // This CLI resolves out of an fnm/nvm multishell dir, so switching Node versions silently
     // drops it from PATH. Say what was lost precisely — the old message claimed the vault stops
@@ -853,6 +862,7 @@ function reindex(cwd, slug) {
         encoding: 'utf8',
         timeout: 120_000,
         stdio: 'pipe',
+        env: cmEnv,
       });
     } catch (e) {
       console.error(
@@ -869,6 +879,7 @@ function reindex(cwd, slug) {
         encoding: 'utf8',
         timeout: 120_000,
         stdio: 'pipe',
+        env: cmEnv,
       });
     } catch (e) {
       console.error(
