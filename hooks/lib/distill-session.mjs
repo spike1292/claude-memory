@@ -817,10 +817,13 @@ function reindex(cwd, slug) {
   // Pin the storage root explicitly rather than trust context-mode's own platform
   // auto-detection: this hook subprocess carries none of the env vars (CLAUDE_CODE_ENTRYPOINT,
   // PI_*, ...) that detection keys on, so under some harnesses it silently guessed a different
-  // installed CLI's home dir and wrote the index somewhere ctx_search never reads.
+  // installed CLI's home dir and wrote the index somewhere ctx_search never reads. The fallback
+  // mirrors Claude Code's own relocation: CLAUDE_CONFIG_DIR moves `~/.claude` (and everything a
+  // "Claude Code plugin" like context-mode treats as home under it) off the default.
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const cmEnv = {
     ...process.env,
-    CONTEXT_MODE_DIR: process.env.CONTEXT_MODE_DIR || path.join(os.homedir(), '.claude', 'context-mode'),
+    CONTEXT_MODE_DIR: process.env.CONTEXT_MODE_DIR || path.join(claudeHome, 'context-mode'),
   };
   if (!cm) {
     // This CLI resolves out of an fnm/nvm multishell dir, so switching Node versions silently
