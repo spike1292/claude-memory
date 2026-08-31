@@ -17,7 +17,7 @@ import { CARD, bm25, lexTokens } from '../../scripts/lib/lexical.mjs';
 
 export const MAX_NOTES = 4;
 export const MAX_CHARS = 900; // ~250 tokens
-// ponytail: gate is corpus-scaled, ~14 halves false fires — docs/decisions/2026-08-31-recall-gate-calibration.md
+// ponytail: gate is corpus-scaled, ~14 halves false fires — docs/decisions/2026-08-19-recall-gate-calibration.md
 export const MIN_SCORE = 6.0;
 export const MIN_PROMPT = 25; // one-word prompts have no retrievable intent
 // Cosine needs its own gate — MIN_SCORE above is BM25-scaled and means nothing here. Calibrated

@@ -1,6 +1,6 @@
 # The recall hook's BM25 gate: 6.0, not ~14
 
-**Date:** 2026-08-31 · **Status:** shipped · **Issue:** [#36](https://github.com/spike1292/claude-memory/issues/36) PR 2
+**Date:** 2026-08-19 · **Status:** shipped · **Issue:** [#36](https://github.com/spike1292/claude-memory/issues/36) PR 2
 
 ## Question
 
@@ -10,9 +10,10 @@ off-topic prompts in half?
 
 ## How it was measured
 
-`memory-synth-vault.mjs --seed 7`, re-run at 120/300/1000 notes (`--notes 100` built 120 notes
-before #49 made that flag a ceiling), scored with `cases-paraphrase.jsonl` + `cases-keyword.jsonl`
-— 80 on-topic prompts whose gold note is known by construction, authored by nobody for this sweep.
+Swept 2026-08-19 on `memory-synth-vault.mjs --seed 7`, re-run at 120/300/1000 notes (`--notes 100`
+built 120 notes before #49 made that flag a ceiling), scored with `cases-paraphrase.jsonl` +
+`cases-keyword.jsonl` — 80 on-topic prompts whose gold note is known by construction, authored by
+nobody for this sweep.
 
 The off-topic control was a separate 28-question authored set about a corpus the bench vault does
 not contain, so no bench note is a right answer and every fire on it is pure noise. It is named by

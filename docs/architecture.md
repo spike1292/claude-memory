@@ -557,7 +557,7 @@ a hook's `lib/` twin is imported above the fail-open try, so it may only reach m
 print and cannot exit — but the number alone would have decided it too. Recall's gate got its case
 set on 2026-08-19 (item 12) — and the sweep did **not** use `--mode lexical`, which scores whole
 notes rather than the `(card)` chunks the hook scores. The sweep behind `MIN_SCORE` is recorded in
-[docs/decisions/2026-08-31-recall-gate-calibration.md](decisions/2026-08-31-recall-gate-calibration.md),
+[docs/decisions/2026-08-19-recall-gate-calibration.md](decisions/2026-08-19-recall-gate-calibration.md),
 not in the code comment.
 
 The same 2026-08-19 change also moved `scripts/lib/model-default.mjs`'s import out of a caught
