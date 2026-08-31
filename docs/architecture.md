@@ -165,6 +165,18 @@ Claude Code fires SessionStart
 Every Node hook is guarded `command -v node >/dev/null 2>&1 && node ... || exit 0`. Every hook is
 best-effort: a missing dependency is a no-op, never a block.
 
+Two design choices behind the `semantic-index-refresh` hook, neither obvious from the diagram
+above:
+
+**Why a hook and not a convention.** The index used to refresh only when someone ran
+`/memory:prune`. Every convention in this system has eventually failed that way — MOC-only notes
+recurred through four audits, path drift through two — and a stale vector index is worse than
+none: it answers with notes that were merged away hours ago.
+
+**Why SessionStart and not SessionEnd.** The SessionEnd distiller writes new Insight notes
+*during* shutdown, so a SessionEnd refresh would race it. Refreshing at the start of the next
+session picks up everything the previous one wrote, whatever order it landed in.
+
 ### Flow 2 — a prompt (recall)
 
 ```
@@ -237,6 +249,12 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
                                   bge-m3's 24 layers at its 8192-token max)
     3. the two idle timers      — two costs, so two timers
 ```
+
+`--serve` exists because the model and index cost ~1.5s warm / ~3.1s cold to load, and the
+per-prompt recall hook was stuck on its own weak keyword search without it — MRR 0.158 against this
+path's 0.547 on the same case set. Holding both in a resident process turns that load into a socket
+round-trip. The process idle-exits (`serveIdleMs`) so it cannot become a daemon nobody remembers
+starting; the hook respawns it on demand.
 
 ### Flow 4 — session end (distillation)
 
@@ -538,7 +556,13 @@ warm, marginal after `paths.mjs`, 2026-08-19). The correctness reason in `B1` is
 a hook's `lib/` twin is imported above the fail-open try, so it may only reach modules that cannot
 print and cannot exit — but the number alone would have decided it too. Recall's gate got its case
 set on 2026-08-19 (item 12) — and the sweep did **not** use `--mode lexical`, which scores whole
-notes rather than the `(card)` chunks the hook scores. See the comment on `MIN_SCORE`.
+notes rather than the `(card)` chunks the hook scores. The sweep behind `MIN_SCORE` is recorded in
+[docs/decisions/2026-08-31-recall-gate-calibration.md](decisions/2026-08-31-recall-gate-calibration.md),
+not in the code comment.
+
+The same 2026-08-19 change also moved `scripts/lib/model-default.mjs`'s import out of a caught
+dynamic import (inside `memory-semantic.mjs`) into an uncatchable static one, since it is now
+reached from the same statically-imported path.
 
 **H7 — two identity schemes, adjacent. — CLOSED 2026-08-19 (item 14).** In `reindex()` the
 directory indexed was `VAULT/<layer>/<project_key>` while the source label was
@@ -636,6 +660,12 @@ misfiled: eight files reach up through `../../hooks/lib/` to import it. Moving i
 import sites, the CI globs and CLAUDE.md — **for conceptual clarity and no behaviour change.**
 Still declined after #20, which rewrote the file without moving it: that was the moment a
 relocation would have been cheapest, and it still did not pay for itself.
+
+**Making mark-writing a flag on `memory-semantic.mjs`.** `scripts/lib/memory-mark.mjs` writes
+`reconcile: manual` into a note's frontmatter, and could have been `--mark` on the tool that already
+has `--dupes`. Declined: `memory-semantic.mjs` only ever writes the *index*; a search tool that can
+edit vault notes is a search tool that one day edits notes during a `--dupes` run. Kept as its own
+script, invoked from `scripts/memory-mark.mjs`.
 
 ## The one-paragraph read
 

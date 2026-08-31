@@ -25,11 +25,8 @@
 // ranking, the formatting and the log-record shapes live in hooks/lib/memory-recall.mjs with their
 // tests — `node:sqlite` stays HERE precisely so that module can be imported by a test without one.
 //
-// That twin is imported STATICALLY, so its whole graph runs above the try AND above the arming gate
-// on every prompt of every session. It may therefore only reach modules that cannot throw and
-// cannot print: today `scripts/lib/lexical.mjs`, which imports nothing at all. It must NOT reach
-// `scripts/lib/memory-semantic.mjs` — that module's scope `console.log`s and `process.exit(1)`s on
-// an unknown model, and process.exit is not catchable by the try below even if it were inside it.
+// That twin's own import graph must not reach scripts/lib/memory-semantic.mjs — the guard and the
+// why are at hooks/lib/memory-recall.mjs:1, with docs/architecture.md B1 (~line 432) behind it.
 // Anything that can fail belongs in an `await import()` in the try, like model-default.mjs below.
 
 import fs from 'node:fs';
@@ -124,13 +121,10 @@ try {
     process.exit(0);
   }
 
-  // Resident search server: same ranking as the CLI and the eval harness (vector + keyword rank
-  // fusion), 60ms instead of the ~1540ms it costs to load model and index per prompt. That cost is
-  // why this hook was stuck on its own keyword-only search, at MRR 0.158 against the full path's
-  // 0.547. If the socket is absent or slow, spawn it for NEXT time and fall through to keyword —
-  // a prompt must never wait on it.
-  // Keyed by MODEL alone: one server holds the model and answers for every project, with the slug
-  // sent per request. It used to be per slug+model, which meant one ~1.3GB model per indexed repo.
+  // MRR 0.158 keyword-only vs 0.547 via the resident server — why this hook talks to the socket
+  // instead of staying on its own BM25 fallback.
+  // Keyed by MODEL alone, not slug+model: CLAUDE.md ~line 204 has the why and the old
+  // ~1.3GB-per-repo cost this replaced.
   const sockPath = path.join(runDir, `search-${model}.sock`);
   /** @typedef {{ results?: import('./lib/memory-recall.mjs').ServerHit[] | null } | null} ServerReply */
   /**

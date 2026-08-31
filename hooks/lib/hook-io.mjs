@@ -1,16 +1,11 @@
 // Shared plumbing for the hooks that are GATES: read a JSON payload on stdin, decide cheaply,
-// then detach the real work and exit.
-//
-// This module exists because three hooks were three bash scripts that had each grown their own
-// copy of the same four things — stdin parsing, a timestamp debounce marker, locating the `claude`
-// CLI, and detaching a child. The copies had already drifted: graph-staleness-check.sh probed a
-// list of candidate `claude` paths in shell while distill-session.mjs probed its own in Node, and
-// nothing kept the two in step. No count here on purpose — the list grew on 2026-08-21 and a
-// number written into prose is the next thing to drift.
+// then detach the real work and exit. Exists because three hooks had each grown their own copy
+// of stdin parsing, a debounce marker, findClaude() and detach() — see the "Duplication" bullet
+// in docs/decisions/2026-08-18-node-hooks.md.
 //
 // Everything here is either pure (and tested) or a three-line wrapper over one node: API. The
-// split is deliberate: the decisions are pure functions the tests can drive with plain values, and
-// the I/O is thin enough to read at a glance.
+// split is deliberate: the decisions are pure functions the tests can drive with plain values,
+// and the I/O is thin enough to read at a glance.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,13 +155,9 @@ export function nowSeconds(d = Date.now()) {
   return Math.floor(d / 1000);
 }
 
-// Exported since 2026-08-19: distill-session.mjs's reindex() called a bare `which` with no import —
-// a ReferenceError that aborted every distillation run right after the notes were written, so
-// ctx_search never got refreshed and the child exited non-zero. Nothing noticed because the hook
-// detaches and its stderr goes to distill.log. It was introduced by #20 (ee6c49a, 2026-08-18),
-// which deleted distill-session.mjs's own local copy of `which` without adding an import, and it
-// never shipped: v0.3.1 still defines the local copy (`hooks/lib/distill-session.mjs:299` in that
-// tag), and no release followed it. Unreleased `main` only — not a user-facing regression.
+// Exported since 2026-08-19 — kept here, not copied locally, after a local copy in
+// distill-session.mjs silently broke distillation (ReferenceError, caught before any release
+// shipped it). Full incident: CHANGELOG.md's 0.4.0 entry ("reindex() called a bare `which`").
 /**
  * @param {string} cmd
  * @returns {string|null}
@@ -408,12 +399,10 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
   }
 }
 
-// The only unbounded appends in the system: semantic-index.log, distill.log and graphgen.log grew
-// forever, and nothing anywhere truncated them (2026-08-18). There are two doors into those files —
-// `logBanner()` writes the banner for semantic-index.log, `openLog()` hands the other two straight
-// to a detached child — so both call trimLog and neither alone is enough. 1 MB is roughly a year of
-// banners plus child output at this repo's rates; keeping 256 KB leaves the last few dozen runs,
-// which is all anyone reads a hook log for.
+// The only unbounded appends in the system: semantic-index.log, distill.log and graphgen.log —
+// numbers and retention policy in CLAUDE.md's logging section. Two doors write to them —
+// `logBanner()` for semantic-index.log, `openLog()` handing the other two straight to a detached
+// child — so both call trimLog() below; neither alone is enough.
 const LOG_MAX_BYTES = 1024 * 1024;
 const LOG_KEEP_BYTES = 256 * 1024;
 
@@ -484,47 +473,15 @@ export function logBanner(file, label, iso) {
   }
 }
 
-// ---------------------------------------------------------------- structured logs
+// One JSONL appender, two families — shape, retention and error-swallowing contract are in
+// CLAUDE.md's logging section. The `logHook()` cost sweep (adding this call, six hooks, before
+// and after medians) is in docs/decisions/2026-08-20-hook-startup-cost.md.
 //
-// One appender, one shape, two families: `recall-<date>.jsonl` (what recall decided) and
-// `hooks-<date>.jsonl` (what every hook did). Recall's copy was inline in its entry and was the
-// only structured log in the system; this is that copy, moved, and the reason the second family
-// costs eight lines instead of eighty.
-//
-// Dated filenames ARE the rotation. A size cap would be the second mechanism for the same job, and
-// the recall logs have settled the question already: a day is the unit anyone reads these in.
-// Retention is therefore also counted in days, by `pruneDatedLogs()` below, and runs from here on
-// the first append of a new day — the whole `logs/` policy is those two mechanisms and no third.
-//
-// Nothing here is allowed to throw, and nothing here is allowed to be slow — every call sits on a
-// path that must exit in milliseconds, and one of them is per-prompt.
-//
-// It is not free, and the number comes from `node scripts/bench-hooks.mjs -n 40 --notes 50` run
-// before and after, not from a hand-timed loop — synthetic vault, local disk, macOS, 2026-08-20.
-// Medians, ms: insights-surface 41.3 -> 42.8, memory-link-lint 41.9 -> 45.5,
-// semantic-index-refresh 36.1 -> 39.7, graph-staleness-check 36.7 -> 40.3, validate-note
-// 41.1 -> 43.0, distill-session gate 36.9 -> 38.7. So **+1.5 to +3.6 ms per hook**, against a 31.5
-// ms bare-node floor.
-//
-// Two of those rows are the design being confirmed rather than measured. `memory-recall (inert)`
-// moved 36.7 -> 35.7 — no line is written at all when recall is disarmed, which is the whole point
-// of logging below the arming gate rather than above it. And `memory-recall (armed)` is flat at
-// the median (70.3 vs 73.2 over 30 runs of that row alone) even though it now writes TWO lines,
-// because it had already resolved `projectKey` and paid one append.
-//
-// The write is the cost in the ordinary case: `stateDir()`'s mkdir is 0.015 ms and `projectKey()`
-// on an already-resolved cwd is 0.0002 ms.
-//
-// The exception is worth knowing, because it is NOT once per repo. `projectKey()` refuses to cache
-// a checkout whose `.git` is a FILE — a worktree or a submodule — since it cannot cheaply validate
-// the stamp (paths.mjs: `stamp = null // do not cache`). The in-process Map dies with the hook, so
-// in those checkouts every call forks git: measured 14.6 ms in a worktree of this repo, 2026-08-21,
-// on EVERY Write/Edit through validate-note, which never resolved a key before this change. The
-// bench numbers above were taken in an ordinary clone and do not include it.
-//
-// ponytail: left uncached. Fixing it means resolving the `.git` file to the real config path and
-// stamping THAT, which is a change to project identity — the one thing in this repo that must not
-// wobble — and belongs in its own commit with its own test.
+// ponytail: `projectKey()` is left uncached for a checkout whose `.git` is a FILE (worktree or
+// submodule) — measured 14.6 ms per call in a worktree of this repo, 2026-08-21, on every
+// Write/Edit through validate-note. Fixing it means resolving the `.git` file to the real config
+// path and stamping THAT, a change to project identity that belongs in its own commit with its
+// own test.
 
 /**
  * Append one record to a daily-dated log family under `$CLAUDE_MEMORY_HOME/logs/`.
@@ -554,25 +511,13 @@ export function appendJsonl(family, cwd, record) {
     }
     const dir = stateDir('logs');
     const file = path.join(dir, `${family}-${t.slice(0, 10)}.jsonl`);
-    // ONE ATOMIC CLAIM PER DAY, not a stamp anyone can read as stale.
+    // ONE ATOMIC CLAIM PER DAY, not a stamp anyone can read as stale. `wx` create-if-absent
+    // semantics and the fail-closed reasoning are in CLAUDE.md's retention section; the sweep of
+    // the two weaker guards it replaced (a herd measured both ways) is
+    // docs/decisions/2026-08-21-log-retention-day-claim.md.
     //
-    // Three guards were tried here and the first two each had a herd. `!existsSync(today's file)`
-    // is check-then-act across PROCESSES — logs/ is machine-wide, five SessionStart hooks fire at
-    // once, and each family has its own file: measured 2026-08-21, NINE of nine concurrent hooks
-    // each ran a full pass. A read-then-write date stamp took the median to one but left a window
-    // (up to eight of nine in 15 trials) and, worse, INVERTED when the stamp could not be written:
-    // read never returned today, so every append pruned — 20 of 20, 146 ms each, forever.
-    //
-    // Measured after the change, 15 trials of nine concurrent hooks over a 300-file backlog:
-    // EXACTLY ONE pass every trial, and zero passes when logs/ is read-only.
-    //
-    // `wx` has neither failure. The create either succeeds for exactly one process or throws
-    // EEXIST, and a claim that cannot be created at all (read-only logs/, EACCES) means we do not
-    // prune — which is right, because the unlinks would fail for the same reason. Fail-closed here
-    // is a directory that keeps growing; fail-open was a full readdir on every prompt.
-    //
-    // The claim is taken BEFORE the pass, so a process killed mid-pass leaves the rest of the
-    // backlog until tomorrow. Bounded, and the alternative is a lock this path must not wait on.
+    // Claim taken BEFORE the pass: a process killed mid-pass leaves the rest of the backlog
+    // until tomorrow — bounded, and the alternative is a lock this path must not wait on.
     const day = t.slice(0, 10);
     /** @type {number | undefined} */
     let pruned;
@@ -714,12 +659,10 @@ export function pruneDatedLogs(now = new Date()) {
  * @param {HookLogInput} input
  */
 export function logHook({ hook, event = '', cwd, session, outcome, reason, extra }) {
-  // The heavy hooks spawn a headless `claude`, which fires SessionStart and so runs FOUR of these
-  // hooks again, plus validate-note per write it makes. Their `*_CHILD` guards suppress only their
-  // own hook, so without this flag a distillation's four extra lines are indistinguishable from a
-  // user session's — inflating counts and skewing percentiles with a run whose vault state and
-  // cache warmth are nothing like a real session's. Marked rather than suppressed: what a hook
-  // costs inside a background run is a real number, it is just not the same number.
+  // The heavy hooks spawn a headless `claude`, which fires SessionStart and runs FOUR of these
+  // hooks again (their `*_CHILD` guards suppress only their OWN hook). Marked rather than
+  // suppressed: what a hook costs inside a background run is a real number, just not the same
+  // number as a user session's.
   const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
   appendJsonl('hooks', cwd, {
     // `extra` FIRST, so the named fields below always win. Spread last, a caller could overwrite

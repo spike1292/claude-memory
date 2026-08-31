@@ -1,13 +1,7 @@
 // Archive session logs older than N days into <logs-dir>/Archive/. Ported from prune-logs.sh
-// on 2026-08-19 (backlog #9): a per-file loop with per-file date parsing, which is what the
-// fork-count rule sends to Node — and the shell version's date arm was unportable, `date -j -f`
-// on this machine and `date -d` on CI, so the branch CI could run was never the branch that ran.
-//
-// Three rules the shell version established and this one keeps:
-//   * DATES COME FROM THE FILENAME (`YYYY-MM-DD-*.md`), NEVER mtime — Synology sync rewrites
-//     mtime without touching a byte, so mtime would archive notes that were never old.
-//   * MOVE ONLY. Nothing here unlinks anything; an archive is reversible with `mv` back.
-//   * A name that is not a real date is skipped, not guessed at.
+// on 2026-08-19 (backlog #9) — port rationale (unportable shell date arm, three deliberate
+// differences from the shell version) and the five review-found defects fixed in it are in
+// CHANGELOG.md's 0.4.0 entry.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -39,12 +33,9 @@ export function logDate(basename) {
     : null;
 }
 
-// The YEAR is padded too, not just month and day. Every comparison in here is a LEXICAL
-// compare of `YYYY-MM-DD` strings, which is only chronological while the years are the same
-// width: `days = 375000` puts the cutoff in year 999, and unpadded `999-12-01` loses
-// `'2026-…' >= cutoff` for every real date ('2' < '9'), so asking to keep a millennium of
-// logs archived the whole directory while printing a success line — the same shape as the
-// 'NaN-NaN-NaN' defect below, surviving both of its guards (measured 2026-08-19).
+// The YEAR is padded too: an unpadded cutoff loses the lexical YYYY-MM-DD compare past a
+// three-digit year and archives everything while printing success — the NaN-NaN-NaN defect
+// (below) in another disguise. CHANGELOG.md's 0.4.0 entry has the number that triggers it.
 /** @type {(dt: Date) => string} */
 const iso = (dt) =>
   `${String(dt.getFullYear()).padStart(4, '0')}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
@@ -82,13 +73,9 @@ export function parseDays(raw) {
  * @returns {string}
  */
 export function cutoffDate(now, days) {
-  // Validated HERE, not only in the entry, because the cutoff is what decides deletion-shaped
-  // behaviour and every caller goes through it. Measured 2026-08-19: `days = 1e9` makes an
-  // Invalid Date, `iso()` then returns the string 'NaN-NaN-NaN', and the keep-test
-  // `date >= cutoff` is false for every real date because '2' (0x32) < 'N' (0x4E) — so asking to
-  // keep MORE logs archived the whole directory, today's and future-dated files included. A
-  // negative `days` put the cutoff in the future for the same effect. Both throw now, and both
-  // throw before the loop moves anything.
+  // Validated HERE, not only in the entry: the cutoff decides deletion-shaped behaviour and
+  // every caller goes through it. The NaN-NaN-NaN defect this guards against — an oversized
+  // `days` widening the keep-window instead of narrowing it — is in CHANGELOG.md's 0.4.0 entry.
   if (!Number.isInteger(days) || days < 0)
     throw new RangeError(`days must be a non-negative whole number of days, got: ${days}`);
   const c = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);

@@ -268,9 +268,11 @@ ceiling on them: `--hooks=60` reads only what 30 days kept. It DELETES where the
 a policy that waits for a human to run a command is not one. `logs/.retention-<day>` is created
 create-if-absent, so exactly one process per machine per day runs the pass and the rest pay one
 failed `open`; a claim that cannot be created means no pass, which is right, because those unlinks
-would fail too. **Two weaker guards each caused a herd and the numbers are in `hook-io.mjs`** — do
-not replace this one without reading them. **The cutoff is UTC**, from the same `toISOString()` that
-names the files; the vault pruner's `cutoffDate()` is local by design and deleted a live log here.
+would fail too. Two weaker guards were tried first and each caused a herd; the numbers are in
+[docs/decisions/2026-08-21-log-retention-day-claim.md](docs/decisions/2026-08-21-log-retention-day-claim.md)
+— do not replace this guard without reading them. **The cutoff is UTC**, from the same
+`toISOString()` that names the files; the vault pruner's `cutoffDate()` is local by design and
+deleted a live log here.
 
 **A pass that deleted anything reports it**: `pruned: n` after the caller's own fields, omitted when
 it deleted nothing, summed by `/memory:doctor --hooks`. **That sum is the one figure in that report

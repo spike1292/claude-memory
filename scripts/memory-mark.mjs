@@ -4,9 +4,8 @@
 //   node scripts/memory-mark.mjs <note-name-or-path> [...]
 //   node scripts/memory-mark.mjs --unmark <note-name-or-path> [...]
 //
-// A script rather than instructions in /memory:prune, because "the agent will remember to add the
-// field" is what produced four unmarked keeps on 2026-08-22 — the same shape as the bug this whole
-// change is about. One flag cannot half-apply.
+// A script rather than instructions in /memory:prune — CLAUDE.md's Retrieval section (the
+// `reconcile: manual` bullet) has why: the instruction version produced four unmarked keeps.
 //
 // Entry only: argv, stdout, exit code. The logic and its tests live in lib/memory-mark.mjs.
 import * as paths from '../hooks/lib/paths.mjs';

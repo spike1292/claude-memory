@@ -1,13 +1,8 @@
 // One resolved environment, rendered as shell assignments — the logic half.
 // The CLI entry is scripts/env.mjs.
 //
-// Until 2026-08-18 vault-env.sh and paths.mjs were two implementations of the same resolution
-// rules, kept in step by a comment ("change one, check the other") and by paths.mjs forking bash so
-// that at least project_key had a single implementation. That fork was the expensive half of the
-// bargain and the duplication was the rest of it.
-//
-// Now Node resolves, and shell asks. One `node` call answers everything a shell caller needs, so
-// the remaining two shell files pay one fork instead of a source plus several.
+// Single implementation since 2026-08-18 (previously two implementations kept in step by hand,
+// with paths.mjs forking bash for project_key) — docs/decisions/2026-08-18-single-resolver.md.
 
 import {
   vault,

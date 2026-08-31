@@ -1,32 +1,18 @@
 // The lexical vocabulary shared by the search CLI and the UserPromptSubmit recall hook: the card
 // sentinel, the stopword list, the tokeniser and BM25. Nothing else.
 //
-// WHY IT IS ITS OWN FILE, and not just four exports in memory-semantic.mjs where it grew up.
-// hooks/lib/memory-recall.mjs needs exactly these four, and it is imported STATICALLY by
-// hooks/memory-recall.mjs — above the fail-open try, above the `recallEnabled()` gate. Anything
-// reachable from there runs on EVERY prompt of EVERY session, armed or not, with no way to catch
-// what it does. memory-semantic.mjs is not safe to put there: its module scope resolves the active
-// model and, on an unknown one, does `console.log(...)` + `process.exit(1)`. For the CLI that is a
-// correct error message; on the prompt path it is a junk line on STDOUT that Claude Code injects as
-// context (hooks.json's trailing `|| exit 0` turns the exit 1 into an exit 0 and keeps the line),
-// on every prompt, including installs that never armed recall. Measured 2026-08-19 with
-// `{"model":"bge-m4"}`: exit 1 + that line, vs exit 0 and zero bytes before. It also dragged
-// model-default.mjs from a caught dynamic import into an uncatchable static one.
+// Split out from memory-semantic.mjs so hooks/memory-recall.mjs can import it STATICALLY, above its
+// fail-open try — memory-semantic.mjs's module scope does console.log() + process.exit(1) on an
+// unknown model, which would crash every prompt's recall hook. Design story and the module-init
+// cost measurement (2026-08-19): docs/architecture.md, section B1.
 //
-// THIS FILE IMPORTS NOTHING — not even a node builtin — and evaluates four declarations. That is
-// the property that makes it safe above the try, and the property to preserve: an import added here
-// is an import added to the prompt path. It is also 0.26-0.42 ms of module init against the
-// 3.8-4.4 ms memory-semantic.mjs costs (8 runs each, warm, marginal after paths.mjs, 2026-08-19).
+// THIS FILE IMPORTS NOTHING — not even a node builtin. Keep it that way: an import added here runs
+// on every prompt, armed or not.
 //
-// memory-semantic.mjs re-exports all four, so every existing consumer and test is unchanged and
-// there is still exactly ONE implementation of each.
+// memory-semantic.mjs re-exports all four, so existing consumers and tests are unchanged.
 
-// The card chunk's heading is a WIRE value, not a label: it is written into the index and matched
-// back out by SQL in scripts/memory-semantic.mjs and hooks/memory-recall.mjs. Renaming it used to
-// be silent in the worst way (R4 in docs/architecture.md) — recall's keyword arm SELECTs 0 rows,
-// `avgdl` is NaN, every score is NaN, and the hook abstains, which is its NORMAL behaviour. Made a
-// constant 2026-08-19 so producer and consumers cannot drift; every consumer binds it as a SQL
-// parameter, recall included since its SELECT moved behind hooks/lib/memory-recall.mjs.
+// The card chunk's heading (`CARD`) is a WIRE value, not a label — every reader binds it as a SQL
+// parameter so a rename cannot go silent again. Full failure mode: R4 in docs/architecture.md.
 export const CARD = '(card)';
 
 export const STOP = new Set(

@@ -253,12 +253,10 @@ export function check(cwd, opts) {
     return { line: systemMessage(NUDGE_MESSAGE), outcome: 'error', reason: 'spawn failed' };
   }
   writeMarker(p.marker, p.now);
-  // The handover is the one write whose failure is WORSE than not locking at all: the file would
-  // keep this process's pid, this process exits a line later, and the next session would then see
-  // a dead owner and start a second re-index while the child is still indexing. Nothing better can
-  // be done about it here — a filesystem that refused this write will refuse the next one too — so
-  // it is made loud instead of silent. This repo's own list of past defects has "silent fail-open
-  // from missing logging" on it.
+  // The handover write is the one failure worse than not locking at all: a failed write leaves
+  // the file holding THIS process's pid after it exits, so the next session sees a dead owner
+  // and starts a second re-index. Nothing better can be done here — a filesystem that refuses
+  // this write will refuse the retry too — so it is logged loudly instead of left silent.
   if (!writeLock(p.lock, pid, p.now))
     logBanner(
       p.logFile,

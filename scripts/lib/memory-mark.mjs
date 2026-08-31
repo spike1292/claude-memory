@@ -1,9 +1,8 @@
 // Marking a note as manually adjudicated: `reconcile: manual` in its frontmatter, meaning the
 // distiller must never auto-fold a later restatement into it.
 //
-// Logic half; the CLI entry is scripts/memory-mark.mjs. It writes to the VAULT, which is why it is
-// not a flag on memory-semantic.mjs: that one only ever writes the index, and a search tool that
-// can edit notes is a search tool that one day edits notes during a --dupes run.
+// Logic half; the CLI entry is scripts/memory-mark.mjs. Not a flag on memory-semantic.mjs on
+// purpose — docs/architecture.md, "Declined, and kept declined".
 //
 // Tests: node --test scripts/lib/memory-mark.test.mjs
 import fs from 'node:fs';

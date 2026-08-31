@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-// SessionStart entry: surface recent L3 Mistakes titles so past errors actually reach context.
-// The vault Insights layer is write-heavy but not auto-loaded (unlike MEMORY.md); this closes the
-// gap. Titles only — cheap; full lessons stay in the vault / via /memory:health.
+// SessionStart entry: surface recent L3 Mistakes titles so past errors actually reach context —
+// titles only; full lessons stay in the vault / via /memory:health.
 //
-// Thin on purpose: stdin, cwd, stdout. All logic and every test live in lib/insights-surface.mjs,
-// which imports cleanly and needs no subprocess to exercise. hooks.json points here, so this path
-// is a contract — keep it.
+// Thin on purpose: stdin, cwd, stdout only — see docs/architecture.md's "Entry files are thin
+// wrappers over lib/" invariant (and G1, where the pattern breaks elsewhere).
 import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
 import { surface } from './lib/insights-surface.mjs';
 

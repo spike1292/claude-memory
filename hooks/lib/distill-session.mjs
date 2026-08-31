@@ -9,15 +9,10 @@
 // Dry run (no LLM call, canned insights):
 //   DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd>
 //
-// Ported from distill-session.py on 2026-08-16. Python was the last non-node runtime here and
-// bought nothing: node >= 22.5 is already a hard requirement for node:sqlite, while python3 was
-// whatever the machine happened to ship — macOS ships 3.9, which could not even parse this file's
-// `str | None` annotations, so distillation was silently dead on a stock Mac.
-//
-// The port also DELETES a mirror rather than moving one. vault/config/project-key resolution
-// existed three times (vault-env.sh, paths.mjs, and this file's own re-implementation); it now
-// exists twice, and this file imports paths.mjs instead of re-deriving anything. project_key in
-// particular is a non-trivial sed over git remote URLs — there is one copy of it again.
+// Ported from distill-session.py on 2026-08-16: macOS ships Python 3.9, which could not parse
+// this file's `str | None` annotations, so distillation was silently dead on a stock Mac. Why
+// Python was removed entirely: CLAUDE.md "no Python", docs/decisions/2026-08-17-bun.md. Imports
+// paths.mjs for project-key resolution rather than re-deriving it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -496,21 +491,10 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
     const salvaged = readAttempt(out, true);
     if (Object.keys(salvaged).length) return salvaged;
 
-    // Then, once, WITHOUT the flag — but ONLY when the first attempt produced no envelope. An
-    // envelope is proof the CLI understands the flag, so a failure that printed one is a rate
-    // limit or an overload, not an unsupported argument, and retrying it makes a SECOND billed
-    // call whose cost this code cannot record. Measured on a stub: two CLI invocations, one extract
-    // line. That falsifies the very section the cost is reported in, and it does so on exactly the
-    // failing runs the section exists to surface.
-    //
-    // What remains is the case the retry is for: a CLI old enough not to know `--output-format`,
-    // which exits on the unknown argument before doing any work — and without the retry, adding
-    // the flag would silently end distillation there, notes gone and the hook still exiting 0.
-    // A PARSED envelope is the strongest proof. `total_cost_usd` anywhere in what it printed is the
-    // weaker one, and it is the one that matters: a truncated envelope, or an envelope written to
-    // stderr, does not parse — and retrying those made a second billed call recording nothing.
-    // Reproduced with stubs: two invocations, no cost line. An unknown-argument rejection prints
-    // neither.
+    // Retry gate: refires WITHOUT --output-format only when the first attempt produced neither a
+    // parsed envelope nor `total_cost_usd` anywhere in stdout/stderr — either one proves the CLI
+    // understood the flag, so retrying it would silently double-bill an already-billed call.
+    // Rationale + stub reproductions: docs/architecture.md "Known hacks".
     const billed =
       envelope || /total_cost_usd/.test(out) || /total_cost_usd/.test(String(err.stderr ?? ''));
     if (billed) return {};
@@ -665,11 +649,8 @@ async function writeNotes(insights, slug, cwd) {
   const notes = [];
 
   const ask = dupeClient(cwd, slug);
-  // Notes written EARLIER IN THIS RUN. The index is rebuilt after the distillation, so the server
-  // cannot see them, and two insights restating one lesson were being written as two notes every
-  // time — observed twice on 2026-08-22, where a reconcile fired against an existing note AND a
-  // fresh note was written for the same event. Their vectors come back in the dupe reply, so this
-  // costs no extra embedding.
+  // Notes written earlier in THIS run are invisible to the (stale) index — closes the same-run
+  // dupe gap; see docs/decisions/2026-08-23-embedding-reconcile.md "Same-run comparison".
   /** @type {{ note: string, layer: string, vec: number[], file: string }[]} */
   const thisRun = [];
   /** @type {any} */
@@ -896,25 +877,10 @@ function reindex(cwd, slug) {
     refreshOwnIndex(cwd);
     return;
   }
-  // The source label carries the SAME identity as the directory indexed on the next line: both are
-  // `slug`. Until 2026-08-19 the label used `path.basename(cwd)` while the directory used `slug` —
-  // two identity schemes on adjacent lines, so a checkout in `~/work/mem` of the repo keyed
-  // `github.com-spike1292-claude-memory` indexed that project's notes under the source
-  // `vault-memory-mem`.
-  //
-  // What that actually cost is narrower than it looks, and the narrower version is the reason:
-  // context-mode partitions its content DB by checkout path (`--project cwd` → its own
-  // `<hash>.db`), so two checkouts of one repo never shared an index and the old scheme could not
-  // write duplicate rows over the same notes on its own. The harm was that the label did not name
-  // the thing it indexed. Retrieval guidance has to tell Claude which source to scope to; with the
-  // label derived from the checkout directory, that string differed per machine and per clone
-  // while the notes it pointed at were one shared vault folder, and a human re-indexing by hand
-  // (as /memory:prune does) had to reconstruct a name nothing else in the system uses. Now the
-  // label is derivable from the note path, because it IS the note path's key.
-  //
-  // The property to preserve is "label == indexed directory", NOT "label == projectKey(cwd)":
-  // `slug` falls back to `legacyKey` above when the vault has not been migrated yet, and legacyKey
-  // is a raw cwd slug that can carry uppercase. Keep deriving both from the same `slug`.
+  // INVARIANT: label and indexed directory must derive from the same `slug` (label == indexed
+  // directory, NOT label == projectKey(cwd)) — `slug` falls back to `legacyKey` when the vault has
+  // not been migrated yet, and legacyKey is a raw cwd slug that can carry uppercase. Regressed
+  // once when the label used path.basename(cwd) instead: docs/architecture.md Known hacks H7.
   for (const layer of ['Insights', 'Memory', 'Logs', 'Graph']) {
     const label = `vault-${layer.toLowerCase()}-${slug}`;
     const d = path.join(VAULT, layer, slug);

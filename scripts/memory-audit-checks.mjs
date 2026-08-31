@@ -226,10 +226,9 @@ if (abbreviated.length)
   );
 
 // ---------------------------------------------------------------- supersession candidates
-// A standing negative ("has never served traffic", "not yet added") is what a later event note
-// silently reverses — see REFLECTIONS 2026-08-14, where the prod cutover killed exactly such a
-// claim in two notes and nothing pointed at it. No lint can know which event kills which claim;
-// this only narrows where to look.
+// Standing-negative claims — what/why: skills/protocol/SKILL.md "Writing down an event? Name
+// what it kills." Evidence it's real, not theoretical: REFLECTIONS 2026-08-14, the prod cutover
+// killed exactly such a claim in two notes and nothing had pointed at it.
 /** @type {string[]} */
 const timeBombs = [];
 for (const n of memNames) {

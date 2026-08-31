@@ -153,23 +153,15 @@ const modelChanged = hasChunks && storedModel !== MODEL;
 // instead of re-embedding it. So there is deliberately no refusal for a missing hash and no forced
 // rebuild (2026-08-19).
 //
-// The version that did force one was wrong in a way nothing would have reported. Rows here are
-// written outside any transaction, and semantic-index-refresh launches --index detached with its
-// stdio in a log — so a 20-40 min bge-m3 rebuild interrupted by a sleep, a reboot or a quit leaves
-// an index that is PARTIAL yet indistinguishable from a current one: schema present, meta.model
-// matching, COUNT(*) > 0. Recall would rank over a fraction of the vault and return confident,
-// plausible, incomplete answers, which is precisely the failure the model-change guard exists to
-// prevent — and it would have fired unattended on 100% of existing installs. That risk still
-// belongs to an explicit --rebuild, where a user asked for it and is watching; it must not be
-// something the plugin opens by itself.
+// A forced rebuild instead would fire unattended on every existing install — semantic-index-refresh
+// launches --index detached with rows written outside a transaction, so an interrupted rebuild
+// leaves a PARTIAL index indistinguishable from a current one. See
+// docs/decisions/2026-08-19-hash-column-migration.md.
 
-// Release the onnxruntime session and let the process keep running. `pipeline.dispose()` calls
-// `InferenceSession.release()` on each session, which is what actually returns the native memory —
-// dropping the JS reference alone would not, since the allocation lives on the native side.
-//
-// This is the difference between a 1.4GB idle process and a ~150MB one. The socket, the loaded
-// indexes and the tokenised BM25 documents all survive, so a question after an unload costs a model
-// load (~1.5s) rather than a cold start, and one the keyword arm answers costs nothing.
+// `pipeline.dispose()` -> `InferenceSession.release()` returns the onnxruntime session's native
+// memory; dropping the JS reference alone would not. Socket, indexes and BM25 tokens survive an
+// unload — see CLAUDE.md ("modelIdleMs"/"serveIdleMs") and docs/architecture.md "Flow 3 — the
+// search daemon" for the measured numbers (~1.4GB idle vs ~150MB unloaded).
 async function unloadEmbedder() {
   // take() returns null while a request is mid-inference; the next idle tick retries.
   const e = embedderCell.take(); // out of the cell FIRST: a request arriving mid-dispose must
@@ -190,13 +182,10 @@ async function loadEmbedder() {
   paths.useModelCache(transformers);
   return transformers.pipeline('feature-extraction', MODEL, {
     dtype: 'q8',
-    // Do not let onnxruntime pool freed arena blocks. Its BFCArena grows to the largest shapes it
-    // has ever seen and never returns them, which is how a single long query left a resident
-    // server holding 8.8G of dirty MALLOC_LARGE (2026-08-17). The clamp below bounds the input;
-    // this bounds the ALLOCATOR, so a future model, a larger MAX_CHARS or an --index run over
-    // long notes cannot reintroduce the same failure by a different route.
-    // Costs per-inference allocation instead of pooled reuse — measured worth it, see the
-    // arena numbers in CHANGELOG.
+    // onnxruntime's BFCArena grows to the largest shapes it has seen and never returns them — the
+    // only bound that survives an input the clamp below fails to anticipate; see CLAUDE.md
+    // (enableCpuMemArena) and docs/architecture.md "THREE memory bounds". A single long query left a
+    // resident server holding 8.8G of dirty MALLOC_LARGE (2026-08-17); arena numbers in CHANGELOG.
     session_options: { enableCpuMemArena: false },
   });
 }
@@ -223,24 +212,11 @@ async function embed(texts) {
     // session (one question). With batch 1 the padding is gone and both sides agree by construction.
     const B = PROFILE.batch ?? 1; // 1 = no padding. See --check-embedding; every model tested fails at >1.
     // Clamp HERE for the same reason the batch is pinned here: both sides must embed identically.
-    // chunkNote() caps documents at MAX_CHARS (1800 for bge-m3), but a QUERY was capped only by the
-    // model itself — the pipeline passes truncation:true, so bge-m3's tokenizer cut at its
-    // model_max_length of 8192 TOKENS. That is a cap, not a runaway, and it is still ~18x the token
-    // count of anything in the index: the recall hook embeds the user's whole prompt verbatim, and a
-    // pasted stack trace went in at 57k chars. So a query was also being compared against a length
-    // the index never contains.
-    //
-    // 8192 is where the memory went. Attention materialises heads x seq^2 scores per layer, and at
-    // seq 8192 that is 16 * 8192^2 * 4B = ~4.3G for ONE of 24 layers. onnxruntime's arena then kept
-    // whatever high-water mark it reached for the life of the process. Measured 2026-08-17 on a
-    // 16GB machine: two resident servers holding 8.8G of dirty MALLOC_LARGE each, ~7.4G of it
-    // compressed; killing them returned it. 1800 chars is ~450 tokens, an 18x cut in seq and ~330x
-    // in seq^2, and a server that has only seen such inputs stays ~450M.
-    //
-    // This clamp bounds what is ASKED FOR. The allocator is bounded separately and no longer
-    // "still unbounded" as this comment said before enableCpuMemArena: false landed in
-    // loadEmbedder() — the two are deliberate belt and braces, because only the allocator bound
-    // survives an input this clamp fails to anticipate.
+    // Queries were capped only by bge-m3's own 8192-token limit — ~18x the index's per-chunk cap —
+    // which is the source of the 8.8G MALLOC_LARGE arena growth (2026-08-17). This clamp bounds what
+    // is ASKED FOR; `enableCpuMemArena: false` in loadEmbedder() bounds the allocator — belt and
+    // braces, since only the allocator bound survives an input this clamp fails to anticipate. Full
+    // sweep: CLAUDE.md ("embed() clamps to MAX_CHARS") and docs/architecture.md "THREE memory bounds".
     const clamped = texts.map((t) => (t.length > MAX_CHARS ? t.slice(0, MAX_CHARS) : t));
     const vecs = [];
     for (let i = 0; i < clamped.length; i += B) {
@@ -356,12 +332,10 @@ if (flag('--check-embedding')) {
 
 if (flag('--index')) {
   const indexDb = /** @type {DatabaseSync} */ (db);
-  // The hook log's WORKER line, and only when the SessionStart gate started THIS run.
-  // MEMORY_INDEX_HOOK is set by that gate alone: a manual `/memory:prune` is not a hook, and the
-  // re-index the distiller runs at the end of every distillation is a different hook's work that
-  // would otherwise inherit the session id and be filed under this one. The gate exits in
-  // milliseconds, so without this the re-index — the part that takes real time — is timed by
-  // nothing. `process.on('exit')` rather than a call at the end, so a throw is recorded too.
+  // The hook log's WORKER line, written only when the SessionStart gate started THIS run — see
+  // CLAUDE.md ("The indexer's line is guarded by MEMORY_INDEX_HOOK, not by the session id") for why
+  // a manual `/memory:prune` and the distiller's own end-of-distillation re-index must not be filed
+  // under this one.
   //
   // Registered ABOVE the lock, because the lock has its own `process.exit(0)`: below it, a run
   // that stood down for a lock held elsewhere wrote no worker line at all, and a gate line saying
@@ -624,15 +598,9 @@ if (flag('--clusters')) {
       const s = cosine(c, p.vec);
       if (s > best.s) best = { note: p.note, s };
     }
-    // Absolute thresholds are meaningless here: E5 puts every pair in a narrow high band, so the
-    // nearest permanent/ note scores ~0.91 against topics it has nothing to do with. Calibrate
-    // against the cluster itself instead — a note that genuinely covers this topic should sit as
-    // close to the centroid as a typical MEMBER does. Self-scaling, and model-independent.
-    // Bar = the 25th percentile of member distances, NOT the median. Requiring a synthesis note to
-    // be more central than half the cluster is arbitrary — half the members fail that test by
-    // definition. Measured: a hand-written synthesis of a 22-note cluster landed at 0.945 against a
-    // 0.947 median and was reported as a gap, which is the test being wrong, not the note.
-    // "As close as a typical member" is the real question.
+    // Bar = 25th percentile of member distances, not the median or an absolute threshold — a
+    // synthesis note only needs to be as central as a typical member. See
+    // docs/decisions/2026-08-31-consolidation-gap-percentile.md for the calibration.
     const memberSims = g.map((x) => cosine(c, x.vec)).sort((a, b) => a - b);
     const typical = memberSims[Math.floor(memberSims.length * 0.25)];
     if (best.s >= typical) continue; // a permanent/ note sits inside the topic's own spread
@@ -708,21 +676,18 @@ if (flag('--dupes')) {
 
 // ---------------------------------------------------------------- dedup eval
 
-// The acceptance check for the write-time reconcile, and the reason it exists is that the arm this
-// replaced shipped on a measurement taken against the wrong distribution: 11/16 on the pairs the
-// slug arm had already missed, 0/25 on the corpus. A single anecdote is not an acceptance check.
-//
-// It reports CAUGHT / total with the FALSE count beside it, both swept over every same-folder pair
-// rather than only over the truth set. A bar that fires on 1322 pairs to catch 18 is not a better
-// bar, and the caught column alone cannot see that.
+// The acceptance check for the write-time reconcile — the arm this replaced shipped on a measurement
+// taken against the wrong distribution (11/16 on the pairs the slug arm had missed, 0/25 on the
+// corpus) and reports CAUGHT/total with the FALSE count beside it, swept over every same-folder pair
+// rather than only the truth set. See CLAUDE.md ("dupe-eval") and
+// docs/decisions/2026-08-23-embedding-reconcile.md (the fires/caught/false sweep table).
 //
 // Truth file is JSONL, one record per judged pair: {"a": note, "b": note, "verdict": "dupe"|"keep"}.
-// The KEEPS are part of the truth: four of the 26 pairs found on 2026-08-22 were correct keeps, and
-// two of those sat above the bar only because an audit had cross-linked them. A sweep that counts
-// only catches cannot score that, and it is the failure mode the mark exists for.
-//
-// The truth file is gitignored, because it names a private vault's notes. The harness ships; the
-// truth is re-written per machine, exactly as the retrieval case sets are.
+// The KEEPS are part of the truth — cross-linking two distinct notes correctly RAISES their
+// similarity and can push a keep pair over the bar; see
+// docs/decisions/2026-08-23-embedding-reconcile.md ("An opt-out"). The truth file itself is
+// gitignored, because it names a private vault's notes — see docs/architecture.md (the `eval/`
+// row) and docs/plans/2026-08-23-embedding-reconcile.md.
 if (flag('--dupe-eval')) {
   const truthFile = val('--truth');
   if (!truthFile) {
@@ -868,10 +833,10 @@ function loadIndex(slug) {
 
 // ---------------------------------------------------------------- serve
 //
-// The model and the index cost ~1.5s warm / ~3.1s cold to load, which is why the per-prompt recall
-// hook was stuck on its own weak keyword search (MRR 0.158 against this path's 0.547). Holding both
-// in a resident process turns that into a socket round-trip. Idle-exits so it cannot become a
-// daemon nobody remembers starting; the hook respawns it on demand.
+// Holds the model and index warm — a query becomes a socket round-trip instead of a ~1.5s/~3.1s
+// load. Idle-exits so it cannot become a forgotten daemon; the hook respawns on demand. See
+// docs/architecture.md "Flow 3 — the search daemon" for the MRR comparison that motivated it
+// (0.158 keyword-only vs 0.547 this path).
 if (flag('--serve')) {
   const net = await import('node:net');
   const sockPath = SERVE_SOCK; // probed and cleaned above; do NOT unlink again — by now another
@@ -955,11 +920,9 @@ if (flag('--serve')) {
         // Dupe mode: raw cosine against CARD vectors, not the query path's fused score. Answered
         // here rather than by a second process because this server already holds the model and the
         // per-slug index; the distiller's alternative was a 1.3GB model load per SessionEnd.
-        //
-        // `mode` in the reply is load-bearing. An older server does NOT error on this request — it
-        // destructures a missing `q`, embeds the literal string "undefined" and answers with five
-        // confident results. Servers are keyed by MODEL, not by version, so an old one running the
-        // active model is never evicted and a new distiller will meet one after every update.
+        // `mode` in the reply is load-bearing — an older server does not error on a request missing
+        // it, it embeds the literal string "undefined" and answers confidently. See
+        // docs/plans/2026-08-23-embedding-reconcile.md ("Socket dupe mode").
         if (typeof msg.dupe === 'string') {
           const { slug = SLUG, layer = '', min = PROFILE.dupeMin } = msg;
           const index = indexFor(slug);

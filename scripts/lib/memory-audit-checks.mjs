@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Mechanical half of /memory:health. Run it, judge the output — it decides nothing.
 //
-// Why this exists: three consecutive audits hand-derived these same checks, and two of them got
-// the same two wrong (REFLECTIONS.md 2026-08-10, 2026-08-14):
-//   - `^confidence:` reports every note missing the field. It is nested under `metadata:`.
-//   - a repo-path regex swallows the `…/` in abbreviated prose paths and calls 15 of them missing.
-// Both are encoded below. Judgement stays with the auditor; this only finds candidates.
+// Why this exists: hand-derived audits got the same two checks wrong twice (REFLECTIONS.md
+// 2026-08-10, 2026-08-14) — confidence-nesting is a recorded failure mode in
+// docs/decisions/2026-08-22-auto-memory.md; the abbreviated-path false positive is at
+// isAbbreviated() below. Judgement stays with the auditor; this only finds candidates.
 //
 // Usage: node ~/.claude/scripts/memory-audit-checks.mjs [repo-dir]   (default: cwd)
 // ponytail: prints findings, never edits. Deleting or rewriting a note needs confirmation anyway.
@@ -82,15 +81,11 @@ export function parseDeferred(text) {
   return out;
 }
 
-// Bi-temporal bookkeeping: a fact has two dates — when it was TRUE (`valid_from`, and once reversed
-// `superseded_on`) and when the vault LEARNED it (`modified`). Prose alone cannot answer "what did
-// we believe on Tuesday", and a note headed "⚠ SUPERSEDED" in the body is invisible to every check.
-// This finds claims that announce supersession in prose without recording it in frontmatter.
-// Supersession here is per-CLAIM, not per-note. L1 notes are large and multi-claim: when the CRA2
-// cutover landed it reversed one section of `cra2-ecs-runtime-facts` while the rest stayed true, so
-// a note-level `superseded_by:` would have been a lie. The marker is therefore inline and sits with
-// the claim it kills: `(superseded YYYY-MM-DD by [[note]])`. Note-level frontmatter is still honoured
-// for the rarer case where an entire note is dead.
+// Finds claims that announce supersession in prose ("⚠ SUPERSEDED …") without the machine-readable
+// marker `(superseded YYYY-MM-DD by [[note]])` that SUPERSEDED_MARKER checks for. Full per-claim
+// (not per-note) model and why: skills/protocol/SKILL.md "Per-claim supersession: two dates, not
+// one".
+//
 // Only CLAIM-supersession, not component replacement. "Core Modules already superseded by
 // `@integration/api-client-*`" and "redirects-poller superseded by the KVS pipeline" describe
 // software being replaced — true statements that will never need a marker. The house style for a
@@ -118,11 +113,10 @@ export function supersessionState(raw) {
   };
 }
 
-// FRESH-1, after obsidian-second-brain's freshness policy: **every stored fact must be timeless,
-// dated, or a pointer.** A present-tense claim about a volatile quantity, with no stamp and outside
-// a dated container, is the sentence that becomes a lie next Tuesday while still reading as truth.
-// Three legal forms: timeless ("invoices are issued monthly"), snapshot ("2026-08-12: 47 tasks"),
-// pointer ("where truth lives: <url>, last observed X (as of DATE)").
+// FRESH-1: flags a present-tense claim about a volatile quantity with no stamp and no dated
+// container. Full timeless/snapshot/pointer model: skills/protocol/SKILL.md "Per-claim recency:
+// timeless, snapshot, or pointer".
+//
 // Precision over recall: the quantity must sit NEXT TO the volatile noun ("965 Insights notes",
 // "47 tasks"), not merely somewhere on the same line. A looser version reported 133 hits across 47
 // notes — mostly ticket ids like ATL-3317 and MR numbers — which is a backlog nobody reads.
@@ -150,15 +144,9 @@ export function isUnstampedVolatileClaim(line) {
   return COUNTED.test(t.replace(/`[^`]*`/g, ' ')); // quoted code is never a claim
 }
 
-// CLAIM-1: a METRIC must name the instrument that produced it.
-//
-// This is the mechanical answer to the failure that recurred three times in one cycle: a number was
-// believed because it looked plausible, and the thing that produced it was never checked.
-//   · "CLAUDE.md now mandates X"      — the file was never opened
-//   · synthesis grade 0.945 vs 0.947  — the test was wrong, not the note
-//   · "recall 0.94 / 1.00"            — the question set was rewritten every run
-// The L1 note `instrument-must-match-healthy-signal` already taught this and did not prevent any of
-// them, because prose cannot gate a write. This can: a metric without provenance is flagged.
+// CLAIM-1: a METRIC must name the instrument that produced it — three specific incidents this
+// prevents, and why prose/an L1 note didn't, are in
+// docs/decisions/2026-08-31-audit-check-provenance.md.
 //
 // Deliberately narrow. FRESH-1 already covers plain counts going stale; this covers the class that
 // actually burned us — evaluative scores, which look authoritative precisely because they are

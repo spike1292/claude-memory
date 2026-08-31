@@ -3,24 +3,16 @@
 // else that is true of MEMORY.md itself: its size against the cap Claude Code loads it under, for
 // this project (the lint) and for every project in the vault (capReport, read by /memory:doctor).
 //
-// The "≥2 wikilinks, linked both ways" convention is documented in CLAUDE.md, but prose did not
-// hold it: /memory:health found MOC-only notes in three consecutive audits (2026-08-07 four notes,
-// 2026-08-08 jira-zscaler-403, 2026-08-08 prod-error-baseline). REFLECTIONS.md committed to a lint
-// on the third recurrence. This is it.
+// Convention alone didn't hold it (three consecutive audit recurrences before this lint existed):
+// docs/decisions/2026-08-08-memory-link-lint.md.
 //
 // MOC-only is not corruption — the note is findable. It is invisible to the note graph, so nothing
 // leads you to it while reading a sibling. Reporting it at session start is what makes it fixable.
 // ponytail: names only, no auto-fix — deciding WHICH sibling should link is the judgement call.
 //
-// Ported from memory-link-lint.sh on 2026-08-17, for the shape rather than the language. The shell
-// version ran `grep -rlF` over the whole Memory AND Insights tree ONCE PER NOTE — O(N×(N+M)) file
-// reads, which is quadratic in vault size:
-//
-//     10 notes   152 ms      40 notes   589 ms      120 notes   2626 ms
-//
-// This reads every file once and indexes the links, so it is O(N+M). Measured at 120 notes:
-// 2626 ms → 61 ms. The cost had been invisible because the repo it was measured in has no L1
-// notes at all, so the loop never ran.
+// Ported from memory-link-lint.sh on 2026-08-17: shell was O(N×(N+M)) (`grep -rlF` once per note
+// over Memory+Insights), this is O(N+M) (index once). 2626 ms -> 61 ms at 120 notes; the full
+// sweep and the production timeout it fixed: docs/decisions/2026-08-17-shell-vs-node-hooks.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { vault, projectKey, legacyKey } from './paths.mjs';

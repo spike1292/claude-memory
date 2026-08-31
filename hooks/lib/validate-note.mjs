@@ -10,14 +10,10 @@
 // WARNS ONLY — never blocks a write, and never exits non-zero. A note half-written is still worth
 // keeping; the point is to tell the author now rather than let an audit find it next week.
 //
-// Ported from validate-note.sh on 2026-08-17. This is the hottest hook in the system — it runs on
-// every Write/Edit — and the shell version forked ~15 processes (jq, head, awk, grep x6, basename,
-// sed) plus a node subprocess, measured 165.9ms per edit. Language was never the cost; fork-per-
-// operation was. Verified against the shell version on every note in the vault: identical output.
-//
-// The claim-level checks are IMPORTED, not spawned. Spawning `memory-audit-checks.mjs
-// --check-file` cost ~48ms of the hook's 93ms; that module is now import-safe (it runs its
-// vault-wide audit only when executed directly), so the predicates run in-process.
+// Ported from validate-note.sh on 2026-08-17: shell forked ~15 processes at 165.9 ms/edit; node
+// runs the claim-level checks in-process (import-safe `memory-audit-checks.mjs`) at 54.0 ms. Full
+// numbers + verification: docs/decisions/2026-08-17-shell-vs-node-hooks.md "validate-note.sh ->
+// validate-note.mjs".
 import fs from 'node:fs';
 import path from 'node:path';
 import { vault } from './paths.mjs';

@@ -91,13 +91,9 @@ export function providerBlobs(binDir) {
 }
 
 // --- unused packages ------------------------------------------------------------------------
-// @huggingface/transformers hard-depends on sharp (image pipeline) and onnxruntime-web (browser
-// WASM backend). Neither runs on the text-embedding path, together they are 147 MB, and npm has
-// no way to skip them: `overrides` pointing at a local stub writes a lockfile that `npm ci` then
-// rejects ("Missing: sharp@ from lock file"), and Claude Code installs plugins with `npm ci`.
-// So they are installed, then replaced here by the 1 KB stubs in stubs/. Deleting outright is not
-// an option — both are static imports in transformers.node.mjs, so resolution fails before any
-// code runs. Measured 2026-08-18.
+// sharp + onnxruntime-web (147 MB) are stubbed, never deleted — both are static imports in
+// transformers.node.mjs, so removing them fails resolution before any code runs; full rationale
+// in CLAUDE.md's "node_modules is slimmed after install" section.
 export const STUBBED = ['sharp', 'onnxruntime-web'];
 
 // sharp's libvips binaries; nothing else depends on them once sharp itself is a stub.

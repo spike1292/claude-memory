@@ -134,6 +134,36 @@ hooks doing 20 ms of vault work. They were 40 ms Node hooks doing 5 ms of vault 
 runtime bootstrap bought by a convenience API. Nothing found that except measuring the pieces —
 which is why `bench-hooks.mjs` measures the floor and the imports as rows, not just the hooks.
 
+
+## `logHook()` overhead
+
+**Measured 2026-08-20**, same harness as above (`node scripts/bench-hooks.mjs -n 40 --notes 50`,
+synthetic vault, local disk, macOS).
+
+Adding `logHook()` — one JSONL append per hook, written through `hook-io.mjs`'s `appendJsonl()` —
+costs **+1.5 to +3.6 ms per hook** against a 31.5 ms bare-node floor. Medians, ms:
+
+| hook | before | after |
+| --- | ---: | ---: |
+| insights-surface | 41.3 | 42.8 |
+| memory-link-lint | 41.9 | 45.5 |
+| semantic-index-refresh | 36.1 | 39.7 |
+| graph-staleness-check | 36.7 | 40.3 |
+| validate-note | 41.1 | 43.0 |
+| distill-session (gate) | 36.9 | 38.7 |
+
+Two rows are the design being confirmed rather than measured. `memory-recall (inert)` moved
+36.7 → 35.7 ms — no line is written at all when recall is disarmed, which is the whole point of
+logging below the arming gate rather than above it. `memory-recall (armed)` is flat at the median
+(70.3 vs 73.2 over 30 runs of that row alone) even though it now writes TWO lines, because it had
+already resolved `projectKey` and paid one append.
+
+The write is the cost in the ordinary case: `stateDir()`'s mkdir is 0.015 ms and `projectKey()` on
+an already-resolved cwd is 0.0002 ms. The exception — a checkout whose `.git` is a FILE (worktree
+or submodule), forking `git` on every call, measured at **14.6 ms**, 2026-08-21 — is *not* included
+in the bench above (an ordinary clone) and is recorded as a `ponytail:` marker next to
+`appendJsonl()` in `hook-io.mjs`.
+
 ## If you want to revisit
 
 Re-run `node scripts/bench-hooks.mjs -n 20 --notes 50` and paste the table. State the vault
