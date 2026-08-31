@@ -800,6 +800,11 @@ async function writeNotes(insights, slug, cwd) {
   return { written, merged, declined, notes };
 }
 
+/** 10s: local, fast git operations — the bound exists only to stop a stale index.lock or a gpg
+ *  pinentry prompt (commit.gpgsign, on the vault's ambient identity) from hanging the detached
+ *  distill worker forever and skipping reindex() right after it. */
+const GIT_TIMEOUT_MS = 10_000;
+
 /**
  * Commit, in one commit, exactly the notes this run wrote or merged — never `git add -A`. A
  * human may hand-edit files elsewhere in the same vault repo; a blanket add would ship that by
@@ -810,15 +815,14 @@ async function writeNotes(insights, slug, cwd) {
  * silent no-op, exactly like every other hook here. A session must never fail because of this.
  *
  * @param {WrittenNote[]} notes
+ * @param {number} merged count of `notes` merged into an existing file — writeNotes() already
+ *   computed this from the same partition; re-filtering here would just be a second copy of it
  * @param {string} slug
  * @returns {void}
  */
-function autoCommit(notes, slug) {
+function autoCommit(notes, merged, slug) {
   if (!paths.gitAutoCommitEnabled() || notes.length === 0) return;
-  // 10s: these are local, fast git operations — the bound exists only to stop a stale
-  // index.lock or a gpg pinentry prompt (commit.gpgsign, on the vault's ambient identity)
-  // from hanging this detached worker forever and skipping reindex() right after it.
-  const opts = { stdio: /** @type {const} */ ('ignore'), timeout: 10_000 };
+  const opts = { stdio: /** @type {const} */ ('ignore'), timeout: GIT_TIMEOUT_MS };
   try {
     // The vault itself must be the repo ROOT, not merely nested inside one. `rev-parse
     // --is-inside-work-tree` would say yes for a vault sitting anywhere under an unrelated
@@ -827,18 +831,17 @@ function autoCommit(notes, slug) {
     // THAT repo's history, where the user's own workflow for it could push it: the exact leak
     // "never pushes" is meant to prevent, just one hop removed.
     const top = execFileSync('git', ['-C', VAULT, 'rev-parse', '--show-toplevel'], {
-      timeout: 10_000,
+      timeout: GIT_TIMEOUT_MS,
       encoding: 'utf8',
     }).trim();
     if (fs.realpathSync(top) !== fs.realpathSync(VAULT)) return;
     const rel = notes.map((n) => path.relative(VAULT, n.file));
     execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { ...opts, cwd: VAULT });
     const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
-    const mergedCount = notes.filter((n) => n.action === 'merged').length;
     const msg =
       `distill(${slug}): wrote ${writtenTitles.length} note(s)` +
       (writtenTitles.length ? ` — ${writtenTitles.join(', ')}` : '') +
-      (mergedCount ? `; merged ${mergedCount} into existing` : '');
+      (merged ? `; merged ${merged} into existing` : '');
     execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], opts);
   } catch {
     /* git missing, vault not the repo root, no identity, nothing staged, timed out — all no-op */
@@ -989,7 +992,7 @@ export async function distill(transcript, cwd) {
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd);
   const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
-  autoCommit(notes, slug);
+  autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need
