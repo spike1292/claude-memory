@@ -815,19 +815,23 @@ async function writeNotes(insights, slug, cwd) {
  */
 function autoCommit(notes, slug) {
   if (!paths.gitAutoCommitEnabled() || notes.length === 0) return;
+  // 10s: these are local, fast git operations — the bound exists only to stop a stale
+  // index.lock or a gpg pinentry prompt (commit.gpgsign, on the vault's ambient identity)
+  // from hanging this detached worker forever and skipping reindex() right after it.
+  const opts = { stdio: /** @type {const} */ ('ignore'), timeout: 10_000 };
   try {
-    execFileSync('git', ['-C', VAULT, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', VAULT, 'rev-parse', '--is-inside-work-tree'], opts);
     const rel = notes.map((n) => path.relative(VAULT, n.file));
-    execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { cwd: VAULT, stdio: 'ignore' });
+    execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { ...opts, cwd: VAULT });
     const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
     const mergedCount = notes.filter((n) => n.action === 'merged').length;
     const msg =
       `distill(${slug}): wrote ${writtenTitles.length} note(s)` +
       (writtenTitles.length ? ` — ${writtenTitles.join(', ')}` : '') +
       (mergedCount ? `; merged ${mergedCount} into existing` : '');
-    execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], { stdio: 'ignore' });
+    execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], opts);
   } catch {
-    /* git missing, vault not a repo, no identity, nothing staged — all no-op */
+    /* git missing, vault not a repo, no identity, nothing staged, timed out — all no-op */
   }
 }
 

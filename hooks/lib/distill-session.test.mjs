@@ -837,6 +837,7 @@ const runWorker = (root, extraEnv = {}) => {
     stdio: 'pipe',
     env: {
       ...process.env,
+      ...GIT_ENV,
       PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
       CLAUDE_MEMORY_HOME: path.join(root, 'state'),
       DISTILL_VAULT: path.join(root, 'vault'),
