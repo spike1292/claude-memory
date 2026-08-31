@@ -1,18 +1,13 @@
-// Hook startup cost — the logic half. The CLI entry is scripts/bench-hooks.mjs.
+// Hook startup cost — the logic half. The CLI entry is scripts/bench-hooks.mjs. Motivation and the
+// original by-hand table this replaces: docs/decisions/2026-08-20-hook-startup-cost.md.
 //
-// Every hook in this plugin is a Node process, and every session event pays that process's whole
-// startup: interpreter, imports, and whatever the hook does before it decides there is nothing to
-// do. docs/decisions/2026-08-18-node-hooks.md measured three of them once, by hand, into a table
-// that cannot be re-run. This makes the measurement repeatable.
-//
-// Two rules the measurement has to obey, both learned the hard way in this repo:
+// Two rules the fixture has to obey, both learned the hard way in this repo:
 //
 //   - NEVER the real vault. Hooks write markers and detach children, and vault-memory-sync moves
 //     files. The fixture below is a temp vault plus a temp HOME and a temp CLAUDE_MEMORY_HOME, and
 //     assertIsolated() refuses to run if any of the three points outside the scratch root.
-//   - NEVER an empty vault. The shell link lint looked like a 74 ms hook in this repo, which has no
-//     L1 notes, while taking 10.9 s on a 49-note project. Note count is an input, and a record
-//     quoting a number from here states it.
+//   - NEVER an empty vault — an empty one understates note-count-dependent hooks by orders of
+//     magnitude (CLAUDE.md: the shell link lint measured 74 ms empty vs 10.9 s on 49 notes).
 //
 // Every hook is measured on the path where it decides there is nothing to do — no detached
 // indexer, no headless `claude`. That is the path a session pays on every event, and it is the only

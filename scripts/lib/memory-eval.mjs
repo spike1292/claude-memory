@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 // Logic half; the CLI entry is scripts/memory-eval.mjs.
 // Reproducible retrieval eval for the vault. Generates a versioned case set once, then scores any
-// retrieval change against THE SAME cases.
-//
-// Why this exists: before it, every /memory:eval run hand-wrote a fresh set of questions. The
-// numbers moved between runs (0.60 → 1.00 on 2026-08-14) but the question set moved too, so the
-// comparison proved nothing — and the questions were written by someone who already knew the vault
-// and knew what had just been fixed. Borrowed wholesale from obsidian-second-brain's harness, whose
-// baseline states the rule plainly: **no retrieval change ships without before/after numbers on the
-// same cases.**
+// retrieval change against THE SAME cases — why a versioned set replaced hand-written questions:
+// docs/decisions/2026-08-24-eval-harness-design.md.
 //
 // Usage:
 //   node memory-eval.mjs --author < cases.jsonl          the way to make a REAL paraphrase set
@@ -90,17 +84,14 @@ export function pickSentence(body, stem, style) {
 
 // The keyword baseline for `--run --mode lexical`. It scores WHOLE NOTES, which is what makes it a
 // baseline for the semantic arm (that one searches every chunk) rather than a model of the recall
-// hook (that one scores only the `(card)` chunk). Read that sentence before quoting a number from
-// here at the hook: on the seed-7 300-note bench vault this scores recall@1 50.0% on
-// cases-paraphrase and 25.0% on cases-keyword, where `keywordArm()` over the same cases puts the
-// gold note at rank 1 for 40/40 of BOTH — the document unit, not the ranking function, is the gap
-// (measured 2026-08-19).
+// hook (that one scores only the `(card)` chunk) — read that before quoting a number from here at
+// the hook. The 50%/25% vs `keywordArm()`'s 100%/100% gap this caused, and the fork of its own
+// tokeniser/BM25 this replaced, are recorded in docs/decisions/2026-08-19-orchestrated-change.md
+// ("Verify the instrument before quoting a number from it") and docs/architecture.md ("H6 — text
+// processing is forked three ways").
 //
-// It used to inline its own tokeniser and its own BM25 — a THIRD fork of both, after #29 retired
-// recall's. That fork silently differed twice: no stopword removal, and no de-duplication of query
-// terms, so a prompt repeating a word scored it twice. Both are gone; `lexTokens`/`bm25` from
-// lexical.mjs are the only implementation. k1/b are passed explicitly for the same reason
-// hooks/lib/memory-recall.mjs passes them — the inlined arithmetic was 1.2/0.75 and a change to
+// `lexTokens`/`bm25` from lexical.mjs are the only implementation now. k1/b are passed explicitly
+// for the same reason hooks/lib/memory-recall.mjs passes its BM25 constants explicitly: a change to
 // bm25()'s defaults must not move this silently.
 /**
  * @param {readonly EvalDoc[]} docs

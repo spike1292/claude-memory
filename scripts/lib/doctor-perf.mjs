@@ -2,8 +2,8 @@
 // The CLI entry is scripts/doctor-perf.mjs.
 //
 // doctor.sh answers "is this wired up". It cannot answer "why is this slow" or "what is eating my
-// RAM", which is the question this plugin generates: one --serve process holds a ~1.3 GB model,
-// six of them once ran at once on a 16 GB machine, and onnxruntime's arena never gives memory back.
+// RAM" — the multi-server RSS problem this exists to diagnose is in CLAUDE.md's "One `--serve` for
+// the whole machine" section.
 //
 // Read-only, and that is a hard rule, not a preference: this must never start a server, load a
 // model or re-index. Everything below either reads a file, parses `ps`, or talks to a socket that

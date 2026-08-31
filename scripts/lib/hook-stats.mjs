@@ -1,10 +1,7 @@
 // The `--hooks` half of /memory:doctor: what every hook did, and how long it took. The CLI entry
-// is scripts/doctor-perf.mjs.
-//
-// Nine hook invocations fire per session and, until the log this reads, none of them recorded
-// anything. The numbers CLAUDE.md quotes (43–58 ms for the ported gates, 74 ms here vs 10.9 s on a
-// 49-note project) are one-off hand measurements on one machine, already at risk of drift. This is
-// the continuous version of them.
+// is scripts/doctor-perf.mjs. It is the continuous version of the one-off hand measurements
+// CLAUDE.md quotes for the ported gates (43-58 ms) and the shell link lint (74 ms vs 10.9 s) —
+// see CLAUDE.md's hook-cost section.
 //
 // Read-only, and the same hard rule as its two siblings: no server, no model, no index write, no
 // file written at all.
@@ -179,23 +176,17 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
     const worker = l.event === 'worker';
     const name = l.hook || '(unnamed)';
 
-    // Injected context is measured PER SESSION, because that is the unit a user pays it in — and
-    // only over REAL sessions. A headless `claude` run fires SessionStart itself, so its injector
-    // lines are a second population with nothing to do with what a person's session cost; folded
-    // in they roughly doubled every count here (measured on a synthetic 12-session log: an injector
-    // that fired in 3 sessions reported 15 runs).
+    // The mean-of-sessions form below rejects per-line counting — folding a headless `claude`
+    // run's own SessionStart in roughly doubled every count on a synthetic 12-session log (an
+    // injector that fired in 3 sessions reported 15 runs). Full argument:
+    // docs/decisions/2026-08-31-hook-stats-injected-context.md.
     //
-    // A session where the hook RAN and injected nothing is a real zero and counts as one. That is
-    // the difference between a hook costing 400 tokens every session and one costing 400 tokens a
-    // quarter of the time — and averaging only over the runs that injected reported the second as
-    // the first.
+    // A session where the hook RAN and injected nothing is a real zero and counts as one — mixing
+    // it with "did not run" would show an occasional injector as costing every session.
     //
-    // The cost of that: an absent `bytes` means "injected nothing" AND "written before this field
-    // existed", and the two cannot be told apart, because the record format forbids writing a zero.
-    // So a hook that has carried the field at least once reads every older line as an injected
-    // zero, understating it until those files age out of the window — a week. Counted below and
-    // reported, rather than left for someone to discover in the numbers. A hook that has NEVER
-    // carried it stays out of the table entirely.
+    // An absent `bytes` means either "injected nothing" or "written before this field existed",
+    // indistinguishable, so a hook's older lines read as zeros until they age out of the window (a
+    // week). Counted separately below as `unsized` rather than silently folded into the average.
     if (!l.child && l.session && !worker && l.event !== 'extract') {
       const by = perSession.get(name) ?? new Map();
       by.set(l.session, (by.get(l.session) ?? 0) + (typeof l.bytes === 'number' ? l.bytes : 0));
@@ -571,12 +562,9 @@ function injectedSection(s, recall) {
     body.push('', 'recall: not measured — no injecting recall decisions in this window.');
   }
 
-  // The per-SESSION sum is what a user actually pays at startup, so it is summed across hooks
-  // rather than compared hook by hook. Each term is now a mean over every session the hook RAN in,
-  // not over the subset where it injected — the old form billed an occasional injector to every
-  // session, and on a synthetic log where link-lint injected 30 KB twice in forty sessions it
-  // reported 7600 tokens per session against a true 100 for thirty-eight of them, over a threshold
-  // that then printed a warning.
+  // Summed across hooks as a mean over each hook's own sessions, not compared per session — the
+  // naive per-session form billed an occasional injector to every session (synthetic-log example
+  // and the fix: docs/decisions/2026-08-31-hook-stats-injected-context.md).
   //
   // Recall is excluded: it is per prompt, not per session, and adding it would double-count a long
   // session.
@@ -724,19 +712,16 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
   // disagree with itself. Scoped by the same slug for the same reason every other figure here is.
   const recallLines = /** @type {RecallSize[]} */ (readLines(logFiles(logDir, days, 'recall')));
   const recall = recallLines.filter((r) => !slug || r.slug === slug);
-  // `pruned` rides on whichever line the day's first append happened to be, and that is a RECALL
-  // line for any session that crosses UTC midnight with recall armed — the hook family is not the
-  // one that pays. Unscoped by project, like the sum inside summarize() and for the same reason.
+  // `pruned` is unscoped by project like the sum inside summarize() and for the same reason
+  // (CLAUDE.md's retention section) — it rides on whichever line the day's first append happened
+  // to be, which can be a RECALL line for a session that crosses UTC midnight with recall armed.
   //
-  // Bounded by the HOOKS window's oldest day, though: `logFiles()` slices by file COUNT, and the
-  // recall family is sparser (it logs only when armed), so its seven newest files can reach back
-  // months further than the seven newest hook files. Unbounded, a pass from January was reported
-  // as "while this window was being logged" over last week's dates.
-  // `files[0]` is the OLDEST file in the window — logFiles() sorts and slices off the end — and it
-  // is the whole bound: a pass recorded on any earlier day belongs to a window this report is not
-  // printing. `null` when there are no hook files at all — no window, so nothing to attribute to
-  // one — the filter below says so in the same expression that bounds the window. An empty string
-  // instead would let every recall line back in and restore the unbounded sum.
+  // Bounded by the HOOKS window's oldest day: `logFiles()` slices by file COUNT and the recall
+  // family is sparser (it logs only when armed), so its seven newest files can reach back months
+  // further than the seven newest hook files — unbounded, a pass from January was once reported as
+  // "while this window was being logged" over last week's dates. `files[0]` is that oldest file
+  // (`logFiles()` sorts and slices off the end); `null` when there are no hook files at all, so
+  // nothing to bound against — an empty string there would let every recall line back in.
   const from = files.length
     ? /** @type {RegExpExecArray} */ (DATE_IN_NAME.exec(path.basename(files[0])))[1]
     : null;

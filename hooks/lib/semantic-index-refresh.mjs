@@ -1,17 +1,9 @@
-// SessionStart: keep the semantic vault index current, in the background — the logic half.
-// The CLI entry is hooks/semantic-index-refresh.mjs.
+// SessionStart: keep the semantic vault index current, in the background — the logic half. The
+// CLI entry is hooks/semantic-index-refresh.mjs. Why a hook rather than a convention, and why
+// SessionStart rather than SessionEnd: docs/architecture.md's Flow 1.
 //
-// Why a hook and not a convention: the index only refreshed if someone ran /memory:prune. Every
-// convention in this system has eventually failed that way (MOC-only notes recurred through four
-// audits, path drift through two), and a stale vector index is worse than none — it answers with
-// notes that were merged away hours ago.
-//
-// Why SessionStart and not SessionEnd: the SessionEnd distiller writes new Insight notes *during*
-// shutdown, so a SessionEnd refresh races it. Refreshing at the start of the next session picks up
-// everything the previous one wrote, whatever order it landed in.
-//
-// Cost when nothing changed: the indexer compares mtimes and exits before loading the model, so a
-// no-op costs a stat pass. Either way the child is detached, so session start never waits.
+// Cost when nothing changed: the indexer compares mtimes and exits before loading the model, so
+// a no-op costs a stat pass. Either way the child is detached, so session start never waits.
 
 import fs from 'node:fs';
 import path from 'node:path';

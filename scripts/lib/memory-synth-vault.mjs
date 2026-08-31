@@ -1,50 +1,13 @@
 #!/usr/bin/env node
 // Generate a FIXED synthetic vault + query sets, so retrieval numbers are reproducible.
 //
-// Why: a versioned case set pins the QUESTIONS but not the NOTES. On 2026-08-15 that gap faked a
-// result three times in one day — the same 28 questions scored @1 32.1% and then 28.6% an hour
-// later, with no retrieval change, because a note had been added in between. Every A/B was really
-// "old retrieval on 1034 notes vs new retrieval on 1047 notes". Borrowed from
-// obsidian-second-brain's scripts/eval/BENCHMARK.md, whose sharpest idea is that gold answers are
-// known BY CONSTRUCTION — the generator wrote the canonical note, so there are no judgement calls.
-//
-// Deliberate departure from theirs: they compose notes from invented vocabulary. Invented words
-// carry no meaning for an embedding model, so a paraphrase test over them measures nothing but
-// tokenisation. Here the PROSE is ordinary English (so meaning is real) and only the product NAMES
-// are invented (so gold stays unique and can never collide with a real note).
-//
 // Deterministic: seeded PRNG, no Date.now(), no Math.random(). Same seed -> byte-identical vault.
+// Prose is ordinary English/Dutch so meaning is real; only product NAMES are invented, so gold
+// stays unique and never collides with a real note.
 //
-// MEASURED BASELINE — seed 7, 300 notes, 40 gold cases (2026-08-15):
-//                        EN paraphrase        NL paraphrase
-//   bge-m3               @1 100%  MRR 1.00    @1 100%   MRR 1.00
-//   bge-small-en         @1 100%  MRR 1.00    @1 17.5%  MRR 0.241
-//   lexical (BM25)       @1 60%   MRR 0.653   @1 5%     MRR 0.100
-//
-// HARDENING ATTEMPT (2026-08-15): FAILED on English. Two "echo" notes per gold case were added —
-// same domain, same opening symptom, then an explicitly different cause and fix. English stayed at
-// 100% for both models; Dutch moved 100% -> 95% @1. The model separates them easily because an echo
-// STATES its different cause in plain language, and that is what the vector reads.
-//
-// The obvious next step is not being taken: echoes carrying the gold note's FULL body would compete
-// hard, but they would also become a second valid answer to the paraphrase — and the acceptance
-// test here CANNOT SEE THAT. The keyword set identifies gold by title words, which are deliberately
-// disjoint from the paraphrase, so an ambiguous paraphrase still scores 100% on keywords. A test
-// that cannot fail on the thing it is guarding is not a guard. Hardening this properly needs
-// hand-authored near-misses with a human deciding "is this also a correct answer?", which is the
-// judgement call the generate-by-construction design exists to avoid.
-//
-// So: the echoes stay (they cost nothing and make the vault marginally more realistic), and the
-// English set remains a TRIPWIRE. Use the real-vault case sets for small deltas.
-//
-// READ THAT HONESTLY. The English set is AT ITS CEILING: two different models both score 100%, so
-// it cannot detect an improvement and must not be quoted as evidence that one is better. It is a
-// TRIPWIRE — the mean-pooling bug that took the real vault from @5 67.9% to 25.0% would collapse
-// these numbers, and that is what it is for. The Dutch set is the discriminating one, and it
-// settles the model choice on a note set that cannot move underneath the comparison.
-// Hardening the English set needs distractors that are near-misses rather than merely same-domain;
-// the 260 filler notes compete on topic but not on the specific issue, which is why there is no
-// headroom. Until then, use the real-vault case sets for small deltas and this for breakage.
+// The seed-7 baseline table, the rejected hardening attempt, and why the English case set is at
+// its ceiling (must not be quoted as evidence — use the real-vault case sets for small deltas):
+// docs/decisions/2026-08-15-synth-vault-baseline.md.
 //
 // Logic half; the CLI entry is scripts/memory-synth-vault.mjs.
 // Tests: node --test scripts/lib/memory-synth-vault.test.mjs
@@ -404,18 +367,13 @@ export const DOMAINS = [
   },
 ];
 
-// ECHO notes: the hardening lever. The first version of this vault scored 100% on English for two
-// different models, i.e. no headroom, because the 260 filler notes competed on TOPIC but never on
-// the specific issue — and the real failure mode is the right note losing to a near-identical
-// SIBLING. An echo restates a gold note's symptom in the same domain and then diverges: different
-// cause, different fix.
+// ECHO notes: the hardening lever — one gold-diverging distractor per case. Why the first version
+// had no headroom, and what was tried: docs/decisions/2026-08-15-synth-vault-baseline.md.
 //
-// The danger is obvious and is the reason for the acceptance test below: an echo that is TOO close
-// stops being a distractor and becomes a second valid answer, which makes gold ambiguous and every
-// future number quietly wrong. The test is that the KEYWORD query set — which names the product and
-// the title words — must still find gold first. If keyword recall holds while paraphrase recall
-// drops, the echoes added difficulty without destroying gold identity. If keyword recall drops too,
-// they are ambiguous and must be weakened.
+// Danger: an echo that is TOO close stops being a distractor and becomes a second valid answer,
+// making gold ambiguous. Verify with the keyword case set: it must still find gold first. Keyword
+// recall holding while paraphrase recall drops means the echo added difficulty without destroying
+// gold identity; keyword recall dropping too means the echo is ambiguous and must be weakened.
 export const ECHO_CAUSES = [
   [
     'a stale configuration default nobody revisited',

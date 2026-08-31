@@ -2,10 +2,8 @@
 // resolved here and nowhere else. Everything resolves relative to this file, so the plugin works
 // from its version-pinned cache dir, from a dev checkout, and via symlink.
 //
-// The direction reversed on 2026-08-18. vault-env.sh used to be the source of truth and this was
-// its Node-side mirror, forking bash for project_key so the sed pipeline had one implementation.
-// Now vault-env.sh evals `node scripts/env.mjs` and this module owns the rules —
-// docs/decisions/2026-08-18-single-resolver.md.
+// Single implementation since 2026-08-18 (previously mirrored in vault-env.sh, which forked bash
+// for project_key) — docs/decisions/2026-08-18-single-resolver.md.
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -302,12 +300,8 @@ export function computeProjectKey(dir) {
     if (key) return key;
   }
   const top = gitOut(dir, ['rev-parse', '--show-toplevel']);
-  // asciiLower ONLY, not normaliseRemote(). The shell this replaced ran
-  //     basename "$_top" | tr 'A-Z' 'a-z'
-  // on this branch — no `.git` strip, no colon rewrite, no slash mapping. Running the full pipeline
-  // here (as the 2026-08-18 port briefly did) silently re-keys a repo that has no `origin` remote:
-  // a checkout in `foo.git/` became `foo`, one in `a:b/` became `a-b`, and a changed key means a
-  // different vault folder. Stability is the entire job of this function.
+  // asciiLower ONLY, not normaliseRemote() — the full pipeline on this branch silently re-keys a
+  // no-origin repo (`foo.git/` -> `foo`); see docs/architecture.md's "Known hacks" H1.
   if (top) return asciiLower(path.basename(top));
   return legacyKey(dir);
 }
@@ -337,16 +331,10 @@ export function projectKey(dir = process.cwd()) {
   if (cfg === undefined) {
     stamp = '0'; // no repo: key is a pure function of the path
   } else if (typeof cfg === 'string') {
-    // "<whole seconds>:<size>:<inode>". Whole seconds is now only a format choice — vault-env.sh
-    // stopped reading this file on 2026-08-18, when resolution became single-implementation — but
-    // the three fields are still load-bearing.
-    //
-    // Seconds alone are not enough, and the hole they leave is permanent rather than momentary: a
-    // `git remote set-url` in the same second as the cached stamp is never noticed, because nothing
-    // touches .git/config again afterwards. Size covers most of that; **inode covers the rest**,
-    // since git rewrites config atomically (temp file + rename) and so hands out a new inode on
-    // every write — verified 2026-08-17 for a same-second, byte-identical-length URL change, where
-    // mtime and size were both unchanged and the inode still moved.
+    // "<whole seconds>:<size>:<inode>" — all three fields load-bearing; seconds alone leave a
+    // permanent hole and inode catches what size misses (same-second, byte-identical rename).
+    // Full derivation: docs/decisions/2026-08-17-shell-vs-node-hooks.md, "Shell hooks share the
+    // Node project-key cache".
     try {
       const st = fs.statSync(cfg);
       stamp = `${Math.floor(st.mtimeMs / 1000)}:${st.size}:${st.ino}`;
