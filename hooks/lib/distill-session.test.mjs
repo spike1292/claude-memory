@@ -405,8 +405,7 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     fs.mkdirSync(path.join(vault, layer, slug), { recursive: true });
   fs.mkdirSync(path.join(vault, 'permanent'), { recursive: true });
 
-  // Records argv AND the env var under test, instead of indexing. `context-mode` is optional and
-  // never installed by CI.
+  // Records argv and $CONTEXT_MODE_DIR instead of indexing. context-mode is never on CI's PATH.
   fs.writeFileSync(
     path.join(bin, 'context-mode'),
     `#!/bin/sh\nprintf '%s\\t%s\\n' "$CONTEXT_MODE_DIR" "$*" >> ${JSON.stringify(log)}\n`,
@@ -435,8 +434,7 @@ test('the ctx source label carries the same key as the directory it indexes', (t
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
   const contextModeDirs = calls.map((l) => l.split('\t')[0]);
   const sources = calls.map((l) => l.split('\t')[1].split(' --source ')[1]);
-  // No CONTEXT_MODE_DIR/CLAUDE_CONFIG_DIR in the child's env (only HOME) — the default must land
-  // under HOME/.claude/context-mode, not wherever context-mode's own auto-detection would guess.
+  // Default lands under HOME/.claude/context-mode with no override in env.
   for (const d of contextModeDirs)
     assert.strictEqual(d, path.join(root, '.claude', 'context-mode'));
   assert.deepStrictEqual(sources.slice(0, 4), [
