@@ -826,19 +826,24 @@ const withStubClaude = (/** @type {string} */ script) => {
   return root;
 };
 
-/** @param {string} root */
-const runWorker = (root) => {
+/**
+ * @param {string} root
+ * @param {Record<string,string>} [extraEnv]
+ */
+const runWorker = (root, extraEnv = {}) => {
   const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
   execFileSync(process.execPath, [entry, path.join(root, 't.jsonl'), process.cwd()], {
     encoding: 'utf8',
     stdio: 'pipe',
     env: {
       ...process.env,
+      ...GIT_ENV,
       PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
       CLAUDE_MEMORY_HOME: path.join(root, 'state'),
       DISTILL_VAULT: path.join(root, 'vault'),
       MEMORY_HOOK_SESSION: 'sess-cli',
       DISTILL_DRYRUN: '',
+      ...extraEnv,
     },
   });
   const logDir = path.join(root, 'state', 'logs');
@@ -935,4 +940,133 @@ test('an envelope behind a prefix keeps both its cost and its insights', (t) => 
   assert.strictEqual(calls, 1);
   assert.strictEqual(notes.length, 1, 'the insights are read out of the envelope, not the noise');
   assert.strictEqual(lines.find((l) => l.event === 'extract')?.usd, 0.03);
+});
+
+/** git init + local identity (never global), so a commit succeeds regardless of machine config. */
+const gitVault = (/** @type {string} */ dir) => {
+  fs.mkdirSync(dir, { recursive: true });
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe', env: GIT_ENV });
+  git('init', '-q');
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 'test');
+};
+
+/** git init with NO identity configured, and GIT_ENV neutralising any global one this machine
+ *  happens to have — `git commit` here fails for lack of author identity, deterministically. */
+const gitVaultNoIdentity = (/** @type {string} */ dir) => {
+  fs.mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['-C', dir, 'init', '-q'], { stdio: 'pipe', env: GIT_ENV });
+};
+
+const commitsOf = (/** @type {string} */ dir) => {
+  try {
+    return execFileSync('git', ['-C', dir, 'log', '--format=%s'], {
+      encoding: 'utf8',
+      env: GIT_ENV,
+    })
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+  } catch {
+    return []; // no commits yet -> `git log` errors on an empty branch
+  }
+};
+
+test('auto-commit is off unless configured, even in a git-backed vault', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n'); // DISTILL_DRYRUN never calls it
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  gitVault(path.join(root, 'vault'));
+  runWorker(root, { DISTILL_DRYRUN: '1' }); // no MEMORY_GIT_AUTO_COMMIT
+  assert.deepStrictEqual(commitsOf(path.join(root, 'vault')), [], 'default config commits nothing');
+});
+
+test('auto-commit stages exactly the notes written this run, in one commit, by path', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const vault = path.join(root, 'vault');
+  gitVault(vault);
+  // A human-edited file the distiller never touched. `git add -A` would sweep this in too; only
+  // an exact-path add leaves it untracked — this is what actually distinguishes the two, since an
+  // otherwise-empty fresh vault can't (git add -A and git add -- <notes> stage the same set).
+  fs.writeFileSync(path.join(vault, 'human-edit.txt'), 'not written by the distiller\n');
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the three canned DISTILL_DRYRUN insights');
+  const commits = commitsOf(vault);
+  assert.strictEqual(commits.length, 1, 'one commit per SessionEnd/Stop invocation, not per note');
+  const slug = fs.readdirSync(path.join(vault, 'Insights'))[0];
+  assert.match(commits[0], new RegExp(`^distill\\(${slug}\\): wrote 3 note\\(s\\)`));
+  assert.match(commits[0], /Dry run pattern/);
+  assert.match(commits[0], /Dry run mistake/);
+  assert.match(commits[0], /Dry run decision/);
+  const staged = execFileSync(
+    'git',
+    ['-C', vault, 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', 'HEAD'],
+    {
+      encoding: 'utf8',
+      env: GIT_ENV,
+    },
+  )
+    .trim()
+    .split('\n')
+    .sort();
+  const wantPaths = [...notes].sort();
+  assert.ok(
+    !staged.includes('human-edit.txt'),
+    'a file the distiller never touched must never be staged',
+  );
+  const status = execFileSync('git', ['-C', vault, 'status', '--porcelain'], {
+    encoding: 'utf8',
+    env: GIT_ENV,
+  });
+  assert.match(status, /\?\? human-edit\.txt/, 'it stays untracked, never git add -A');
+  assert.deepStrictEqual(
+    staged,
+    wantPaths,
+    'the commit contains exactly the notes written, nothing else',
+  );
+});
+
+test('auto-commit no-ops on a plain-directory vault; the session still succeeds', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // vault is never git-init'd — a plain directory
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the run itself is unaffected by the failed commit attempt');
+  assert.ok(!fs.existsSync(path.join(root, 'vault', '.git')), 'never turns the vault into a repo');
+});
+
+test('auto-commit refuses when the vault only sits inside an ambient repo, not at its root', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  gitVault(root); // an ambient repo rooted ABOVE the vault dir, e.g. a whole-home dotfiles checkout
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the run itself is unaffected');
+  assert.deepStrictEqual(
+    commitsOf(root),
+    [],
+    'never commits into a repo the vault merely happens to be nested inside',
+  );
+});
+
+test('auto-commit unstages notes when commit fails after add succeeded (e.g. no git identity)', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const vault = path.join(root, 'vault');
+  gitVaultNoIdentity(vault);
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the run itself is unaffected by the failed commit');
+  assert.deepStrictEqual(
+    commitsOf(vault),
+    [],
+    'commit failed for lack of identity, so nothing landed',
+  );
+  const status = execFileSync('git', ['-C', vault, 'status', '--porcelain'], {
+    encoding: 'utf8',
+    env: GIT_ENV,
+  });
+  assert.ok(
+    !/^[AM]/m.test(status),
+    'add must be rolled back when commit fails — nothing left staged across future sessions',
+  );
 });

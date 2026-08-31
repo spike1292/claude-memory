@@ -81,6 +81,7 @@ Settings live in **`~/.claude-memory/config.json`**:
 | `recall` | `false` | arm per-prompt recall |
 | `model` | `bge-m3` | also `bge-small-en`, `e5-multi`. Changing it means a full re-index. |
 | `logRetentionDays` | `30` | days of `logs/{recall,hooks}-<date>.jsonl` kept; older ones are deleted on the first log line of a new day. Clamped to 36500 (a century) — set it high to keep everything |
+| `gitAutoCommit` | `false` | when the vault is a git repo, commit the notes the distiller writes or merges at session end, in one commit, by path — never `git add -A`. See [Troubleshooting](#troubleshooting) for what counts as a no-op |
 
 `/memory:install` writes this file. `/memory:doctor` prints which source each value came from, and
 **hard-fails if you are pointed at an empty vault while a populated one exists** — the failure that
@@ -94,6 +95,7 @@ context-mode keep their settings in their own file for the same reason.
 
 Environment overrides are still honoured where they do reach the process:
 `CLAUDE_VAULT`, `MEMORY_RECALL_ENABLED=1`, `MEMORY_SEMANTIC_MODEL`, `MEMORY_LOG_RETENTION_DAYS`,
+`MEMORY_GIT_AUTO_COMMIT=1`,
 and `CLAUDE_MEMORY_HOME`
 (which relocates the state directory itself, so it can only be an env var).
 
@@ -202,6 +204,15 @@ outside the version-pinned plugin cache. `/memory:doctor` warns if they end up i
 *directory* symlinks with empty directories and rename the original to a `*_Conflict` entry. File
 symlinks survive. A symlink pointing *into* the vault from outside is fine — that is how the memory
 directory is wired.
+
+**Vault is a git repo, not a cloud-synced folder.** The symlink hazard above does not exist under
+git — a git checkout has no directory-symlink-replacement behaviour to worry about. It also does
+not sync itself: a commit only exists locally until something pushes it. Setting `gitAutoCommit`
+(off by default) makes the distiller commit, at session end, exactly the notes it wrote or merged
+that run, in one commit, using the vault repo's own `git config user.name`/`user.email`. It never
+runs `git add -A`, never pushes, and silently does nothing if the vault isn't a git repo, git isn't
+installed, no identity is configured, or there's nothing to commit — a session never fails because
+of it. `/memory:doctor` reports whether the resolved vault is git-backed or a plain directory.
 
 **Never point a hook at a throwaway vault on a live machine.** `vault-memory-sync.sh` repoints the
 real `~/.claude/projects/*/memory` symlink to whatever `CLAUDE_VAULT` says. It copies rather than

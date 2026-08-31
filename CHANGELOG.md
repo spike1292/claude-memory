@@ -9,6 +9,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **A vault may be a git repo, with an opt-in auto-commit of the notes the distiller writes.**
+  README documents that the cloud-sync symlink hazard does not apply under git, and that git does
+  not sync itself. `gitAutoCommit` (`config.json`, default `false`; `MEMORY_GIT_AUTO_COMMIT=1`)
+  makes the distiller commit, at session end, exactly the notes it wrote or merged that run — one
+  commit per `SessionEnd`/`Stop` invocation, staged by exact path (never `git add -A`), message
+  `distill(<slug>): wrote N note(s) — <titles>; merged M into existing`, using the vault repo's own
+  git identity. Never pushes; any failure (git missing, vault not a repo, no identity, nothing to
+  commit) is a silent no-op, same as every other hook. `/memory:doctor` reports whether the
+  resolved vault is git-backed or a plain directory. (#83)
+
 ### Fixed
 
 - **`reindex()` trusted `context-mode`'s own platform auto-detection for its storage root.** The

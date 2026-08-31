@@ -68,6 +68,7 @@ TRANSCRIPT:
  *   aliases?: unknown,
  * }} InsightItem
  * @typedef {{ patterns?: InsightItem[], mistakes?: InsightItem[], decisions?: InsightItem[] }} Insights
+ * @typedef {{ file: string, title: string, action: 'written'|'merged' }} WrittenNote
  */
 
 /**
@@ -654,14 +655,14 @@ export function dupeClient(cwd, slug) {
  * @param {Insights} insights
  * @param {string} slug
  * @param {string} cwd
- * @returns {Promise<{ written: number, merged: number, declined: number }>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, notes: WrittenNote[] }>}
  */
 async function writeNotes(insights, slug, cwd) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
-  let written = 0,
-    merged = 0,
-    declined = 0;
+  let declined = 0;
+  /** @type {WrittenNote[]} */
+  const notes = [];
 
   const ask = dupeClient(cwd, slug);
   // Notes written EARLIER IN THIS RUN. The index is rebuilt after the distillation, so the server
@@ -753,7 +754,7 @@ async function writeNotes(insights, slug, cwd) {
         declined++;
       } else {
         reconcile(hit.file, title, body, line, today);
-        merged++;
+        notes.push({ file: hit.file, title, action: 'merged' });
         return;
       }
     }
@@ -761,7 +762,7 @@ async function writeNotes(insights, slug, cwd) {
     const file = path.join(d, `${name}.md`);
     fs.writeFileSync(file, raw);
     if (vec) thisRun.push({ note: name, layer: folder, vec, file });
-    written++;
+    notes.push({ file, title, action: 'written' });
   };
 
   for (const it of insights.patterns || []) {
@@ -794,7 +795,70 @@ async function writeNotes(insights, slug, cwd) {
         it.aliases,
       );
   }
-  return { written, merged, declined };
+  const written = notes.filter((n) => n.action === 'written').length;
+  const merged = notes.filter((n) => n.action === 'merged').length;
+  return { written, merged, declined, notes };
+}
+
+/** 10s: local, fast git operations — the bound exists only to stop a stale index.lock or a gpg
+ *  pinentry prompt (commit.gpgsign, on the vault's ambient identity) from hanging the detached
+ *  distill worker forever and skipping reindex() right after it. */
+const GIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Commit, in one commit, exactly the notes this run wrote or merged — never `git add -A`. A
+ * human may hand-edit files elsewhere in the same vault repo; a blanket add would ship that by
+ * accident, which is the one thing this function exists to avoid.
+ *
+ * Off unless explicitly armed (paths.gitAutoCommitEnabled()), and any failure — git missing, the
+ * vault not a git work tree, no git identity configured, nothing to commit — degrades to a
+ * silent no-op, exactly like every other hook here. A session must never fail because of this.
+ *
+ * @param {WrittenNote[]} notes
+ * @param {number} merged count of `notes` merged into an existing file — writeNotes() already
+ *   computed this from the same partition; re-filtering here would just be a second copy of it
+ * @param {string} slug
+ * @returns {void}
+ */
+function autoCommit(notes, merged, slug) {
+  if (!paths.gitAutoCommitEnabled() || notes.length === 0) return;
+  const opts = { stdio: /** @type {const} */ ('ignore'), timeout: GIT_TIMEOUT_MS };
+  /** @type {string[] | undefined} */
+  let rel;
+  try {
+    // The vault itself must be the repo ROOT, not merely nested inside one. `rev-parse
+    // --is-inside-work-tree` would say yes for a vault sitting anywhere under an unrelated
+    // ambient repo (a whole-home dotfiles checkout, say) — fine for doctor.sh's informational
+    // "any depth" report, but committing here would silently write private note content into
+    // THAT repo's history, where the user's own workflow for it could push it: the exact leak
+    // "never pushes" is meant to prevent, just one hop removed.
+    const top = execFileSync('git', ['-C', VAULT, 'rev-parse', '--show-toplevel'], {
+      timeout: GIT_TIMEOUT_MS,
+      encoding: 'utf8',
+    }).trim();
+    if (fs.realpathSync(top) !== fs.realpathSync(VAULT)) return;
+    rel = notes.map((n) => path.relative(VAULT, n.file));
+    execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { ...opts, cwd: VAULT });
+    const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
+    const msg =
+      `distill(${slug}): wrote ${writtenTitles.length} note(s)` +
+      (writtenTitles.length ? ` — ${writtenTitles.join(', ')}` : '') +
+      (merged ? `; merged ${merged} into existing` : '');
+    execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], opts);
+  } catch {
+    // `add` may have already staged `rel` before `commit` failed (no identity, a pre-commit
+    // hook, an index.lock) — leaving that behind is not the no-op this degrades to everywhere
+    // else: it persists across every future SessionEnd, and once identity/whatever IS fixed, the
+    // next successful commit's message (built from THAT run's notes only) would understate what
+    // the diff actually contains. Best-effort unstage; guarded so a failure here can't escape.
+    if (rel) {
+      try {
+        execFileSync('git', ['-C', VAULT, 'reset', '--', ...rel], { ...opts, cwd: VAULT });
+      } catch {
+        /* nothing more this can do */
+      }
+    }
+  }
 }
 
 /**
@@ -940,7 +1004,8 @@ export async function distill(transcript, cwd) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd);
-  const { written, merged, declined } = await writeNotes(insights, slug, cwd);
+  const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
+  autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need
