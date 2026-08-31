@@ -223,8 +223,9 @@ echo "vault"
 echo "  resolved from: $(vault_source)"
 if [ -d "$VAULT" ]; then
   ok "vault exists"
-  # #83: a vault may itself be a git repo — auto-commit only matters, and only makes sense,
-  # when this is true. Detects a checkout at any depth, not just a `.git` at $VAULT exactly.
+  # #83: informational only — reports "any depth" (nested inside an ambient repo counts), unlike
+  # autoCommit() in distill-session.mjs, which requires the vault to be the repo ROOT before it
+  # will ever commit, so a vault nested in an unrelated repo never gets written to.
   if command -v git >/dev/null 2>&1 && git -C "$VAULT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     ok "vault kind: git-backed"
   else

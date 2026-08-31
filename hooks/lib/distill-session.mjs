@@ -820,7 +820,17 @@ function autoCommit(notes, slug) {
   // from hanging this detached worker forever and skipping reindex() right after it.
   const opts = { stdio: /** @type {const} */ ('ignore'), timeout: 10_000 };
   try {
-    execFileSync('git', ['-C', VAULT, 'rev-parse', '--is-inside-work-tree'], opts);
+    // The vault itself must be the repo ROOT, not merely nested inside one. `rev-parse
+    // --is-inside-work-tree` would say yes for a vault sitting anywhere under an unrelated
+    // ambient repo (a whole-home dotfiles checkout, say) — fine for doctor.sh's informational
+    // "any depth" report, but committing here would silently write private note content into
+    // THAT repo's history, where the user's own workflow for it could push it: the exact leak
+    // "never pushes" is meant to prevent, just one hop removed.
+    const top = execFileSync('git', ['-C', VAULT, 'rev-parse', '--show-toplevel'], {
+      timeout: 10_000,
+      encoding: 'utf8',
+    }).trim();
+    if (fs.realpathSync(top) !== fs.realpathSync(VAULT)) return;
     const rel = notes.map((n) => path.relative(VAULT, n.file));
     execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { ...opts, cwd: VAULT });
     const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
@@ -831,7 +841,7 @@ function autoCommit(notes, slug) {
       (mergedCount ? `; merged ${mergedCount} into existing` : '');
     execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], opts);
   } catch {
-    /* git missing, vault not a repo, no identity, nothing staged, timed out — all no-op */
+    /* git missing, vault not the repo root, no identity, nothing staged, timed out — all no-op */
   }
 }
 

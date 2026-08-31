@@ -1015,3 +1015,16 @@ test('auto-commit no-ops on a plain-directory vault; the session still succeeds'
   assert.strictEqual(notes.length, 3, 'the run itself is unaffected by the failed commit attempt');
   assert.ok(!fs.existsSync(path.join(root, 'vault', '.git')), 'never turns the vault into a repo');
 });
+
+test('auto-commit refuses when the vault only sits inside an ambient repo, not at its root', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  gitVault(root); // an ambient repo rooted ABOVE the vault dir, e.g. a whole-home dotfiles checkout
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the run itself is unaffected');
+  assert.deepStrictEqual(
+    commitsOf(root),
+    [],
+    'never commits into a repo the vault merely happens to be nested inside',
+  );
+});
