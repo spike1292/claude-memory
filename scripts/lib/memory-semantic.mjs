@@ -249,6 +249,7 @@ export function buildLexDocs(rowsUsed, mode) {
 //
 // A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
 // might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
+// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
 /**
  * @param {string} sockPath
  * @param {number} [timeoutMs]
