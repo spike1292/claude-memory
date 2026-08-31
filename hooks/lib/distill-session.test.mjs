@@ -952,6 +952,13 @@ const gitVault = (/** @type {string} */ dir) => {
   git('config', 'user.name', 'test');
 };
 
+/** git init with NO identity configured, and GIT_ENV neutralising any global one this machine
+ *  happens to have — `git commit` here fails for lack of author identity, deterministically. */
+const gitVaultNoIdentity = (/** @type {string} */ dir) => {
+  fs.mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['-C', dir, 'init', '-q'], { stdio: 'pipe', env: GIT_ENV });
+};
+
 const commitsOf = (/** @type {string} */ dir) => {
   try {
     return execFileSync('git', ['-C', dir, 'log', '--format=%s'], {
@@ -1039,5 +1046,27 @@ test('auto-commit refuses when the vault only sits inside an ambient repo, not a
     commitsOf(root),
     [],
     'never commits into a repo the vault merely happens to be nested inside',
+  );
+});
+
+test('auto-commit unstages notes when commit fails after add succeeded (e.g. no git identity)', (t) => {
+  const root = withStubClaude('#!/bin/sh\nexit 1\n');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const vault = path.join(root, 'vault');
+  gitVaultNoIdentity(vault);
+  const { notes } = runWorker(root, { DISTILL_DRYRUN: '1', MEMORY_GIT_AUTO_COMMIT: '1' });
+  assert.strictEqual(notes.length, 3, 'the run itself is unaffected by the failed commit');
+  assert.deepStrictEqual(
+    commitsOf(vault),
+    [],
+    'commit failed for lack of identity, so nothing landed',
+  );
+  const status = execFileSync('git', ['-C', vault, 'status', '--porcelain'], {
+    encoding: 'utf8',
+    env: GIT_ENV,
+  });
+  assert.ok(
+    !/^[AM]/m.test(status),
+    'add must be rolled back when commit fails — nothing left staged across future sessions',
   );
 });

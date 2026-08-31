@@ -823,6 +823,8 @@ const GIT_TIMEOUT_MS = 10_000;
 function autoCommit(notes, merged, slug) {
   if (!paths.gitAutoCommitEnabled() || notes.length === 0) return;
   const opts = { stdio: /** @type {const} */ ('ignore'), timeout: GIT_TIMEOUT_MS };
+  /** @type {string[] | undefined} */
+  let rel;
   try {
     // The vault itself must be the repo ROOT, not merely nested inside one. `rev-parse
     // --is-inside-work-tree` would say yes for a vault sitting anywhere under an unrelated
@@ -835,7 +837,7 @@ function autoCommit(notes, merged, slug) {
       encoding: 'utf8',
     }).trim();
     if (fs.realpathSync(top) !== fs.realpathSync(VAULT)) return;
-    const rel = notes.map((n) => path.relative(VAULT, n.file));
+    rel = notes.map((n) => path.relative(VAULT, n.file));
     execFileSync('git', ['-C', VAULT, 'add', '--', ...rel], { ...opts, cwd: VAULT });
     const writtenTitles = notes.filter((n) => n.action === 'written').map((n) => n.title);
     const msg =
@@ -844,7 +846,18 @@ function autoCommit(notes, merged, slug) {
       (merged ? `; merged ${merged} into existing` : '');
     execFileSync('git', ['-C', VAULT, 'commit', '-q', '-m', msg], opts);
   } catch {
-    /* git missing, vault not the repo root, no identity, nothing staged, timed out — all no-op */
+    // `add` may have already staged `rel` before `commit` failed (no identity, a pre-commit
+    // hook, an index.lock) — leaving that behind is not the no-op this degrades to everywhere
+    // else: it persists across every future SessionEnd, and once identity/whatever IS fixed, the
+    // next successful commit's message (built from THAT run's notes only) would understate what
+    // the diff actually contains. Best-effort unstage; guarded so a failure here can't escape.
+    if (rel) {
+      try {
+        execFileSync('git', ['-C', VAULT, 'reset', '--', ...rel], { ...opts, cwd: VAULT });
+      } catch {
+        /* nothing more this can do */
+      }
+    }
   }
 }
 
