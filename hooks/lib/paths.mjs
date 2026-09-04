@@ -359,11 +359,18 @@ export function projectKey(dir = process.cwd()) {
 /**
  * Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after.
  *
+ * Every character outside `[A-Za-z0-9_-]`, not just `/` — verified against Claude Code's
+ * own folder names: a dotted path (`~/.paseo/worktrees/...`) has `/.` become `--`, and a
+ * version-numbered path (`.../memory-0.6.0`) comes out `.../memory-0-6-0`, while `_` in a
+ * macOS tmp path (`.../folders/4c/xyz_50pp8w.../T`) survives untouched. A `/`-only replace
+ * left every Paseo worktree's `memory` symlink pointing at a slug Claude Code never writes
+ * transcripts into.
+ *
  * @param {string} [dir]
  * @returns {string}
  */
 export function legacyKey(dir = process.cwd()) {
-  return dir.replace(/\//g, '-');
+  return dir.replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
 /**

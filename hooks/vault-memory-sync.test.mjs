@@ -31,6 +31,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { legacyKey } from './lib/paths.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./vault-memory-sync.sh', import.meta.url));
 const REAL_HOME = os.homedir();
@@ -109,7 +110,7 @@ function runSync(world, repo, pwd = repo) {
   });
 }
 
-const slugOf = (/** @type {string} */ dir) => dir.replaceAll('/', '-');
+const slugOf = legacyKey;
 const write = (/** @type {string} */ p, /** @type {string} */ s) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, s);
