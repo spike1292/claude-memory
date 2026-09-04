@@ -21,6 +21,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Claude Code's auto memory reads our `MEMORY.md`](decisions/2026-08-22-auto-memory.md) | Co-operate rather than separate, the 25 KB load cap that becomes ours to report, and what to do about a second writer's frontmatter stamps. |
 | [The distiller dedups on embeddings](decisions/2026-08-23-embedding-reconcile.md) | Why the body-overlap arm caught 0 of 25, and why one predicate now serves both callers. |
 | [Where a comment lives](decisions/2026-08-23-comment-reader-distance.md) | Reader distance decides, not line count — and the count that shows why length would have deleted the load-bearing blocks first. |
+| [The eval gate](decisions/2026-09-04-eval-gate.md) | Soft, opt-in and fail-closed — the −52.8-point ablation behind it, and why a hard gate would stall on sets this small. |
 
 ## Guides
 

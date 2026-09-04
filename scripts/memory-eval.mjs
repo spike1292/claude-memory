@@ -27,6 +27,11 @@ import {
   goldCoverage,
   defaultCasesPath,
   minePrompts,
+  unscorableReason,
+  pairwise,
+  gateFailures,
+  casesHash,
+  KIND,
   GOLD,
   GOLD_FLOOR,
   RECALL_KS,
@@ -82,6 +87,9 @@ const KNOWN_FLAGS = new Set([
   '--mode',
   '--fetch-k',
   '--mine',
+  '--kind',
+  '--min-rank1',
+  '--freeze',
 ]);
 const unknownFlag = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
 if (unknownFlag) {
@@ -102,10 +110,21 @@ const SLUG = val('--slug') || paths.projectKey(repo);
 // script, always with a confident-looking wrong answer.
 console.error(`project: ${SLUG}  (from ${repo})`);
 const STYLE = val('--style') || 'semantic';
+// A tuning set may be fitted to; a held-out set may not, and the difference has to be mechanical
+// rather than remembered (#87). Default `tuning`, so every existing invocation resolves the file it
+// always did. defaultCasesPath throws on an unknown kind — caught here because a typo that fell
+// through to the tuning set would print a tuning number under a held-out label.
+const CASE_KIND = val('--kind') || KIND.tuning;
 // Case sets are generated FROM a real vault and contain its content, so they live in
 // machine-local state, never in the plugin (which is a public repo).
 const DATA = paths.stateDir('eval');
-const SCOPED_CASES = defaultCasesPath(DATA, SLUG, STYLE);
+let SCOPED_CASES;
+try {
+  SCOPED_CASES = defaultCasesPath(DATA, SLUG, STYLE, CASE_KIND);
+} catch (e) {
+  console.log(String(e instanceof Error ? e.message : e));
+  process.exit(1);
+}
 const CASES = val('--cases') || val('--out') || SCOPED_CASES;
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
@@ -215,6 +234,36 @@ if (flag('--mine')) {
     `${files.length} transcripts under ${roots.length} root(s): ${turns} user turns → ${seen.size} candidates (${turns - seen.size} dropped as noise or duplicate)`,
   );
   console.error('No gold notes attached — assign them by hand, then pipe to --author.');
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------- freeze
+
+// --freeze: record a case set's identity as a sha256 sidecar. A held-out set carries vault content
+// and stays machine-local, so "this set was not edited to fit the result" cannot be shown by
+// publishing it — the hash can be quoted in an issue or a decision record and checked later (#87).
+// `--run` verifies the sidecar whenever one exists, so freezing is what makes the promise enforced
+// rather than stated.
+if (flag('--freeze')) {
+  if (!fs.existsSync(CASES)) {
+    console.log(`no case set at ${CASES} to freeze.`);
+    process.exit(1);
+  }
+  const h = casesHash(fs.readFileSync(CASES, 'utf8'));
+  const side = `${CASES}.sha256`;
+  // Re-freezing is how a held-out set gets edited without anyone noticing, so it takes --force —
+  // the same gate --generate has, for the same reason.
+  if (fs.existsSync(side) && fs.readFileSync(side, 'utf8').trim() !== h && !flag('--force')) {
+    console.log(
+      `${side} records a DIFFERENT set. Re-freezing invalidates every number quoted against the old hash — pass --force if that is what you want.`,
+    );
+    process.exit(1);
+  }
+  fs.writeFileSync(side, `${h}\n`);
+  console.log(`${CASE_KIND} set frozen: ${CASES}\n  sha256 ${h}`);
+  console.log(
+    'Quote this hash wherever you quote a number from this set; the questions stay local.',
+  );
   process.exit(0);
 }
 
@@ -330,9 +379,25 @@ if (fs.statSync(CASES).isDirectory()) {
   console.log(`${CASES} is a directory. --cases takes a .jsonl case set.`);
   process.exit(1);
 }
-const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: string }[]} */ (
-  parseJsonl(fs.readFileSync(CASES, 'utf8'), CASES)
-);
+const casesText = fs.readFileSync(CASES, 'utf8');
+// A frozen set that no longer hashes to its sidecar is not this set. Refuse rather than score: the
+// only thing a held-out number is worth is the guarantee that the questions did not move.
+const sidecar = `${CASES}.sha256`;
+if (fs.existsSync(sidecar)) {
+  const want = fs.readFileSync(sidecar, 'utf8').trim();
+  const got = casesHash(casesText);
+  if (want !== got) {
+    console.log(
+      `${CASES} has changed since it was frozen.\n  frozen ${want}\n  now    ${got}\n` +
+        `Every number quoted against the frozen hash was measured on different questions. Re-freeze with --freeze --force if the edit was intended.`,
+    );
+    process.exit(1);
+  }
+}
+const cases =
+  /** @type {{ q: string, gold: string[], owner?: string, layer?: string, style?: string }[]} */ (
+    parseJsonl(casesText, CASES)
+  );
 
 // A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
@@ -400,6 +465,18 @@ if (!Number.isInteger(K) || K < 1) {
 }
 const KS = RECALL_KS.filter((k) => k <= K);
 
+// --min-rank1 turns a report into a GATE: below the floor the process exits non-zero, so CI or a
+// tuning loop fails instead of printing a regression nobody reads. Opt-in, because every existing
+// caller wants the report. Taken as a percentage to match how the numbers are quoted everywhere
+// else in this repo, and validated like --fetch-k — `--min-rank1 abc` gating on NaN would compare
+// false and pass every run silently, which is the failure the flag exists to prevent.
+const minRaw = flag('--min-rank1') ? Number(val('--min-rank1')) : null;
+if (minRaw !== null && (!Number.isFinite(minRaw) || minRaw < 0 || minRaw > 100)) {
+  console.log(`--min-rank1 takes a percentage between 0 and 100, got: ${val('--min-rank1')}`);
+  process.exit(1);
+}
+const MIN_RANK1 = minRaw === null ? null : minRaw / 100;
+
 /** @type {{ q: string, results: { note: string }[] }[]} */
 let ranked; // [{q, results:[{note}]}]
 if (mode === 'semantic') {
@@ -430,14 +507,35 @@ if (mode === 'semantic') {
   );
 }
 
-const perCase = cases.map((c, i) => {
+const scored = cases.map((c, i) => {
   const res = ranked[i]?.results || [];
-  const rank = res.findIndex((r) => c.gold.includes(r.note)) + 1;
-  return { q: c.q, gold: c.gold[0], layer: c.layer, rank, top1: res[0]?.note ?? null };
+  return {
+    q: c.q,
+    gold: c.gold[0],
+    layer: c.layer,
+    rank: res.findIndex((r) => c.gold.includes(r.note)) + 1,
+    // A pairwise case inverts what `gold` means — it names the note that must LOSE — so it is
+    // scored by pairwise() and kept out of recall@k, where it would count as a miss by design.
+    pair: c.owner ? pairwise(/** @type {{gold: string[], owner: string}} */ (c), res) : null,
+    unscorable: unscorableReason(c, res, known),
+    top1: res[0]?.note ?? null,
+  };
 });
+const perCase = scored.filter((c) => !c.pair);
+const pairs = scored.filter((c) => c.pair);
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
+const unscorable = scored.filter((c) => c.unscorable);
+const pairFails = pairs.filter((c) => !c.pair?.pass);
+// Decided before either report branch prints, because --json exits on its own and a gate that only
+// ran on the human path would pass every automated caller — which is the only caller a gate is for.
+const failures = gateFailures({
+  recall1: recall[1],
+  minRank1: MIN_RANK1,
+  unscorable: unscorable.length,
+  pairFails: pairFails.length,
+});
 
 // Every semantic number is model-dependent, so the model IS part of the measurement. Reporting a
 // recall figure without it is the provenance gap CLAIM-1 exists to catch.
@@ -449,6 +547,7 @@ if (flag('--json')) {
       // envelope could not tell a full case set from one a prune had eaten a quarter of.
       {
         cases: CASES,
+        kind: CASE_KIND,
         mode,
         model,
         fetchK: K,
@@ -461,15 +560,22 @@ if (flag('--json')) {
         // to whatever reads this, which is the whole failure #97 is about.
         recall: Object.fromEntries(KS.map((k) => [k, recall[k]])),
         mrr: +mrr.toFixed(3),
+        // Separate keys, never folded into `n` or into the misses: a machine reading this envelope
+        // has to be able to tell a case that scored zero from one that was never scored at all.
+        unscorable: unscorable.length,
+        pairwise: { total: pairs.length, failed: pairFails.length },
+        gate: failures,
       },
       null,
       2,
     ),
   );
-  process.exit(0);
+  process.exit(failures.length ? 1 : 0);
 }
+// The KIND is in the header because a number whose set kind is unknown is not printable (#87) —
+// the whole point of holding a set back is lost if a report cannot say which one it read.
 console.log(
-  `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
+  `${perCase.length} cases · ${CASE_KIND} · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
 );
 // Name the file the number came from, the way the `project:` echo names the vault. Every failure
 // in #97 is a figure attributed to a case set nobody checked; a number printed beside its source
@@ -493,4 +599,27 @@ if (buried.length) {
   console.log('\nBuried (found, but below rank 3):');
   for (const b of buried.slice(0, 8))
     console.log(`  rank ${b.rank}  ${b.gold}  (beaten by ${b.top1})`);
+}
+if (pairs.length)
+  console.log(
+    `\nPairwise (owner must outrank the named note): ${pairs.length - pairFails.length}/${pairs.length} passed`,
+  );
+// `absent` rather than `Infinity`: an owner that never appeared and an owner that came second are
+// different failures — one is a vocabulary gap, the other is a ranking one — and they want
+// different fixes.
+const rankLabel = (/** @type {number} */ r) => (Number.isFinite(r) ? String(r) : 'absent');
+for (const f of pairFails.slice(0, 8))
+  console.log(
+    `  owner ${rankLabel(f.pair?.owner ?? Infinity)}  named ${rankLabel(f.pair?.named ?? Infinity)}  Q: ${f.q.slice(0, 70)}`,
+  );
+// Named, not counted. An unscorable case is a broken instrument and the operator has to be able to
+// go and look at the one that broke; a bare tally is the quiet form of the same failure.
+if (unscorable.length) {
+  console.log(`\n${unscorable.length} case(s) could not be scored at all:`);
+  for (const u of unscorable.slice(0, 10))
+    console.log(`  ${u.unscorable}\n    Q: ${u.q.slice(0, 80)}`);
+}
+if (failures.length) {
+  console.log(`\nGATE FAILED:\n  ${failures.join('\n  ')}`);
+  process.exit(1);
 }

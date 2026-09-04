@@ -17,6 +17,7 @@
 // `node:fs`, `execFileSync`, `model-default.mjs` and `paths.mjs` were all imported and none of them
 // referenced — dead since the entry/lib split moved the CLI out. Dropped 2026-08-19.
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { bm25, lexTokens } from './lexical.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
@@ -113,9 +114,13 @@ export function lexicalRank(docs, queries, k) {
   });
 }
 
+// `unscorable` is counted, never subtracted: a case the instrument could not score stays in the
+// denominator so the printed recall does not quietly improve by dropping it, and the count travels
+// beside the number so a reader can tell "the gold note lost" from "there was nothing to score".
+// Collapsing the two is this repo's characteristic failure (#87).
 /**
- * @param {readonly { rank: number }[]} perCase
- * @returns {{ recall: Record<number, number>, mrr: number }}
+ * @param {readonly { rank: number, unscorable?: string|null }[]} perCase
+ * @returns {{ recall: Record<number, number>, mrr: number, unscorable: number }}
  */
 export function metrics(perCase) {
   const n = perCase.length || 1;
@@ -124,7 +129,7 @@ export function metrics(perCase) {
   for (const k of RECALL_KS)
     recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
   const mrr = perCase.reduce((a, c) => a + (c.rank ? 1 / c.rank : 0), 0) / n;
-  return { recall, mrr };
+  return { recall, mrr, unscorable: perCase.filter((c) => c.unscorable).length };
 }
 
 // The one place a case-set filename is built. It is slug- AND style-scoped because
@@ -134,9 +139,25 @@ export function metrics(perCase) {
 //
 // One place on purpose: the bug this fixes was a second, hand-written copy of this name drifting
 // from the resolver. Messages that quote a case-set path resolve it through here, never rebuild it.
-/** @param {string} dir @param {string} slug @param {string} style @returns {string} */
-export function defaultCasesPath(dir, slug, style) {
-  return path.join(dir, `eval-cases-${slug}-${style}.jsonl`);
+//
+// The KIND suffix arrived with #87 and is empty for a tuning set on purpose: every existing set is a
+// tuning set, so an unsuffixed name keeps working with no migration and no re-authoring. A held-out
+// set gets its own file because a shared one is a set a tuning run can reach by accident, and the
+// whole guarantee is that it cannot.
+/**
+ * @param {string} dir
+ * @param {string} slug
+ * @param {string} style
+ * @param {string} [kind]
+ * @returns {string}
+ */
+export function defaultCasesPath(dir, slug, style, kind = KIND.tuning) {
+  // Throwing, not defaulting: `--kind holdout` silently scoring the TUNING set would report a
+  // number the operator reads as held out, which is worse than no number at all.
+  if (kind !== KIND.tuning && kind !== KIND.heldOut)
+    throw new Error(`unknown case-set kind ${kind} — use ${KIND.tuning} or ${KIND.heldOut}`);
+  const suffix = kind === KIND.heldOut ? '-heldout' : '';
+  return path.join(dir, `eval-cases-${slug}-${style}${suffix}.jsonl`);
 }
 
 // The verdicts goldCoverage() decides. A constant, not a literal: a copy in the producer and
@@ -318,4 +339,105 @@ export function minePrompts(lines, seen) {
     kept++;
   }
   return { lines: count, turns, kept };
+}
+
+// ---------------------------------------------------------------- set kind, gate, pairwise (#87)
+
+// A tuning set may be fitted to; a held-out set may not. The distinction is only worth anything if
+// it is mechanical, so it lives in the FILENAME and in every report — not in a convention someone
+// remembers. Constants, not literals: a copy in the resolver and another in the reporter drift
+// apart in silence.
+export const KIND = /** @type {const} */ ({ tuning: 'tuning', heldOut: 'held-out' });
+
+// Why a case produced no number at all. Each is a broken instrument, not a bad result, and the gate
+// treats them as blocking for that reason: SkillOpt's ungated run lost 52.8 points by acting on
+// scores it should have refused (docs/decisions/2026-09-04-eval-gate.md).
+export const UNSCORABLE = /** @type {const} */ ({
+  gold: 'a gold or owner note named by this case is not in the vault',
+  empty: 'retrieval returned nothing for this question',
+  score: 'a returned result carries a non-finite score',
+});
+
+/**
+ * Can this case yield a number at all? Null means yes — including "yes, and the gold note lost".
+ *
+ * @param {{ gold?: unknown, owner?: unknown }} c
+ * @param {readonly { note: string, score?: number }[]} results
+ * @param {ReadonlySet<string>} known
+ * @returns {string|null}
+ */
+export function unscorableReason(c, results, known) {
+  if (!results.length) return UNSCORABLE.empty;
+  if (results.some((r) => r.score !== undefined && !Number.isFinite(r.score)))
+    return UNSCORABLE.score;
+  const refs = [...(Array.isArray(c.gold) ? c.gold : []), ...(c.owner ? [c.owner] : [])];
+  if (refs.some((g) => !known.has(g))) return UNSCORABLE.gold;
+  return null;
+}
+
+/**
+ * A pairwise case: the question belongs to `owner`, and `gold` names the note that must NOT win it.
+ *
+ * The owner has to be FOUND, not merely ahead. A question matching nothing satisfies "the named
+ * note did not win" and would score as a pass — a case that passes precisely when retrieval is
+ * broken. Infinity for absent makes both sides comparable while keeping that impossible.
+ *
+ * @param {{ gold: readonly string[], owner: string }} c
+ * @param {readonly { note: string }[]} results
+ * @returns {{ owner: number, named: number, pass: boolean }}
+ */
+export function pairwise(c, results) {
+  /** @param {string} n @returns {number} */
+  const rankOf = (n) => {
+    const i = results.findIndex((r) => r.note === n);
+    return i < 0 ? Infinity : i + 1;
+  };
+  const owner = rankOf(c.owner);
+  const named = Math.min(...c.gold.map(rankOf), Infinity);
+  return { owner, named, pass: Number.isFinite(owner) && owner < named };
+}
+
+/**
+ * The accept/reject rule, as a list of reasons to reject. Empty means accept.
+ *
+ * Separate from the reporting path because a report and a gate answer different questions: `--run`
+ * with no floor prints a number and exits 0, which is what every existing caller does. A floor is
+ * opt-in, and asking for one is what turns unscorable cases from a warning into a refusal.
+ *
+ * @param {{ recall1: number, minRank1: number|null, unscorable: number, pairFails: number }} x
+ * @returns {string[]}
+ */
+export function gateFailures({ recall1, minRank1, unscorable, pairFails }) {
+  const out = [];
+  // A pairwise case is an ASSERTION, not a metric, so it fails the run whether or not a floor was
+  // asked for. No existing case set has an owner field, so this changes nothing for any caller.
+  if (pairFails) out.push(`${pairFails} pairwise case(s) failed: the owner did not outrank`);
+  // Unscorable blocks only under a floor, and the reason is the `churn` band: a gold note removed
+  // by a prune is unscorable and has always been reported as a warning and scored past
+  // (goldCoverage above). Refusing it unprompted would break every plain `--run`. Asking for a
+  // floor is asking for an accept/reject decision, and that decision is the one that must fail
+  // closed — docs/decisions/2026-09-04-eval-gate.md.
+  if (minRank1 == null) return out;
+  if (unscorable)
+    out.push(`${unscorable} unscorable case(s) — the set did not measure them, so it did not pass`);
+  if (recall1 < minRank1)
+    out.push(
+      `recall@1 ${(recall1 * 100).toFixed(1)}% is below the floor ${(minRank1 * 100).toFixed(1)}%`,
+    );
+  return out;
+}
+
+/**
+ * The identity of a case set, publishable where its contents are not.
+ *
+ * A held-out set stays machine-local because it carries vault content, so "it was not edited to fit
+ * the result" cannot be shown by publishing it. A hash can be quoted in an issue or a decision
+ * record and checked later against the file. `trimEnd` so a trailing newline added by an editor is
+ * not a different set.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function casesHash(text) {
+  return createHash('sha256').update(text.replace(/\r\n/g, '\n').trimEnd()).digest('hex');
 }

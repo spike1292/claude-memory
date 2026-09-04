@@ -10,6 +10,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 ## [Unreleased]
 
 ### Added
+- `/memory:eval` gains a **held-out set kind and a gate** (#87). `--kind held-out` resolves its own
+  case file and every report and `--json` envelope echoes the kind; `--freeze` pins a set with a
+  sha256 sidecar that `--run` verifies, so a set edited after the fact is refused. `--min-rank1
+  <percent>` exits non-zero below the floor and **fails closed** — a case that could not be scored
+  at all blocks the run and is named, rather than being averaged into the misses. A case may carry
+  an `owner`, which the runner asserts outranks the case's own note; the owner must be found, so a
+  question matching nothing fails instead of passing vacuously. Existing sets resolve unchanged as
+  tuning sets. Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
+  `docs/decisions/2026-09-04-eval-gate.md`.
 
 - **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
   transcripts.** Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays

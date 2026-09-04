@@ -60,6 +60,34 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    whatever was pasted into a session, including credentials — one mining run here surfaced a
    1Password item id. Case sets stay machine-local and gitignored for this reason.
 
+   **Two kinds of set, and the difference is mechanical.** `--kind tuning` (the default, and what
+   every existing set is) may be fitted to. `--kind held-out` resolves its own file
+   `$STATE/eval/eval-cases-<slug>-<style>-heldout.jsonl` and is **off-limits to tuning**: not for
+   threshold selection, not for fusion-weight sweeps, not consulted while iterating. Every report and
+   `--json` envelope echoes the kind — a number whose set kind is unknown is not printable. Freeze a
+   held-out set once it is authored:
+
+   ```
+   node "$MEM/scripts/memory-eval.mjs" --kind held-out --freeze
+   ```
+
+   That writes a `.sha256` sidecar and prints the hash. Quote the hash wherever you quote a number
+   from the set; the questions stay machine-local. `--run` refuses a frozen set that no longer
+   matches, so "it was not edited to fit the result" is enforced rather than promised.
+
+   **`--min-rank1 <percent>` turns a report into a gate** — below the floor the process exits
+   non-zero, so CI or a tuning loop fails instead of printing a regression nobody reads. Under a
+   floor the gate **fails closed**: a case that could not be scored at all (no results, a non-finite
+   score, a gold note missing from the vault) blocks the run and is named in the output, rather than
+   being averaged away. Soft rather than strict-improvement, and why, in
+   [docs/decisions/2026-09-04-eval-gate.md](../docs/decisions/2026-09-04-eval-gate.md).
+
+   **Pairwise cases are cheap headroom on a small set.** A case may carry
+   `{"q":…,"gold":["loser"],"owner":"rightful-note"}`; the runner asserts the owner *outranks* the
+   named note, and the owner must be found — a question that matches nothing fails rather than
+   passing vacuously. These are scored apart from `recall@k`, where the inverted `gold` would count
+   as a miss by design, and they fail the run with or without `--min-rank1`.
+
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.
 
    ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
