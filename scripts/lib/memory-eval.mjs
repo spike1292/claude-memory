@@ -189,3 +189,133 @@ export function goldCoverage(cases, known) {
     verdict: fraction === 1 ? GOLD.ok : fraction >= GOLD_FLOOR ? GOLD.churn : GOLD.mismatch,
   };
 }
+
+// ---------------------------------------------------------------- mine
+
+// Held-out questions have to come from somewhere nobody could have fitted them to. Claude Code
+// transcripts are that source: prompts typed months before any tuning run, in the words the user
+// actually used. Authored paraphrases are not — this repo shipped inflated figures to five
+// artefacts because the questions moved with the result (#87).
+//
+// The bounds are empirical, from 3227 raw user turns across 26 transcript folders (2026-09-04).
+// Under 15 chars is "ok", "yes", "do 1" — no retrievable content. Over 400 is a pasted log or
+// diff, which is a document, not a question.
+export const MINE_MIN = 15;
+export const MINE_MAX = 400;
+
+// Prompts that are plumbing rather than speech. `tool_result` and `system-reminder` arrive as user
+// turns because that is how the harness threads them; `Caveat:` is Claude Code's own resumed-
+// session banner. None was typed by a human.
+const MINE_NOISE = /Caveat:|tool_result|system-reminder/;
+
+/**
+ * A parsed transcript record -> the human's prompt, or null when the record is not one.
+ *
+ * Split from the line form so the caller can count TURNS without parsing twice. The tally has to
+ * separate "lines read" from "user turns seen": a transcript is mostly assistant and tool records,
+ * so reporting lines as turns overstates the pool by two orders of magnitude — 212043 lines against
+ * 3227 real turns on this machine (2026-09-04). An estimate printed like a measurement is the
+ * failure this whole case-set effort exists to stop.
+ *
+ * @param {any} o
+ * @returns {string|null}
+ */
+export function mineTurn(o) {
+  const t = mineText(o);
+  if (t.length < MINE_MIN || t.length > MINE_MAX) return null;
+  // A slash command is an instruction to the harness, and `<` opens an injected XML payload. Both
+  // are the leading character on purpose: `/memory:eval` is noise, "what does /memory:eval do" is
+  // a question, and only the position tells them apart.
+  if (t.startsWith('/') || t.startsWith('<')) return null;
+  if (MINE_NOISE.test(t)) return null;
+  return t;
+}
+
+/**
+ * The speech in a record, normalised, or '' when it carries none.
+ *
+ * Empty is the signal that separates a HUMAN turn from a tool result: both arrive as `type: user`,
+ * because that is how the harness threads a tool's answer back. Counting tool results as turns
+ * reported 37878 where the machine holds ~3227 human ones (2026-09-04) — the same overstatement as
+ * counting lines, one level down.
+ *
+ * @param {any} o
+ * @returns {string}
+ */
+function mineText(o) {
+  const c = o.message?.content;
+  // Content is a bare string on older transcripts and a content-block array on newer ones. Only
+  // `text` blocks are speech; a `tool_result` block in the same array is the harness talking.
+  const raw =
+    typeof c === 'string'
+      ? c
+      : Array.isArray(c)
+        ? c
+            .filter((p) => p?.type === 'text' && typeof p.text === 'string')
+            .map((p) => p.text)
+            .join(' ')
+        : '';
+  return raw.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Is this record a human turn at all? The turn/prompt split is what makes the dropped count mean
+ * "a human said this and we rejected it" rather than "this file has assistant records in it".
+ *
+ * @param {any} o
+ * @returns {boolean}
+ */
+const isUserTurn = (o) => o?.type === 'user' && !o.isMeta && mineText(o) !== '';
+
+/**
+ * One transcript JSONL line -> the human's prompt, or null when the line is not one.
+ *
+ * Returns null rather than throwing on unparseable input: a transcript is an append log that can
+ * be truncated mid-write, and one bad tail line must not cost the other 3226.
+ *
+ * @param {string} line
+ * @returns {string|null}
+ */
+export function minePrompt(line) {
+  const o = mineParse(line);
+  return o && isUserTurn(o) ? mineTurn(o) : null;
+}
+
+/** @param {string} line @returns {any} */
+function mineParse(line) {
+  if (!line.trim()) return null;
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fold transcript lines into a candidate set, deduplicating on the prompt text.
+ *
+ * `seen` is the caller's, because deduplication has to span FOLDERS and not just files: the same
+ * sessions appear under more than one cwd-slug when a home directory is renamed. Measured
+ * 2026-09-04 — mining two such folders separately reported 142 unique each where the pair holds
+ * 142 between them, so a per-folder Set would have doubled the apparent pool.
+ *
+ * @param {Iterable<string>} lines
+ * @param {Set<string>} seen mutated
+ * @returns {{ lines: number, turns: number, kept: number }}
+ */
+export function minePrompts(lines, seen) {
+  let count = 0,
+    turns = 0,
+    kept = 0;
+  for (const l of lines) {
+    count++;
+    const o = mineParse(l);
+    if (!o || !isUserTurn(o)) continue;
+    turns++;
+    const q = mineTurn(o);
+    if (!q || seen.has(q)) continue;
+    seen.add(q);
+    kept++;
+  }
+  return { lines: count, turns, kept };
+}

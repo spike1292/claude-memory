@@ -9,6 +9,22 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
+  transcripts.** Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays
+  the human's half, because a producer that wrote both halves is how this repo shipped inflated
+  retrieval figures to five artefacts (#87). Takes a list of roots and deduplicates across them,
+  since one project's history is spread over several cwd-slug folders: two such folders each report
+  142 unique prompts and hold 142 between them. Filters out slash commands, injected XML, harness
+  banners, tool results and anything outside 15–400 characters, then reports turns read, candidates
+  kept and the number dropped.
+
+  Measured 2026-09-04 on one machine: 1332 transcripts, 3735 human turns, **947 candidates** —
+  142 for this repo, 498 for the largest project. Roughly one candidate in three is a retrieval
+  question rather than an instruction, so a usable held-out set is smaller again; that ratio is a
+  hand sample, not a count.
+
 ### Fixed
 
 - **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)

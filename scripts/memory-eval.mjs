@@ -26,6 +26,7 @@ import {
   lexicalRank,
   goldCoverage,
   defaultCasesPath,
+  minePrompts,
   GOLD,
   GOLD_FLOOR,
   RECALL_KS,
@@ -80,6 +81,7 @@ const KNOWN_FLAGS = new Set([
   '--style',
   '--mode',
   '--fetch-k',
+  '--mine',
 ]);
 const unknownFlag = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
 if (unknownFlag) {
@@ -163,6 +165,58 @@ const parseJsonl = (text, src) => {
 // `(42)?.trim()` throws where the type test refuses. The short form shipped for one commit.
 /** @param {unknown} q @returns {boolean} */
 const isQuestion = (q) => typeof q === 'string' && /[\p{L}\p{N}]/u.test(q);
+
+// ---------------------------------------------------------------- mine
+
+// --mine <dir>[,<dir>…]: emit candidate questions from Claude Code transcripts as {q} JSONL, with
+// NO gold. It never writes a case set. Assigning gold is the human's half, and keeping the two
+// halves in different hands is the whole point of a held-out set (#87) — a producer that wrote both
+// would reproduce the failure that put inflated figures in five artefacts.
+//
+// A LIST of roots, because one project's history is spread over several cwd-slug folders and the
+// deduplication has to span them: two folders holding 142 unique prompts each deduplicated to 143
+// between them (2026-09-04), so mining them separately would report the pool at twice its size.
+//
+// Candidates go to stdout and the tally to stderr, so the output pipes into an editor or a
+// labelling pass while the operator still sees what was dropped.
+if (flag('--mine')) {
+  const roots = (val('--mine') || '').split(',').filter(Boolean);
+  const absent = roots.filter((r) => !fs.existsSync(r));
+  if (!roots.length || absent.length) {
+    console.log(
+      `--mine needs transcript directories. Not found: ${absent.join(', ') || '(none given)'}`,
+    );
+    process.exit(1);
+  }
+  // Recursive: Claude Code keeps one FOLDER per cwd-slug, so a useful root is the parent of many
+  // folders as often as it is one folder.
+  const files = roots.flatMap((r) =>
+    fs
+      .readdirSync(r, { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => path.join(r, f)),
+  );
+  const seen = new Set();
+  let turns = 0;
+  for (const f of files) {
+    let text;
+    try {
+      text = fs.readFileSync(f, 'utf8');
+    } catch {
+      continue; // a transcript deleted mid-walk is not an error worth stopping a mining run for
+    }
+    turns += minePrompts(text.split('\n'), seen).turns;
+  }
+  for (const q of seen) console.log(JSON.stringify({ q }));
+  // Read, kept and dropped, all three: a candidate count alone cannot tell an operator whether the
+  // filters are too tight or the history is too thin, and those want opposite responses.
+  console.error(
+    `${files.length} transcripts under ${roots.length} root(s): ${turns} user turns → ${seen.size} candidates (${turns - seen.size} dropped as noise or duplicate)`,
+  );
+  console.error('No gold notes attached — assign them by hand, then pipe to --author.');
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------- generate
 

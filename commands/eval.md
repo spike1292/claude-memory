@@ -50,6 +50,16 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
    **No retrieval change ships without before/after numbers on the same cases.** Every previous run of this command hand-wrote its questions, so the reported movement measured the question set as much as the retrieval — "0.60 → 1.00" compared two different sets, written by someone who knew the vault and knew what had just been fixed. The versioned set measured **46.4%** where the hand-written one said 94%.
 
+   **Where the questions come from matters more than how many there are.** `--mine <dir>[,<dir>…]`
+   reads Claude Code transcript folders (`~/.claude/projects/<cwd-slug>/`) and emits candidate
+   questions as `{q}` JSONL with no gold note. Those prompts were typed before any tuning run, in
+   the words actually used, so they cannot have been shaped to fit a result — which is what a
+   held-out set needs and an authored paraphrase cannot give (#87). Pass every folder belonging to
+   the project in one comma-separated call so deduplication spans them. Assign gold notes by hand,
+   then pipe to `--author`. **Read what you mined before you keep it**: transcripts contain
+   whatever was pasted into a session, including credentials — one mining run here surfaced a
+   1Password item id. Case sets stay machine-local and gitignored for this reason.
+
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.
 
    ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
