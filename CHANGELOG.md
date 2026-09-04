@@ -9,6 +9,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)
+  silently lost every note from `SessionEnd`/`Stop` distillation, and always got the wrong
+  `memory` symlink.** `runExtractor()`'s two `claude -p` extractor calls inherited the detached
+  worker's own cwd; if that worktree was torn down before the call ran, the CLI refused to start
+  ("Can't access working directory") and both the primary and retry attempt failed identically —
+  zero notes written, not a partial loss. Fixed by running the extractor in `os.tmpdir()`, which
+  it never needed the project directory for. Separately, `legacyKey()` only replaced `/`, while
+  Claude Code's own `~/.claude/projects/<slug>/` naming replaces every character outside
+  `[A-Za-z0-9_-]` — so any dotted path landed the `memory` symlink in a folder Claude Code never
+  wrote transcripts into. Verified against real folder names on disk.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added
