@@ -869,6 +869,33 @@ const runWorker = (root, extraEnv = {}) => {
   return { lines, notes, calls };
 };
 
+test("the extractor never runs in the worker's own cwd — it must survive a deleted worktree", (t) => {
+  // The bug this guards: runExtractor() used to let `claude -p` inherit whatever cwd the worker
+  // process started in. A worktree torn down between the worker's spawn and this call made the
+  // CLI itself refuse to start ("Can't access working directory"), on both the flagged attempt
+  // and the retry — total note loss, not partial. The extractor only reads stdin, so it must run
+  // somewhere that is guaranteed to exist: os.tmpdir(). The pwd file lives in its own scratch
+  // dir, not under `root` (the stub script is written before `root` exists to reference it) and
+  // not under `tmpBase` (the top-level 'distill-session' test rm -rf's that one when it's done).
+  const pwdScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-pwd-'));
+  const pwdFile = path.join(pwdScratch, 'extractor-pwd');
+  const root = withStubClaude(
+    `#!/bin/sh\npwd -P > ${pwdFile}\ncat > /dev/null\n` +
+      `printf '%s' '{"patterns":[{"title":"P","description":"d","aliases":["a","b"]}],"mistakes":[],"decisions":[]}'\n`,
+  );
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(pwdScratch, { recursive: true, force: true });
+  });
+  runWorker(root);
+  const recordedPwd = fs.readFileSync(pwdFile, 'utf8').trim();
+  assert.strictEqual(
+    recordedPwd,
+    fs.realpathSync(os.tmpdir()),
+    'extractor must run in os.tmpdir()',
+  );
+});
+
 test('a CLI too old for --output-format still produces notes', (t) => {
   // The fallback in parseEnvelope covers a CLI that stops WRAPPING its output. This covers the
   // other half — a CLI that does not know the flag exits on the unknown argument before doing any

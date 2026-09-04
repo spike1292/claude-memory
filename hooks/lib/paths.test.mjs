@@ -109,16 +109,16 @@ test('paths', async (t) => {
     // "replace every non-alnum char" regex would have broken instead.
     const cases = /** @type {const} */ ([
       [
-        '/Users/h32232/.some-tool/worktrees/1mjlho15/mindless-jaguar',
-        '-Users-h32232--some-tool-worktrees-1mjlho15-mindless-jaguar',
+        '/Users/bob/.some-tool/worktrees/1mjlho15/mindless-jaguar',
+        '-Users-bob--some-tool-worktrees-1mjlho15-mindless-jaguar',
       ],
       [
-        '/Users/h32232/.claude/plugins/cache/claude-memory/memory-0.6.0',
-        '-Users-h32232--claude-plugins-cache-claude-memory-memory-0-6-0',
+        '/Users/bob/.claude/plugins/cache/claude-memory/memory-0.6.0',
+        '-Users-bob--claude-plugins-cache-claude-memory-memory-0-6-0',
       ],
       [
-        '/private/var/folders/4c/1pby5bdx06zf7j_50pp8w1700000gp/T',
-        '-private-var-folders-4c-1pby5bdx06zf7j_50pp8w1700000gp-T',
+        '/private/var/folders/4c/abc123xy_z9900011122gp/T',
+        '-private-var-folders-4c-abc123xy_z9900011122gp-T',
       ],
     ]);
     for (const [input, expected] of cases) {
