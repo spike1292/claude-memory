@@ -101,6 +101,31 @@ test('paths', async (t) => {
     assert.strictEqual(fresh(plain), legacyKey(plain), 'non-git dir falls back to the path slug');
   });
 
+  await t.test("legacyKey() matches Claude Code's own ~/.claude/projects/<slug>/ naming", () => {
+    // Pinned against real folder names on disk, not against legacyKey() itself — every other
+    // caller in this suite uses legacyKey() as its own oracle, which can't catch a regression
+    // in the regex. `/.` -> `--` and the version-number case are what broke a dotted worktree
+    // path's `memory` symlink before this fix; the underscore case is what a naive
+    // "replace every non-alnum char" regex would have broken instead.
+    const cases = /** @type {const} */ ([
+      [
+        '/Users/h32232/.some-tool/worktrees/1mjlho15/mindless-jaguar',
+        '-Users-h32232--some-tool-worktrees-1mjlho15-mindless-jaguar',
+      ],
+      [
+        '/Users/h32232/.claude/plugins/cache/claude-memory/memory-0.6.0',
+        '-Users-h32232--claude-plugins-cache-claude-memory-memory-0-6-0',
+      ],
+      [
+        '/private/var/folders/4c/1pby5bdx06zf7j_50pp8w1700000gp/T',
+        '-private-var-folders-4c-1pby5bdx06zf7j_50pp8w1700000gp-T',
+      ],
+    ]);
+    for (const [input, expected] of cases) {
+      assert.strictEqual(legacyKey(input), expected, input);
+    }
+  });
+
   await t.test('a repo with NO origin remote keys on the directory name, lowercased only', () => {
     // The shell this replaced ran `basename "$_top" | tr 'A-Z' 'a-z'` on this branch. The
     // 2026-08-18 port ran the whole normaliseRemote() pipeline instead, which also strips a

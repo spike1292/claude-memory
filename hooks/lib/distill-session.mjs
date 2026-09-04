@@ -474,8 +474,9 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
         timeout: 150_000,
         maxBuffer: 16 * 1024 * 1024,
         // Never the target project's cwd: it can vanish out from under a detached worker
-        // (a Paseo worktree torn down mid-run) and the CLI refuses to even start in a
-        // missing directory. The extractor only reads stdin, so any real directory does.
+        // (a worktree torn down mid-run by an external tool) and the CLI refuses to even
+        // start in a missing directory. The extractor only reads stdin, so any real
+        // directory does.
         cwd: os.tmpdir(),
         env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' }, // guard against recursive Stop hook
       }),
