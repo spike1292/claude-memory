@@ -31,6 +31,7 @@ import {
   markerPath,
   nowSeconds,
   readMarker,
+  requireHookCwd,
   which,
   withinDebounce,
   writeMarker,
@@ -1043,8 +1044,13 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
   // Same shape as a missing transcript: the payload is this hook's only source of scope, and
   // spawning the worker with a guessed cwd would write into whatever project happens to be
-  // current rather than the one the session ran in.
-  if (!p?.cwd) return { run: false, reason: GATE_REASONS.noCwd };
+  // current rather than the one the session ran in. requireHookCwd() is the write-path check;
+  // the gate itself still never blocks, it only declines to spawn.
+  try {
+    requireHookCwd(p);
+  } catch {
+    return { run: false, reason: GATE_REASONS.noCwd };
+  }
 
   const transcript = p?.transcript_path;
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
@@ -1083,16 +1089,13 @@ export function gate(p) {
   const plan = gatePlan(p);
   if (!plan.run) return plan;
   writeMarker(plan.marker, plan.now);
+  // gatePlan already refused to run without a cwd, so this never throws in practice.
+  const cwd = requireHookCwd(p);
   const pid = detach(
     process.execPath,
-    // gatePlan already refused to run without p.cwd, so this is never a fallback.
-    [
-      path.join(paths.hooksDir, 'distill-session.mjs'),
-      plan.transcript,
-      /** @type {string} */ (p?.cwd),
-    ],
+    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd],
     {
-      cwd: p?.cwd,
+      cwd,
       logFile: path.join(paths.stateDir('logs'), 'distill.log'),
       env: { MEMORY_HOOK_SESSION: p?.session_id },
     },
