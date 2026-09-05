@@ -74,9 +74,12 @@ code by design, and `tsc --noEmit` reads it — applying "dies" to the annotatio
 type checking. The exemption is for the annotations, **not for the delimiter**.
 
 That matters because the scan classifies a block by its first line, so every prose-bearing JSDoc
-block falls outside the 118 by construction. `trimLog` (`hooks/lib/hook-io.mjs:420`) is the shape:
+block falls outside the 118 by construction. `trimLog` was the shape at the time of this sweep:
 30 lines, one `@param`, the rest design prose carrying `NOT ATOMIC, and deliberately not made so
-(2026-08-19, raised twice in review of #24)` — which #36 names as load-bearing.
+(2026-08-19, raised twice in review of #24)` — which #36 names as load-bearing. **Moved to
+`docs/architecture.md` "H15" on 2026-09-05**, once the prose-ceiling rule made even a load-bearing
+block a candidate to move rather than stay — the fact survives, the line in `hook-io.mjs` is now a
+pointer to it.
 `hooks/lib/graph-staleness-check.mjs:198` is another 30 lines holding the deleted supervisor.
 
 **So 118 is a floor on the worklist, not the worklist.** A sweep that runs the scan and stops has
