@@ -25,6 +25,7 @@ import {
   pairwise,
   gateFailures,
   casesHash,
+  kindOfPath,
 } from './memory-eval.mjs';
 
 test('titleTokens drops short tokens', () => {
@@ -754,6 +755,11 @@ test('unscorableReason separates a broken instrument from a bad score', () => {
   // Gold present, retrieval answered, and the gold note lost. That is a MISS, which is a number.
   assert.equal(unscorableReason({ gold: ['note-a'] }, ok, known), null);
   assert.equal(unscorableReason({ gold: ['gone'] }, ok, known), UNSCORABLE.gold);
+  // `gold` is a DISJUNCTION — any member hitting is a hit — so one pruned member leaves the case
+  // scorable. Requiring every member marked a case that ranked 1 as unmeasurable, then blocked the
+  // gate on it.
+  assert.equal(unscorableReason({ gold: ['note-a', 'gone'] }, ok, known), null);
+  assert.equal(unscorableReason({ gold: [] }, ok, known), UNSCORABLE.gold);
   assert.equal(unscorableReason({ gold: ['note-a'] }, [], known), UNSCORABLE.empty);
   assert.equal(
     unscorableReason({ gold: ['note-a'] }, [{ note: 'note-b', score: NaN }], known),
@@ -775,36 +781,77 @@ test('a pairwise case fails when its owner is absent, never passes vacuously', (
   assert.equal(pairwise(c, [{ note: 'right-note' }]).pass, true);
 });
 
-test('metrics counts unscorable cases apart from cases that scored zero', () => {
-  const m = metrics([{ rank: 1 }, { rank: 0 }, { rank: 0, unscorable: UNSCORABLE.gold }]);
-  assert.equal(m.unscorable, 1, 'collapsing these into misses is the silent fallback this forbids');
-  assert.equal(m.recall[1], 1 / 3);
+test('metrics keeps an unscorable case in the denominator', () => {
+  // Dropping it would make the printed recall improve because the instrument broke. Counting them
+  // is the CLI's job — over the whole set, including the pairwise cases metrics() never sees.
+  assert.equal(metrics([{ rank: 1 }, { rank: 0 }, { rank: 0 }]).recall[1], 1 / 3);
+});
+
+test('kindOfPath reads the kind off the file, so a mislabelling flag cannot win', () => {
+  assert.equal(kindOfPath('/e/eval-cases-p-semantic.jsonl'), KIND.tuning);
+  assert.equal(kindOfPath('/e/eval-cases-p-semantic-heldout.jsonl'), KIND.heldOut);
+  // The resolver and the reader must agree, or a held-out set reports as tuning on its own path.
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'p', 'semantic', KIND.heldOut)), KIND.heldOut);
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'p', 'semantic')), KIND.tuning);
 });
 
 test('the gate fails closed on an unscorable case, whatever the score is', () => {
   // 100% recall@1 and still a failure: a set that could not score one case did not measure it.
-  const f = gateFailures({ recall1: 1, minRank1: 0.8, unscorable: 1, pairFails: 0 });
+  const f = gateFailures({
+    recall1: 1,
+    minRank1: 0.8,
+    unscorable: 1,
+    pairFails: 0,
+    recallCases: 4,
+  });
   assert.equal(f.length, 1);
   assert.match(f[0], /unscorable/);
   // Without a floor it stays a warning, because the churn band has always scored past a pruned
   // gold note and refusing it unprompted would break every plain --run.
-  assert.deepEqual(gateFailures({ recall1: 1, minRank1: null, unscorable: 1, pairFails: 0 }), []);
+  assert.deepEqual(
+    gateFailures({ recall1: 1, minRank1: null, unscorable: 1, pairFails: 0, recallCases: 4 }),
+    [],
+  );
 });
 
 test('the gate reads the floor and the pairwise cases, and passes when both hold', () => {
-  assert.deepEqual(gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 0 }), []);
+  assert.deepEqual(
+    gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 4 }),
+    [],
+  );
   assert.equal(
-    gateFailures({ recall1: 0.79, minRank1: 0.8, unscorable: 0, pairFails: 0 }).length,
+    gateFailures({ recall1: 0.79, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 4 })
+      .length,
     1,
   );
   assert.equal(
-    gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 2 }).length,
+    gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 2, recallCases: 4 })
+      .length,
     1,
   );
   // No floor asked for means no floor enforced — a plain report still exits 0.
-  assert.deepEqual(gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 0 }), []);
+  assert.deepEqual(
+    gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 0, recallCases: 4 }),
+    [],
+  );
   // …but a pairwise case is an assertion, not a metric, so it fails with or without a floor.
-  assert.equal(gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 1 }).length, 1);
+  assert.equal(
+    gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 1, recallCases: 4 })
+      .length,
+    1,
+  );
+  // An all-pairwise set has NO recall population, and metrics() divides by `|| 1`, so the floor was
+  // compared against a 0 that nothing had measured — "0 cases · recall@1 0.0% · GATE FAILED" on a
+  // set where every assertion passed. A floor over an empty population is not a low score.
+  assert.deepEqual(
+    gateFailures({ recall1: 0, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 0 }),
+    [],
+  );
+  // …and the other two checks still bite there, because neither is about recall.
+  assert.equal(
+    gateFailures({ recall1: 0, minRank1: 0.8, unscorable: 1, pairFails: 0, recallCases: 0 }).length,
+    1,
+  );
 });
 
 test('casesHash ignores trailing-newline churn but not a changed question', () => {
@@ -931,4 +978,87 @@ test('CLI --freeze pins a case set and --run refuses it once edited', () => {
   // Re-freezing an already-frozen set takes --force, or a held-out set can be edited to fit.
   assert.equal(run('--freeze', '--cases', casesPath).status, 1);
   assert.equal(run('--freeze', '--force', '--cases', casesPath).status, 0);
+});
+
+test('CLI reports the kind of the FILE, not of the flag', () => {
+  // --cases names a path outright, so --kind must not get to assert what that file is. This printed
+  // `held-out` over a tuning set's number — the mislabelling the kind exists to prevent, reached by
+  // the override path instead of by a typo.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--kind', 'held-out', '--mode', 'lexical');
+  assert.match(r.stdout, /· tuning ·/, `a tuning file must report tuning:\n${r.stdout}`);
+  assert.ok(!r.stdout.includes('· held-out ·'));
+  // …and the same file renamed to the held-out form reports held-out with no flag at all.
+  const held = casesPath.replace(/\.jsonl$/, '-heldout.jsonl');
+  fs.copyFileSync(casesPath, held);
+  assert.match(run('--run', '--cases', held, '--mode', 'lexical').stdout, /· held-out ·/);
+});
+
+test('CLI --json carries the kind and the gate, and exits non-zero on a failure', () => {
+  // The only caller a gate is for is an automated one, and --json is how it reads the run.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['third-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100', '--json');
+  assert.equal(r.status, 1, `--json must honour the gate, not just print it:\n${r.stdout}`);
+  const env = JSON.parse(r.stdout);
+  assert.equal(env.kind, 'tuning');
+  assert.equal(env.unscorable, 0);
+  assert.deepEqual(env.pairwise, { total: 0, failed: 0 });
+  assert.equal(env.gate.length, 1);
+  assert.match(env.gate[0], /recall@1/);
+  // Without the floor the same envelope reports a clean gate and exits 0.
+  const ok = run('--run', '--cases', casesPath, '--mode', 'lexical', '--json');
+  assert.equal(ok.status, 0);
+  assert.deepEqual(JSON.parse(ok.stdout).gate, []);
+});
+
+test('CLI does not call a multi-gold case unscorable because one member was pruned', () => {
+  // gold is a disjunction: the case ranked 1 on its surviving member. Reporting it as unmeasurable
+  // and blocking the gate on it is the instrument lying about itself.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note', 'pruned-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(r.status, 0, `a scorable case must not block the gate:\n${r.stdout}${r.stderr}`);
+  assert.ok(!r.stdout.includes('could not be scored'), r.stdout);
+});
+
+test('CLI does not apply a recall floor to a set that has no recall cases', () => {
+  // Every case is pairwise, so perCase is empty and metrics() divides by `|| 1`. The floor was
+  // compared against a 0 nothing had measured, and printed a bar chart beside it.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '50');
+  assert.equal(r.status, 0, `an all-pairwise set must not fail on recall:\n${r.stdout}`);
+  assert.match(r.stdout, /no recall cases in this set/);
+  assert.ok(!r.stdout.includes('recall@1'), `no bar chart without a population:\n${r.stdout}`);
+});
+
+test('CLI --author refuses to replace a frozen case set without --force', () => {
+  // Freezing is sold as "this set was not edited to fit a result". --author silently overwriting it
+  // is exactly that edit; --run would refuse the mismatch afterwards, but the questions are gone.
+  const { run, casesPath } = scratch(['owner-note', 'other-note'], null, RANKED_BODIES);
+  const line = JSON.stringify({ q: RANKED_Q, gold: ['owner-note'] }) + '\n';
+  assert.equal(run('--author', '--out', casesPath, { stdin: line }).status, 0);
+  assert.equal(run('--freeze', '--cases', casesPath).status, 0);
+  const blocked = run('--author', '--out', casesPath, { stdin: line });
+  assert.equal(
+    blocked.status,
+    1,
+    `a frozen set must not be re-authored silently:\n${blocked.stdout}`,
+  );
+  assert.match(blocked.stdout, /is frozen/);
+  assert.equal(run('--author', '--force', '--out', casesPath, { stdin: line }).status, 0);
 });

@@ -114,13 +114,13 @@ export function lexicalRank(docs, queries, k) {
   });
 }
 
-// `unscorable` is counted, never subtracted: a case the instrument could not score stays in the
-// denominator so the printed recall does not quietly improve by dropping it, and the count travels
-// beside the number so a reader can tell "the gold note lost" from "there was nothing to score".
-// Collapsing the two is this repo's characteristic failure (#87).
+// An unscorable case stays in the denominator: the printed recall must not quietly improve by
+// dropping the cases the instrument could not measure. Counting them is the CALLER's, over the
+// whole set including pairwise cases, which this function does not see — a count here would be a
+// second definition of one quantity over a different population.
 /**
- * @param {readonly { rank: number, unscorable?: string|null }[]} perCase
- * @returns {{ recall: Record<number, number>, mrr: number, unscorable: number }}
+ * @param {readonly { rank: number }[]} perCase
+ * @returns {{ recall: Record<number, number>, mrr: number }}
  */
 export function metrics(perCase) {
   const n = perCase.length || 1;
@@ -129,7 +129,7 @@ export function metrics(perCase) {
   for (const k of RECALL_KS)
     recall[k] = perCase.filter((c) => c.rank > 0 && c.rank <= k).length / n;
   const mrr = perCase.reduce((a, c) => a + (c.rank ? 1 / c.rank : 0), 0) / n;
-  return { recall, mrr, unscorable: perCase.filter((c) => c.unscorable).length };
+  return { recall, mrr };
 }
 
 // The one place a case-set filename is built. It is slug- AND style-scoped because
@@ -156,8 +156,9 @@ export function defaultCasesPath(dir, slug, style, kind = KIND.tuning) {
   // number the operator reads as held out, which is worse than no number at all.
   if (kind !== KIND.tuning && kind !== KIND.heldOut)
     throw new Error(`unknown case-set kind ${kind} — use ${KIND.tuning} or ${KIND.heldOut}`);
-  const suffix = kind === KIND.heldOut ? '-heldout' : '';
-  return path.join(dir, `eval-cases-${slug}-${style}${suffix}.jsonl`);
+  return kind === KIND.heldOut
+    ? path.join(dir, `eval-cases-${slug}-${style}${HELD_OUT_SUFFIX}`)
+    : path.join(dir, `eval-cases-${slug}-${style}.jsonl`);
 }
 
 // The verdicts goldCoverage() decides. A constant, not a literal: a copy in the producer and
@@ -349,6 +350,23 @@ export function minePrompts(lines, seen) {
 // apart in silence.
 export const KIND = /** @type {const} */ ({ tuning: 'tuning', heldOut: 'held-out' });
 
+const HELD_OUT_SUFFIX = '-heldout.jsonl';
+
+/**
+ * The kind of the case set actually being read, from its resolved path.
+ *
+ * Reported kind comes from the FILE, never from `--kind`, because the two can disagree: `--cases`
+ * names a path outright, so `--kind held-out --cases <a tuning set>` would otherwise print a tuning
+ * number under a held-out label — the exact mislabelling the kind exists to prevent, reached by the
+ * override path instead of by a typo.
+ *
+ * @param {string} p
+ * @returns {string}
+ */
+export function kindOfPath(p) {
+  return p.endsWith(HELD_OUT_SUFFIX) ? KIND.heldOut : KIND.tuning;
+}
+
 // Why a case produced no number at all. Each is a broken instrument, not a bad result, and the gate
 // treats them as blocking for that reason: SkillOpt's ungated run lost 52.8 points by acting on
 // scores it should have refused (docs/decisions/2026-09-04-eval-gate.md).
@@ -370,8 +388,14 @@ export function unscorableReason(c, results, known) {
   if (!results.length) return UNSCORABLE.empty;
   if (results.some((r) => r.score !== undefined && !Number.isFinite(r.score)))
     return UNSCORABLE.score;
-  const refs = [...(Array.isArray(c.gold) ? c.gold : []), ...(c.owner ? [c.owner] : [])];
-  if (refs.some((g) => !known.has(g))) return UNSCORABLE.gold;
+  // `some` for gold, `every` for owner, and the asymmetry is the point. `gold` is a DISJUNCTION
+  // everywhere else — `c.gold.includes(r.note)` scores a hit on ANY member — so one pruned member
+  // leaves the case perfectly scorable, and the `some(!known)` this replaces reported a case that
+  // ranked 1 as unmeasurable, then blocked the gate on it. `owner` is a single ref naming the note
+  // that must win, so losing it loses the assertion outright.
+  const gold = Array.isArray(c.gold) ? c.gold : [];
+  if (!gold.some((g) => known.has(g))) return UNSCORABLE.gold;
+  if (c.owner && !known.has(String(c.owner))) return UNSCORABLE.gold;
   return null;
 }
 
@@ -380,7 +404,8 @@ export function unscorableReason(c, results, known) {
  *
  * The owner has to be FOUND, not merely ahead. A question matching nothing satisfies "the named
  * note did not win" and would score as a pass — a case that passes precisely when retrieval is
- * broken. Infinity for absent makes both sides comparable while keeping that impossible.
+ * broken. The `Infinity` sentinel is what makes that impossible, rather than a separate guard on
+ * the owner: `named` is at most Infinity, so an absent owner can never compare less than it.
  *
  * @param {{ gold: readonly string[], owner: string }} c
  * @param {readonly { note: string }[]} results
@@ -394,7 +419,7 @@ export function pairwise(c, results) {
   };
   const owner = rankOf(c.owner);
   const named = Math.min(...c.gold.map(rankOf), Infinity);
-  return { owner, named, pass: Number.isFinite(owner) && owner < named };
+  return { owner, named, pass: owner < named };
 }
 
 /**
@@ -404,10 +429,11 @@ export function pairwise(c, results) {
  * with no floor prints a number and exits 0, which is what every existing caller does. A floor is
  * opt-in, and asking for one is what turns unscorable cases from a warning into a refusal.
  *
- * @param {{ recall1: number, minRank1: number|null, unscorable: number, pairFails: number }} x
+ * @param {{ recall1: number, minRank1: number|null, unscorable: number, pairFails: number,
+ *   recallCases: number }} x
  * @returns {string[]}
  */
-export function gateFailures({ recall1, minRank1, unscorable, pairFails }) {
+export function gateFailures({ recall1, minRank1, unscorable, pairFails, recallCases }) {
   const out = [];
   // A pairwise case is an ASSERTION, not a metric, so it fails the run whether or not a floor was
   // asked for. No existing case set has an owner field, so this changes nothing for any caller.
@@ -420,6 +446,10 @@ export function gateFailures({ recall1, minRank1, unscorable, pairFails }) {
   if (minRank1 == null) return out;
   if (unscorable)
     out.push(`${unscorable} unscorable case(s) — the set did not measure them, so it did not pass`);
+  // A set of only pairwise cases has NO recall cases, and `metrics()` divides by `|| 1`, so the
+  // floor was compared against a 0 that nothing had measured — "0 cases · recall@1 0.0% · GATE
+  // FAILED" on a set where every assertion passed. A floor over an empty population is not a score.
+  if (!recallCases) return out;
   if (recall1 < minRank1)
     out.push(
       `recall@1 ${(recall1 * 100).toFixed(1)}% is below the floor ${(minRank1 * 100).toFixed(1)}%`,

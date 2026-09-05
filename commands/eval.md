@@ -64,7 +64,9 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    every existing set is) may be fitted to. `--kind held-out` resolves its own file
    `$STATE/eval/eval-cases-<slug>-<style>-heldout.jsonl` and is **off-limits to tuning**: not for
    threshold selection, not for fusion-weight sweeps, not consulted while iterating. Every report and
-   `--json` envelope echoes the kind — a number whose set kind is unknown is not printable. Freeze a
+   `--json` envelope echoes the kind — a number whose set kind is unknown is not printable. The kind
+   is read off the resolved **filename**, so `--kind` decides which file the default resolves to and
+   does not get to assert what an explicit `--cases` path is. Freeze a
    held-out set once it is authored:
 
    ```

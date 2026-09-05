@@ -31,6 +31,7 @@ import {
   pairwise,
   gateFailures,
   casesHash,
+  kindOfPath,
   KIND,
   GOLD,
   GOLD_FLOOR,
@@ -126,6 +127,11 @@ try {
   process.exit(1);
 }
 const CASES = val('--cases') || val('--out') || SCOPED_CASES;
+// Reported from the resolved FILE, never from the flag. `--cases` names a path outright, so
+// `--kind held-out --cases <a tuning set>` printed a tuning number under a held-out label — the
+// mislabelling `--kind` exists to prevent, reached by the override instead of by a typo. `--kind`
+// still decides which file the DEFAULT resolves to; it does not get to assert what a named file is.
+const REPORTED_KIND = kindOfPath(CASES);
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
 
@@ -260,7 +266,7 @@ if (flag('--freeze')) {
     process.exit(1);
   }
   fs.writeFileSync(side, `${h}\n`);
-  console.log(`${CASE_KIND} set frozen: ${CASES}\n  sha256 ${h}`);
+  console.log(`${REPORTED_KIND} set frozen: ${CASES}\n  sha256 ${h}`);
   console.log(
     'Quote this hash wherever you quote a number from this set; the questions stay local.',
   );
@@ -296,6 +302,15 @@ if (flag('--author')) {
   }
   if (bad.length) {
     console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`);
+    process.exit(1);
+  }
+  // A frozen set is one someone has quoted a hash for. Re-authoring over it is how a held-out set
+  // gets edited to fit a result — the one thing freezing is sold as preventing. `--run` would
+  // refuse the mismatch afterwards, but by then the questions are gone; refuse here instead.
+  if (fs.existsSync(`${CASES}.sha256`) && !flag('--force')) {
+    console.log(
+      `${CASES} is frozen. Re-authoring replaces the questions every number quoted against its hash was measured on — pass --force if that is what you want, then --freeze --force.`,
+    );
     process.exit(1);
   }
   // Never write an empty set. `--author` has no --force gate, so an upstream producer that failed,
@@ -535,6 +550,7 @@ const failures = gateFailures({
   minRank1: MIN_RANK1,
   unscorable: unscorable.length,
   pairFails: pairFails.length,
+  recallCases: perCase.length,
 });
 
 // Every semantic number is model-dependent, so the model IS part of the measurement. Reporting a
@@ -547,7 +563,7 @@ if (flag('--json')) {
       // envelope could not tell a full case set from one a prune had eaten a quarter of.
       {
         cases: CASES,
-        kind: CASE_KIND,
+        kind: REPORTED_KIND,
         mode,
         model,
         fetchK: K,
@@ -572,23 +588,27 @@ if (flag('--json')) {
   );
   process.exit(failures.length ? 1 : 0);
 }
-// The KIND is in the header because a number whose set kind is unknown is not printable (#87) —
-// the whole point of holding a set back is lost if a report cannot say which one it read.
+// A number whose set kind is unknown is not printable (#87).
 console.log(
-  `${perCase.length} cases · ${CASE_KIND} · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
+  `${perCase.length} cases · ${REPORTED_KIND} · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
 );
 // Name the file the number came from, the way the `project:` echo names the vault. Every failure
 // in #97 is a figure attributed to a case set nobody checked; a number printed beside its source
 // cannot be silently misread, whatever routed us to the wrong one.
 console.log(`  cases: ${CASES}`);
-for (const k of KS)
+// Printed only when something was measured. metrics() divides by `|| 1`, so an all-pairwise set
+// rendered a full bar chart of 0.0% that no case had contributed to.
+if (!perCase.length) console.log('  no recall cases in this set — pairwise assertions only');
+else {
+  for (const k of KS)
+    console.log(
+      `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,
+    );
+  console.log(`  MRR      ${mrr.toFixed(3)}`);
   console.log(
-    `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,
+    `  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`,
   );
-console.log(`  MRR      ${mrr.toFixed(3)}`);
-console.log(
-  `  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`,
-);
+}
 // What beat the gold note is the diagnosis: a keyword magnet, a near-duplicate, or a better answer.
 if (misses.length) {
   console.log('\nMisses — and what ranked #1 instead:');
