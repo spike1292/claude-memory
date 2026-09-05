@@ -58,6 +58,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`memory-recall.mjs`'s server-arm branch wrote the brief to stdout then called `process.exit(0)`
+  without draining the pipe** — Node's stdout to a pipe is asynchronous, so `process.exit()` can
+  truncate a write in flight (#124). Latent today because the brief is capped near 1 KB
+  (`MAX_CHARS`), well under a pipe buffer; fixed anyway by moving the keyword arm into an `else`
+  branch and letting the process exit naturally, rather than raising the cap to make the bug live
+  and then testing that. `hooks/no-exit-after-stdout.test.mjs` guards every hook entry against the
+  same shape, proven against a bad fixture so a broken guard fails loudly instead of matching
+  nothing.
+
 - **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)
   silently lost every note from `SessionEnd`/`Stop` distillation, and always got the wrong
   `memory` symlink.** `runExtractor()`'s two `claude -p` extractor calls inherited the detached
