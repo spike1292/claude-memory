@@ -61,25 +61,6 @@ export function vault() {
 }
 
 /**
- * Vault root for a WRITE path: env var or config.json only, never the built-in default.
- *
- * A write that falls through to the default scaffolds an empty vault and can move one project's
- * notes into another's — the 2026-08-15 incident CLAUDE.md's "Machine-specific configuration"
- * section records. A read that falls back gives a bad answer; a write that falls back writes to
- * the wrong place, so only writers call this. Names every place it looked, since the error is the
- * only thing standing in for the write.
- *
- * @returns {string}
- */
-export function requireVault() {
-  if (process.env.CLAUDE_VAULT) return process.env.CLAUDE_VAULT;
-  if (config().vault) return /** @type {string} */ (config().vault);
-  throw new Error(
-    `no vault configured for a write — checked $CLAUDE_VAULT and "vault" in ${configFile()}`,
-  );
-}
-
-/**
  * Which source decided the vault — for /memory:doctor, so "wrong vault" is diagnosable.
  * Must stay in step with vault(): same order, same branches.
  */
@@ -87,6 +68,29 @@ export function vaultSource() {
   if (process.env.CLAUDE_VAULT) return 'CLAUDE_VAULT env';
   if (config().vault) return configFile();
   return 'built-in default';
+}
+
+/**
+ * Vault root for a WRITE path: env var or config.json only, never the built-in default.
+ *
+ * A write that falls through to the default scaffolds an empty vault and can move one project's
+ * notes into another's — the 2026-08-15 incident this PR's "One deliberate, scoped exception"
+ * paragraph in CLAUDE.md records. A read that falls back gives a bad answer; a write that falls
+ * back writes to the wrong place, so only writers call this.
+ *
+ * Delegates to `vault()`/`vaultSource()` rather than re-deriving the env → config.json order, so a
+ * third fallback added to `vault()` later cannot silently miss this — the same drift `vaultSource()`
+ * itself is only documented, not structurally prevented, against.
+ *
+ * @returns {string}
+ */
+export function requireVault() {
+  if (vaultSource() === 'built-in default') {
+    throw new Error(
+      `no vault configured for a write — checked $CLAUDE_VAULT and "vault" in ${configFile()}`,
+    );
+  }
+  return vault();
 }
 
 /** Per-prompt recall is off unless explicitly armed. */
