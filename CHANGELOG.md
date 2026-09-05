@@ -10,6 +10,21 @@ what a user's setup depends on: config keys, command names, vault layout, and
 ## [Unreleased]
 
 ### Added
+
+- **Comments may not outnumber code, and CI now fails when they do.** Ceiling 1.00 on every `.mjs` a
+  change touches, with a non-failing warning at 0.75 so a file arrives at the ceiling announced
+  (`npm run prose`; `*.test.mjs` exempt, since a test's comment is the failure it pins). Three review rounds on #87 each answered a finding by fixing the code *and* writing a
+  comment explaining what had been wrong, taking one file from 1.17 comment lines per code line to
+  1.42 before anyone noticed. The fix is never deletion: a fact needed when *changing the design*
+  moves to `docs/decisions/` or `docs/architecture.md`, and the failure message says so. Scoped to
+  changed files, so the ones already over are cut by whoever next touches them rather than in one
+  sweep — `node scripts/prose-guard.mjs --all` is the backlog. This supersedes the "No CI guard"
+  section of `docs/decisions/2026-08-23-comment-reader-distance.md`; the reasoning is in
+  `docs/decisions/2026-09-05-prose-ceiling.md`, which also buries the conflicting-measurement
+  scanner built first and deleted for scoring 0 against the drift it was written for. The reviewer
+  prompt gained the two checks that need a reader — a measurement lives in exactly one place, and a
+  comment restating what a named test already pins is a finding.
+
 - `/memory:eval` gains a **held-out set kind and a gate** (#87). `--kind held-out` resolves its own
   case file and every report and `--json` envelope echoes the kind; `--freeze` pins a set with a
   sha256 sidecar that `--run` verifies, so a set edited after the fact is refused. `--min-rank1

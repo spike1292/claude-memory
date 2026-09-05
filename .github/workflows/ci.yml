@@ -239,6 +239,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The prose gate diffs against a base ref, which a depth-1 clone does not have.
+          fetch-depth: 0
+
+      # Comments may not outnumber code in a file this PR touches: 1.00 FAILS, 0.75 warns.
+      # docs/decisions/2026-09-05-prose-ceiling.md supersedes the "No CI guard" section of
+      # 2026-08-23-comment-reader-distance.md. Scoped to changed files, so the ones already over get
+      # cut by whoever next touches them rather than in one sweep.
+      - name: Prose ceiling
+        run: node scripts/prose-guard.mjs "origin/${{ github.base_ref || 'main' }}"
 
       # Its own job, not a matrix step: formatting does not depend on the Node version, and the same
       # mistake already cost `release.sh --selftest` two runs per push.
