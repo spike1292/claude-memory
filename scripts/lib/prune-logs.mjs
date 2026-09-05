@@ -19,7 +19,8 @@ export function logDate(basename) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(basename);
   if (!m) return null;
   const [, y, mo, d] = m;
-  // Local, not UTC — toISOString() would shift the day (CLAUDE.md's porting-traps convention).
+  // Local, not UTC — toISOString() would shift the day; these filenames are local-dated
+  // (CLAUDE.md's Conventions: "toISOString() is UTC where date.today() is local").
   const dt = new Date(Number(y), Number(mo) - 1, Number(d));
   return dt.getFullYear() === Number(y) &&
     dt.getMonth() === Number(mo) - 1 &&
