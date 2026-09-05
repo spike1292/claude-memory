@@ -56,6 +56,21 @@ export function hookCwd(p) {
 }
 
 /**
+ * The cwd for a WRITE path: the payload's own field only, never `process.cwd()`.
+ *
+ * `process.cwd()` is right for a hook Claude Code spawned in the project, and wrong for a detached
+ * worker or an agent-spawned subprocess — the same silent-fallback shape as `requireVault()` in
+ * paths.mjs, and for the same reason: a write that guesses scope can write into the wrong project.
+ *
+ * @param {HookPayload | null} [p]
+ * @returns {string}
+ */
+export function requireHookCwd(p) {
+  if (p?.cwd) return p.cwd;
+  throw new Error('hook payload has no cwd — refusing to infer scope for a write');
+}
+
+/**
  * Debounce markers, and the timestamps in them. Live under $CLAUDE_MEMORY_HOME/cache/, not
  * ~/.cache/claude-* — CLAUDE.md's "all mutable state lives in $CLAUDE_MEMORY_HOME" rule.
  * @param {string} name

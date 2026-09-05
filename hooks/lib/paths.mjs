@@ -70,6 +70,29 @@ export function vaultSource() {
   return 'built-in default';
 }
 
+/**
+ * Vault root for a WRITE path: env var or config.json only, never the built-in default.
+ *
+ * A write that falls through to the default scaffolds an empty vault and can move one project's
+ * notes into another's — the 2026-08-15 incident this PR's "One deliberate, scoped exception"
+ * paragraph in CLAUDE.md records. A read that falls back gives a bad answer; a write that falls
+ * back writes to the wrong place, so only writers call this.
+ *
+ * Delegates to `vault()`/`vaultSource()` rather than re-deriving the env → config.json order, so a
+ * third fallback added to `vault()` later cannot silently miss this — the same drift `vaultSource()`
+ * itself is only documented, not structurally prevented, against.
+ *
+ * @returns {string}
+ */
+export function requireVault() {
+  if (vaultSource() === 'built-in default') {
+    throw new Error(
+      `no vault configured for a write — checked $CLAUDE_VAULT and "vault" in ${configFile()}`,
+    );
+  }
+  return vault();
+}
+
 /** Per-prompt recall is off unless explicitly armed. */
 export function recallEnabled() {
   return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;

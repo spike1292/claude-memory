@@ -31,14 +31,18 @@ import {
   markerPath,
   nowSeconds,
   readMarker,
+  requireHookCwd,
   which,
   withinDebounce,
   writeMarker,
 } from './hook-io.mjs';
 
 // DISTILL_VAULT stays supported for dry runs against a throwaway vault; otherwise this is
-// exactly paths.vault() — env, then config.json, then the default.
-const VAULT = process.env.DISTILL_VAULT || paths.vault();
+// paths.requireVault() — env or config.json, never the built-in default. Resolved lazily, inside
+// distill(), so importing this module (tests, the gate) never resolves a vault at all — only the
+// write path does, and only when it is about to write.
+/** @type {string} */
+let VAULT;
 const MAX_CHARS = 50_000; // tail of the conversation fed to the extractor
 
 const EXTRACT_PROMPT = `You are distilling a coding session into durable lessons. From the transcript below, extract only genuinely reusable insights — skip anything trivial or one-off. Return STRICT JSON (no prose, no code fences) with this shape:
@@ -961,6 +965,10 @@ function refreshOwnIndex(cwd) {
  * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
  */
 export async function distill(transcript, cwd) {
+  // Both checked before anything is read or written: a write whose scope can't be resolved must
+  // write nothing, not a partial note under a guessed vault or project.
+  if (!cwd) throw new Error('distill: missing cwd — refusing to infer scope for a write');
+  VAULT = process.env.DISTILL_VAULT || paths.requireVault();
   let slug = projectKey(cwd);
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
@@ -1013,6 +1021,7 @@ export const GATE_REASONS = {
   notAFile: 'transcript not a file',
   noTranscript: 'no transcript path',
   badTranscript: 'transcript missing',
+  noCwd: 'no cwd',
 };
 
 /**
@@ -1033,6 +1042,15 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: GATE_REASONS.child };
   // Claude Code's own Stop-loop guard. Absent on SessionEnd, harmless there.
   if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
+  // Same shape as a missing transcript: the payload is this hook's only source of scope, and
+  // spawning the worker with a guessed cwd would write into whatever project happens to be
+  // current rather than the one the session ran in. requireHookCwd() is the write-path check;
+  // the gate itself still never blocks, it only declines to spawn.
+  try {
+    requireHookCwd(p);
+  } catch {
+    return { run: false, reason: GATE_REASONS.noCwd };
+  }
 
   const transcript = p?.transcript_path;
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
@@ -1071,11 +1089,13 @@ export function gate(p) {
   const plan = gatePlan(p);
   if (!plan.run) return plan;
   writeMarker(plan.marker, plan.now);
+  // gatePlan already refused to run without a cwd, so this never throws in practice.
+  const cwd = requireHookCwd(p);
   const pid = detach(
     process.execPath,
-    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, p?.cwd || process.cwd()],
+    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd],
     {
-      cwd: p?.cwd,
+      cwd,
       logFile: path.join(paths.stateDir('logs'), 'distill.log'),
       env: { MEMORY_HOOK_SESSION: p?.session_id },
     },
@@ -1123,7 +1143,8 @@ export function gateOutcome(plan) {
   if (
     plan.reason === GATE_REASONS.noTranscript ||
     plan.reason === GATE_REASONS.badTranscript ||
-    plan.reason === GATE_REASONS.notAFile
+    plan.reason === GATE_REASONS.notAFile ||
+    plan.reason === GATE_REASONS.noCwd
   )
     return 'noop-missing-dep';
   return 'ran';

@@ -93,6 +93,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `[A-Za-z0-9_-]` — so any dotted path landed the `memory` symlink in a folder Claude Code never
   wrote transcripts into. Verified against real folder names on disk.
 
+- **`distill-session`'s write path no longer falls back to a guessed vault or cwd** (#123). The
+  worker now calls `paths.requireVault()` (env var or `config.json` only) and validates its own
+  `cwd` argument, throwing before anything is read or written when either is missing — closing the
+  2026-08-15 incident where the built-in default silently scaffolded an empty vault and repointed
+  the memory symlink. The gate stays best-effort: a hook payload with no `cwd` is now the same
+  `noop-missing-dep` outage as a missing transcript, and never spawns the worker. `/memory:doctor`
+  warns when the vault resolved from the built-in default rather than an explicit source.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added
