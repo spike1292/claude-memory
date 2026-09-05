@@ -1,11 +1,6 @@
 // Shared plumbing for the hooks that are GATES: read a JSON payload on stdin, decide cheaply,
-// then detach the real work and exit. Exists because three hooks had each grown their own copy
-// of stdin parsing, a debounce marker, findClaude() and detach() — see the "Duplication" bullet
-// in docs/decisions/2026-08-18-node-hooks.md.
-//
-// Everything here is either pure (and tested) or a three-line wrapper over one node: API. The
-// split is deliberate: the decisions are pure functions the tests can drive with plain values,
-// and the I/O is thin enough to read at a glance.
+// then detach the real work and exit. Three hooks had each grown their own copy of this —
+// docs/decisions/2026-08-18-node-hooks.md, "Duplication".
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -61,13 +56,8 @@ export function hookCwd(p) {
 }
 
 /**
- * Debounce markers, and the timestamps in them.
- *
- * They live under $CLAUDE_MEMORY_HOME/cache/ rather than ~/.cache/claude-*, which is where the
- * shell versions kept them. Same rule as db/, models/ and logs/: one machine-local root, so there
- * is one directory to inspect, size and clear. The cost of moving them is one missed debounce per
- * marker at upgrade time — a single extra background run, never a wrong one.
- *
+ * Debounce markers, and the timestamps in them. Live under $CLAUDE_MEMORY_HOME/cache/, not
+ * ~/.cache/claude-* — CLAUDE.md's "all mutable state lives in $CLAUDE_MEMORY_HOME" rule.
  * @param {string} name
  * @returns {string}
  */
@@ -107,16 +97,8 @@ const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
 
 /**
  * Claim today's retention pass, machine-wide. True for exactly one caller per day.
- *
- * `wx` is the whole mechanism: create-if-absent is one syscall and one atomic decision, where a
- * read-then-write stamp is two and loses the race between them. EEXIST means someone else has
- * today; ANY other error means we could not claim it and therefore must not prune — a read-only
- * `logs/` cannot be pruned either, so declining is the honest answer rather than a pass that
- * unlinks nothing and repeats on the next append.
- *
- * The marker is named by the day, so the sweep it authorises removes yesterday's along with the
- * logs (`pruneDatedLogs()` below). Nothing else in `logs/` starts with a dot.
- *
+ * `wx` create-if-absent is the whole mechanism; any error (including EEXIST) means don't prune.
+ * See CLAUDE.md's retention section and docs/decisions/2026-08-21-log-retention-day-claim.md.
  * @param {string} dir
  * @param {string} day  `YYYY-MM-DD`
  * @returns {boolean}
@@ -131,11 +113,8 @@ function claimDay(dir, day) {
 }
 
 /**
- * Is a run still inside its debounce window?
- *
- * `last === 0` means no marker, which must NOT count as recent — the missing-marker case is the
- * first run, and suppressing it would mean the feature never fires at all.
- *
+ * Is a run still inside its debounce window? `last === 0` (no marker) must NOT count as recent,
+ * or the first run would suppress itself forever.
  * @param {number} last
  * @param {number} windowSeconds
  * @param {number} now
@@ -147,7 +126,6 @@ export function withinDebounce(last, windowSeconds, now) {
 
 /**
  * Whole seconds since the epoch — the unit every marker file is written in.
- *
  * @param {number} [d]
  * @returns {number}
  */
@@ -177,13 +155,10 @@ export const which = (cmd) => {
 };
 
 /**
- * A machine-wide lock for background work too heavy to run twice at once.
- *
- * Ownership is a LIVE PID, not a release call. A detached child cannot be trusted to clean up
- * after itself — it is killed, the machine sleeps, the parent hook exited minutes ago — so the
- * lock frees itself the moment its process is gone. `maxSeconds` is the backstop for the two
- * cases a pid check cannot see: a pid recycled onto an unrelated process, and a child that wedged.
- *
+ * A machine-wide lock for background work too heavy to run twice at once. Ownership is a LIVE
+ * PID, not a release call — a detached child cannot be trusted to clean up after itself, so the
+ * lock frees itself once its process is gone. `maxSeconds` backstops a recycled pid or a wedged
+ * child, the two cases a pid check alone can't see.
  * @param {number} pid
  */
 const alive = (pid) => {
@@ -218,10 +193,7 @@ export function lockHolder(file, maxSeconds, now = nowSeconds()) {
 
 /**
  * `wx` claims a lock that must not already exist; the default `w` hands an existing one over.
- *
- * `at` is a TIMESTAMP, and is named to match lockHolder's destructured `at` — `maxSeconds` next to
- * it is a duration, and one edit blurring the two would silently change what "stale" means.
- *
+ * `at` names lockHolder's destructured `at` — a TIMESTAMP, not the `maxSeconds` duration beside it.
  * @param {string} file
  * @param {number} pid
  * @param {number} at
@@ -260,22 +232,9 @@ const inode = (file) => {
 };
 
 /**
- * Claim the lock. True only for the caller that created the file.
- *
- * `wx` is atomic, so two sessions racing for a FREE lock always pick one winner. Reclaiming a
- * STALE one cannot be atomic — unlink and create are two syscalls — and a plain unlink-then-create
- * is wrong: the loser's unlink deletes the winner's fresh lock and it then claims the empty path,
- * so both believe they hold it and both start a re-index (the thing this exists to prevent).
- *
- * The inode is therefore captured before the staleness verdict and re-checked after it: a lock
- * that has been replaced in the meantime is somebody else's, and we stand down rather than unlink
- * it.
- *
- * ponytail: that narrows the race to the gap between the re-check and the unlink and does not
- * close it. Closing it needs an OS-level lock, which Node's `fs` does not expose — the upgrade is
- * a native `flock` binding, and the residual cost is one extra re-index in an interleaving of
- * microseconds that also requires the previous owner to be dead.
- *
+ * Claim the lock. True only for the caller that created the file. The inode is captured before
+ * the staleness verdict and re-checked after it, narrowing (not closing) a reclaim race — full
+ * reasoning and the unlink-then-create bug it replaced: docs/architecture.md, "H16".
  * @param {string} file
  * @param {number} pid
  * @param {number} at
@@ -289,9 +248,8 @@ export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
 
   const stale = inode(file);
   if (lockHolder(file, maxSeconds, now)) return false;
-  // Vanished between the failed claim and here — released by its owner, not reclaimed by a rival.
-  // `wx` settles it atomically, so retry rather than reporting busy while nothing is running. It
-  // must NOT unlink first: the file it would remove could be a lock created since.
+  // Vanished between the failed claim and here — released by its owner, not a rival. Retry via
+  // `wx` rather than unlinking first: the file it would remove could be a lock created since.
   if (stale === null) return claim();
   if (inode(file) !== stale) return false; // replaced: the lock we judged is somebody else's now
 
@@ -301,13 +259,8 @@ export function takeLock(file, pid, at, maxSeconds, now = nowSeconds()) {
 
 /**
  * Locate the `claude` CLI.
- *
- * PATH first, then the install locations a GUI-launched session may not have on PATH. One list,
- * because two lists drift and the failure is silent: the hook simply stops doing its job.
- *
- * Both Homebrew prefixes are here because the list was Apple-Silicon-only until 2026-08-21, which
- * made every hook a no-op on a Linux install that README claims to support — silently, since a
- * missing `claude` is indistinguishable from a hook that had nothing to do.
+ * PATH first, then the install locations a GUI-launched session may not have — one list, because
+ * two lists drift and the failure is silent (CHANGELOG.md's `findClaude()` Homebrew/Linux fix).
  */
 export function findClaude() {
   for (const cand of [
@@ -324,15 +277,9 @@ export function findClaude() {
 }
 
 /**
- * Append-open a log file, returning a writable fd or null.
- *
- * Detached children write straight to the fd. Piping instead would keep this process alive to
- * shuttle bytes, which is the one thing a gate must not do.
- *
- * This is where distill.log and graphgen.log are opened, and each carries a headless `claude`
- * child's whole stdout+stderr, so the cap has to be applied HERE and not only in `logBanner()` —
- * those two logs never go through the banner helper.
- *
+ * Append-open a log file, returning a writable fd or null. Detached children write straight to
+ * the fd — piping would keep this process alive to shuttle bytes, the one thing a gate must not
+ * do. Trims here too: distill.log/graphgen.log never go through `logBanner()`.
  * @param {string} file
  * @returns {number|null}
  */
@@ -347,13 +294,10 @@ function openLog(file) {
 }
 
 /**
- * Spawn background work and forget it.
- *
- * detached + unref + stdio to a file (or /dev/null) is the whole contract: this process must be
- * free to exit immediately, and the child must survive it. A child that inherited a pipe would
- * hold the event loop open; one that inherited stderr would print into the session transcript.
- *
- * Returns the child pid, or null. The pid is what a caller writes into its lock file.
+ * Spawn background work and forget it. detached + unref + stdio to a file (or /dev/null) is the
+ * whole contract — a child that inherited a pipe would hold the event loop open, one that
+ * inherited stderr would print into the session transcript. Returns the child pid (a caller's
+ * lock-file value), or null.
  *
  * @typedef {object} DetachOptions
  * @property {Record<string, string|undefined>} [env]
@@ -376,11 +320,9 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
       stdio: fd == null ? 'ignore' : ['ignore', fd, fd],
       env: env ? { ...process.env, ...env } : process.env,
     });
-    // spawn() reports a missing binary ASYNCHRONOUSLY, so the throw below never sees it and an
-    // unhandled 'error' would take the hook down after it had already decided to succeed. It is
-    // recorded rather than swallowed: by this point a pid has been returned and the caller has
-    // written it into a lock and a 24h marker, so a child that dies moments later leaves state
-    // behind that only this line explains. Same reason as the LOCK HANDOVER FAILED banner.
+    // spawn() reports a missing binary ASYNCHRONOUSLY, so the throw below never sees it — recorded
+    // here rather than swallowed, since a pid may already be written into a lock (same reason as
+    // the LOCK HANDOVER FAILED banner).
     child.on('error', (e) => {
       if (logFile) logBanner(logFile, `spawn failed: ${e.message}`, new Date().toISOString());
     });
@@ -399,41 +341,14 @@ export function detach(cmd, args, { env, cwd, logFile } = {}) {
   }
 }
 
-// The only unbounded appends in the system: semantic-index.log, distill.log and graphgen.log —
-// numbers and retention policy in CLAUDE.md's logging section. Two doors write to them —
-// `logBanner()` for semantic-index.log, `openLog()` handing the other two straight to a detached
-// child — so both call trimLog() below; neither alone is enough.
+// The only unbounded appends: semantic-index.log, distill.log, graphgen.log (CLAUDE.md's logging
+// section). Two doors write to them, so both call trimLog() below — neither alone is enough.
 const LOG_MAX_BYTES = 1024 * 1024;
 const LOG_KEEP_BYTES = 256 * 1024;
 
 /**
- * Keep only the tail of an oversized log.
- *
- * The read is POSITIONED — one fs.readSync at `size - LOG_KEEP_BYTES` — so a log that has run away
- * to hundreds of MB never enters memory; readFileSync + slice would be the bug, not the fix.
- *
- * The retained tail starts mid-line, so everything up to the first newline is dropped: a truncated
- * first line reads as corrupt output rather than as a partial one, and the cost is at most one lost
- * line. (A tail with no newline at all keeps its partial line — a single runaway line is the one
- * case where dropping it would discard the whole tail.) The banner about to be appended follows
- * immediately, so the caller's own record of this run survives the trim.
- *
- * NOT ATOMIC, and deliberately not made so (2026-08-19, raised twice in review of #24).
- * `openLog()` hands detached children an `O_APPEND` fd that they hold for the whole run — minutes,
- * for a headless `claude`. Two hooks can therefore be writing while a third trims, and anything
- * appended between the `readSync` and the `writeFileSync` below is overwritten. That window is
- * microseconds, fires only past 1 MB, and costs debug-log lines.
- *
- * The obvious fix — write a temp file and `rename()` — is strictly worse HERE. Truncating in place
- * keeps the inode, so every held `O_APPEND` fd goes on landing in the file a reader opens; the loss
- * is bounded by that one window. A rename leaves those fds pointing at an unlinked inode, so every
- * child holding one writes the rest of its output into a file nothing can open — seconds of racy
- * overlap traded for minutes of silently discarded output. Atomicity is the wrong property to buy
- * when the writers outlive the swap.
- *
- * Best effort throughout, like everything else here: a log we cannot trim is a log that keeps
- * growing, never a hook that fails.
- *
+ * Keep only the tail of an oversized log. NOT ATOMIC, deliberately — do not "fix" it with a
+ * temp-file rename, that is worse here. Full reasoning: docs/architecture.md, "H15".
  * @param {string} file
  */
 function trimLog(file) {
@@ -484,16 +399,10 @@ export function logBanner(file, label, iso) {
 // own test.
 
 /**
- * Append one record to a daily-dated log family under `$CLAUDE_MEMORY_HOME/logs/`.
- *
- * The record is stamped with an ISO timestamp and the project slug and written verbatim after
- * them, so a caller controls every field and their order. `slug` is the scoping key: the logs are
- * MACHINE-WIDE — every project appends to the same daily file — and a reader that ignored it would
- * report one project's numbers against another's (measured for recall, 5 slugs in one 7-file
- * window).
- *
- * An unresolvable key logs `null` rather than throwing or guessing; `projectKey` memoises per
- * process, so a caller that already resolved it pays nothing here.
+ * Append one record to a daily-dated log family under `$CLAUDE_MEMORY_HOME/logs/`. Stamps `t` and
+ * the project slug, then writes the caller's record verbatim after them (CLAUDE.md's "exactly one
+ * JSONL appender" note). `slug` is the scoping key: the logs are MACHINE-WIDE, every project
+ * appends to the same daily file. An unresolvable key logs `null` rather than throwing.
  *
  * @param {string} family
  * @param {string | undefined} cwd
@@ -511,23 +420,16 @@ export function appendJsonl(family, cwd, record) {
     }
     const dir = stateDir('logs');
     const file = path.join(dir, `${family}-${t.slice(0, 10)}.jsonl`);
-    // ONE ATOMIC CLAIM PER DAY, not a stamp anyone can read as stale. `wx` create-if-absent
-    // semantics and the fail-closed reasoning are in CLAUDE.md's retention section; the sweep of
-    // the two weaker guards it replaced (a herd measured both ways) is
-    // docs/decisions/2026-08-21-log-retention-day-claim.md.
-    //
-    // Claim taken BEFORE the pass: a process killed mid-pass leaves the rest of the backlog
-    // until tomorrow — bounded, and the alternative is a lock this path must not wait on.
+    // One atomic wx claim per day, taken BEFORE the pass — CLAUDE.md's retention section and
+    // docs/decisions/2026-08-21-log-retention-day-claim.md have the fail-closed reasoning.
     const day = t.slice(0, 10);
     /** @type {number | undefined} */
     let pruned;
     if (claimDay(dir, day)) {
       pruned = pruneDatedLogs(new Date(t)).length;
     }
-    // Deleting is work, so it logs itself — on the line the caller was already writing, AFTER the
-    // caller's own fields, because their order is a contract this must not reach into. Omitted
-    // when nothing was deleted, never zero, like the cost fields. `/memory:doctor --hooks` sums it
-    // over the window, so the deletion is visible where the logs it deleted are read.
+    // Deleting is work, so it logs itself, AFTER the caller's own fields (CLAUDE.md's "a pass that
+    // deleted anything reports it" note) — omitted when nothing was deleted, never zero.
     fs.appendFileSync(
       file,
       JSON.stringify({ t, slug, ...record, ...(pruned && { pruned }) }) + '\n',
@@ -544,28 +446,16 @@ const DATED_LOG = /^(recall|hooks)-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 /**
  * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
+ * DELETES, where the vault's log prune only moves — see CLAUDE.md's retention section for why.
  *
- * DELETES, where the vault's log prune only ever moves. These are machine-local debug lines that
- * no release replaces and nothing else reads — the same class of file `trimLog()` already
- * truncates in place. An Archive/ here would be the unbounded directory again under another name.
+ * Cutoff is UTC, from `toISOString()`, the same producer that writes the filenames — the vault
+ * pruner's local-by-design `cutoffDate()` was wrong here: `TZ=Pacific/Kiritimati` with retention 0
+ * deleted the OTHER family's in-progress file on every append (measured 2026-08-21).
  *
- * The date comes from the FILENAME, and the cutoff is built in UTC by the SAME producer that
- * writes those names — `toISOString()`. The vault pruner's `cutoffDate()` was used here first and
- * was wrong for it: that one is local by design (vault note filenames are local-dated), and these
- * names are UTC. East of Greenwich, between local and UTC midnight, the two disagree by a day —
- * measured 2026-08-21, `TZ=Pacific/Kiritimati` with a retention of 0 deleted the file the OTHER
- * family was appending to, on every single append, because the guard below never held either.
- * Sharing the comparison was worth less than sharing the clock.
- *
- * First run after a long gap is the slow one and it is synchronous inside a hook: measured
- * 2026-08-21, macOS/APFS, 150 ms to unlink 1095 stale files and 882 ms for 4686, against the 10 s
- * timeout `hooks.json` declares for the hooks that append. Steady state is free — 300 appends into
- * an already-pruned directory ran at 5.96 ms each here against 6.51 ms on `main`, i.e. inside the
- * noise of `appendFileSync` itself.
- * ponytail: uncapped. Cap the pass at N unlinks and let the next day finish it if a machine ever
- * arrives with a backlog big enough to be felt.
- *
- * Best effort, like everything on this path: a file we cannot unlink is one that stays.
+ * First run after a gap is synchronous inside a hook: 150 ms to unlink 1095 stale files, 882 ms
+ * for 4686 (macOS/APFS, 2026-08-21), against `hooks.json`'s 10 s timeout. Steady state is free —
+ * 5.96 ms/append into an already-pruned dir, inside the noise of `appendFileSync` itself.
+ * ponytail: uncapped — cap at N unlinks if a machine ever arrives with a backlog big enough to feel.
  *
  * @param {Date} [now]
  * @returns {string[]} the basenames removed
@@ -576,11 +466,9 @@ export function pruneDatedLogs(now = new Date()) {
   try {
     const dir = stateDir('logs');
     const days = logRetentionDays();
-    // Date arithmetic, not `now - days * 86400`: only the day count is meaningful here, and UTC
-    // days are all the same length anyway. An out-of-range `days` makes an Invalid Date, whose
-    // `toISOString()` THROWS — caught below, so the failure keeps every file rather than ranking
-    // them against a `NaN-NaN-NaN` string that sorts above every real date and deletes the lot.
-    // (That is not hypothetical: it is what `cutoffDate()`'s own comment records costing it.)
+    // Date arithmetic, not `now - days * 86400` — an out-of-range `days` makes an Invalid Date
+    // whose toISOString() THROWS, caught below, rather than a `NaN-NaN-NaN` string that sorts
+    // above every date and deletes the lot (what cutoffDate()'s own comment records costing it).
     const cutoff = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days),
     )
@@ -588,13 +476,10 @@ export function pruneDatedLogs(now = new Date()) {
       .slice(0, 10);
     const today = now.toISOString().slice(0, 10);
     for (const name of fs.readdirSync(dir)) {
-      // Anchored on the two families BY NAME. An `[a-z-]+` prefix was not the same thing: it
-      // matched `backup-2026-01-01.jsonl` and `my-notes-export-2026-01-01.jsonl` and unlinked
-      // both without trace (measured 2026-08-21). This directory is machine-local and a human
-      // may well have put something in it; only what we write is ours to delete.
-      // Yesterday's day-claim goes with yesterday's logs — the pass that this marker authorised
-      // is the pass that cleans it up, so the directory does not accumulate one dotfile per day
-      // in the name of not accumulating one log file per day.
+      // Anchored on the two families BY NAME, not `[a-z-]+` — that matched and unlinked
+      // `backup-*`/`my-notes-export-*` too (measured 2026-08-21); only what we write is ours.
+      // Yesterday's day-claim goes with yesterday's logs, so the dotfile doesn't accumulate in
+      // the name of not accumulating the log file.
       const claim = CLAIM.exec(name);
       if (claim) {
         if (claim[1] >= today) continue; // today's own claim, or a future one from a wrong clock
@@ -621,12 +506,9 @@ export function pruneDatedLogs(now = new Date()) {
 }
 
 /**
- * The closed set of hook outcomes.
- *
- * The point of the set is that a hook which did nothing is DISTINGUISHABLE from one that ran —
- * hooks are best-effort and degrade silently by design, so a permanently dead hook and a healthy
- * one look identical from outside. `spawned` is a gate line only: it says the work was handed to a
- * detached child, whose own line arrives later under the same session id.
+ * The closed set of hook outcomes — a hook that did nothing must be DISTINGUISHABLE from one that
+ * ran, since hooks degrade silently by design. `spawned` is a gate line only: the detached child's
+ * own line arrives later under the same session id.
  *
  * @typedef {'ran' | 'noop-missing-dep' | 'debounced' | 'child-guard' | 'spawned' | 'error'} HookOutcome
  */
@@ -644,30 +526,16 @@ export function pruneDatedLogs(now = new Date()) {
  */
 
 /**
- * One line per hook invocation.
- *
- * `extra` is one generic slot rather than a named parameter per measurement. Everything through it
- * is OPTIONAL and omitted when not measured — never written as zero — because a reader must be able
- * to tell "this hook injected nothing" from "nobody was counting yet", and log files predating each
- * field stay in the window for a week.
- *
- * `ms` is `performance.now()`, which is measured from PROCESS START and not from the top of the
- * hook — the same reasoning recall's own line documents. A hook's timeout in `hooks.json` applies
- * to the whole process, so node's startup and the entry's static import graph have to be inside
- * the number for a near-miss to mean anything.
- *
+ * One line per hook invocation. `extra` is one generic slot, always optional and omitted (never
+ * zero) when not measured. `ms` is PROCESS START (CLAUDE.md's "logHook()'s ms" note).
  * @param {HookLogInput} input
  */
 export function logHook({ hook, event = '', cwd, session, outcome, reason, extra }) {
-  // The heavy hooks spawn a headless `claude`, which fires SessionStart and runs FOUR of these
-  // hooks again (their `*_CHILD` guards suppress only their OWN hook). Marked rather than
-  // suppressed: what a hook costs inside a background run is a real number, just not the same
-  // number as a user session's.
+  // *_CHILD guards suppress only their OWN hook, so a heavy hook's headless `claude` re-firing
+  // SessionStart is marked, not suppressed — its cost is real, just not a user session's.
   const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
   appendJsonl('hooks', cwd, {
-    // `extra` FIRST, so the named fields below always win. Spread last, a caller could overwrite
-    // `outcome`, `ms`, `session` or `hook` — the four the reader groups, filters and judges by —
-    // and the log would be corrupt in exactly the way nothing downstream could detect.
+    // extra FIRST — spread last, a caller could overwrite the four fields the reader judges by.
     ...(extra ?? {}),
     hook,
     event,
