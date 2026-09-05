@@ -257,3 +257,51 @@ test('logRetentionDays: env wins, then config, then a sane default', () => {
     );
   }
 });
+
+// Subprocess for the same reason retentionIn() is: config() memoises per process.
+/** @param {Record<string, string>} env @returns {{ok: true, v: string} | {ok: false, msg: string}} */
+const requireVaultIn = (env) =>
+  JSON.parse(
+    run(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import(${JSON.stringify(MODULE)}).then((m) => {` +
+          `try { console.log(JSON.stringify({ ok: true, v: m.requireVault() })); }` +
+          `catch (e) { console.log(JSON.stringify({ ok: false, msg: e.message })); }` +
+          `})`,
+      ],
+      { env: { ...process.env, ...env }, encoding: 'utf8' },
+    ).trim(),
+  );
+
+test('requireVault: env or config.json only, throws rather than defaulting', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'require-vault-'));
+  const withHome = /** @param {Record<string, string>} e */ (e) => ({
+    CLAUDE_MEMORY_HOME: home,
+    CLAUDE_VAULT: '',
+    ...e,
+  });
+
+  fs.writeFileSync(path.join(home, 'config.json'), '{}');
+  const noSource = requireVaultIn(withHome({}));
+  assert.equal(
+    noSource.ok,
+    false,
+    'no env var, no config key -> throws, never the built-in default',
+  );
+  assert.match(/** @type {{msg: string}} */ (noSource).msg, /CLAUDE_VAULT/);
+  assert.match(
+    /** @type {{msg: string}} */ (noSource).msg,
+    new RegExp(path.join(home, 'config.json').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    'names the config file it looked in',
+  );
+
+  const fromEnv = requireVaultIn(withHome({ CLAUDE_VAULT: '/tmp/env-vault' }));
+  assert.deepEqual(fromEnv, { ok: true, v: '/tmp/env-vault' });
+
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ vault: '/tmp/config-vault' }));
+  const fromConfig = requireVaultIn(withHome({}));
+  assert.deepEqual(fromConfig, { ok: true, v: '/tmp/config-vault' });
+});

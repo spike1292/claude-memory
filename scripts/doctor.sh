@@ -220,7 +220,11 @@ fi
 
 echo
 echo "vault"
-echo "  resolved from: $(vault_source)"
+vs=$(vault_source)
+echo "  resolved from: $vs"
+if [ "$vs" = "built-in default" ]; then
+  warn "vault has no explicit source" "distillation (SessionEnd/Stop) now aborts and writes nothing instead of using this default — set \$CLAUDE_VAULT or \"vault\" in $(config_file)"
+fi
 if [ -d "$VAULT" ]; then
   ok "vault exists"
   # #83: informational only — reports "any depth" (nested inside an ambient repo counts), unlike

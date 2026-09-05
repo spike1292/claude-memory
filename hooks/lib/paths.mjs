@@ -61,6 +61,24 @@ export function vault() {
 }
 
 /**
+ * Vault root for a WRITE path: env var or config.json only, never the built-in default.
+ *
+ * A write that falls through to the default scaffolds an empty vault and can move one project's
+ * notes into another's — docs/decisions/... the 2026-08-15 incident this closes. A read that falls
+ * back gives a bad answer; a write that falls back writes to the wrong place, so only writers call
+ * this. Names every place it looked, since the error is the only thing standing in for the write.
+ *
+ * @returns {string}
+ */
+export function requireVault() {
+  if (process.env.CLAUDE_VAULT) return process.env.CLAUDE_VAULT;
+  if (config().vault) return /** @type {string} */ (config().vault);
+  throw new Error(
+    `no vault configured for a write — checked $CLAUDE_VAULT and "vault" in ${configFile()}`,
+  );
+}
+
+/**
  * Which source decided the vault — for /memory:doctor, so "wrong vault" is diagnosable.
  * Must stay in step with vault(): same order, same branches.
  */
