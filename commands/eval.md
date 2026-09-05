@@ -109,6 +109,40 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
    ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
 
+0b. **Building a held-out set WITH the user — the labelling loop.**
+
+   This is the one part of this command that is not the agent's to do alone. Follow it literally.
+
+   **Never author both halves.** If the agent writes the questions *and* picks the gold notes, the
+   set is fitted to what the agent already knows, which is the failure #87 exists to prevent. The
+   agent mines and filters; the user decides which questions count and which note answers each one.
+
+   1. **Mine.** Find every transcript folder belonging to this project — Claude Code names them
+      after the cwd, so one project usually has several, including old ones under a previous home
+      directory. Pass them all in one comma-separated `--mine` call so deduplication spans them.
+
+   2. **Filter before showing anything.** Most candidates are instructions ("do 1", "open a PR"),
+      not questions. Drop them. Keep only prompts that a future session would plausibly ask *and*
+      that some note in this vault could answer. Roughly one in three survives.
+
+   3. **Read every survivor for secrets before it reaches the screen.** Transcripts contain whatever
+      was pasted into a session. One mining run here surfaced a 1Password item id. A candidate
+      carrying a token, a key, a customer name or an internal hostname is dropped, not redacted.
+
+   4. **Present in batches of about ten.** For each: the question, and the note the agent believes
+      answers it, with one line on why. Ask the user to keep, drop, or name a different note. Do not
+      proceed to the next batch until the current one is answered.
+
+   5. **Write and freeze.** Pipe the kept cases to `--author --kind held-out`, then `--freeze`.
+      Report the case count and the sha256. Quote that hash wherever a number from this set is
+      quoted; the questions stay machine-local.
+
+   6. **Say what it is worth.** With `n` cases, one case is `100/n` points of recall@k. Say that
+      number out loud, so nobody reads a two-case swing as a result.
+
+   `/memory:doctor` reports whether this project has a held-out set and whether it is frozen, which
+   is where a user finds out the gap exists.
+
 1. **Build a question set.** From notes under `Memory/<slug>/` and `Insights/<slug>/`, derive ~15–20 natural-language questions a future session would realistically ask — phrased in the user's words, deliberately **paraphrased**, NOT copied from note titles (paraphrase is what stresses retrieval). For each, record the note(s) that are the correct answer = the gold set.
 
 2. **Retrieve through BOTH channels — they fail differently.** Run each question through:

@@ -31,6 +31,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
   `docs/decisions/2026-09-04-eval-gate.md`.
 
+- **`/memory:eval` gained the labelling loop, and `/memory:doctor` reports whether you have a
+  held-out set at all.** The flags existed with no way for a human to reach them. `/memory:eval`
+  step 0b is the workflow: mine every transcript folder for this project in one call, filter the
+  instructions out, read every survivor for pasted secrets before showing it, present in batches of
+  ten with a proposed gold note each, and only write what the user kept — then freeze and quote the
+  hash. The agent mines and filters; the user decides. `/memory:doctor` grows an `eval case sets`
+  section naming the tuning and held-out sets by case count and frozen state, and warning when the
+  held-out set is missing or unpinned. It names counts and kinds, never a question.
+
 - **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
   transcripts.** Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays
   the human's half, because a producer that wrote both halves is how this repo shipped inflated
