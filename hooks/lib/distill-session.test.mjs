@@ -756,23 +756,35 @@ test('the WORKER writes nothing and exits non-zero when the vault cannot be reso
   const { CLAUDE_VAULT: _cv, DISTILL_VAULT: _dv, ...restEnv } = process.env;
   const env = { ...restEnv, HOME: home, CLAUDE_MEMORY_HOME: memHome, DISTILL_DRYRUN: '1' };
 
+  /** @param {string} dir @returns {string[]} */
+  const walk = (dir) =>
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+
   assert.throws(
     () => execFileSync(process.execPath, [entry, transcript, cwd], { stdio: 'pipe', env }),
     /Command failed/,
   );
-  // The default this used to fall back to, silently, on 2026-08-15 — resolved the same way
-  // paths.vault() resolves it, off the HOME this subprocess was given.
-  const wouldHaveDefaulted = path.join(home, 'Documents', 'ClaudeVault');
-  assert.ok(!fs.existsSync(wouldHaveDefaulted), 'nothing written to the built-in default location');
+  // A recursive scan, not a check of one known path: the built-in default vault lives under HOME,
+  // and a failing run must leave it exactly as empty as it started.
+  assert.deepStrictEqual(walk(home), [], 'nothing at all was written under HOME');
+  // CLAUDE_MEMORY_HOME legitimately gets a hook log line — that IS how the error reaches a human,
+  // via /memory:doctor --hooks — but never a note, wherever it might land.
+  assert.deepStrictEqual(
+    walk(memHome).filter((f) => f.endsWith('.md')),
+    [],
+    'no note is ever written, even into the wrong place',
+  );
 
-  // Positive control, same transcript and cwd: with a vault configured, the run DOES write there.
-  // Without this, a scan of the wrong directory above would also find nothing and pass by mistake.
-  const vault = path.join(home, 'configured-vault');
+  // Positive control, the SAME walk(home) technique: point the vault inside home and confirm the
+  // scan that found nothing above finds something once a write actually happens. Without this, a
+  // scan of the wrong directory in the failing case would also find nothing and pass by mistake.
   execFileSync(process.execPath, [entry, transcript, cwd], {
     stdio: 'pipe',
-    env: { ...env, DISTILL_VAULT: vault },
+    env: { ...env, DISTILL_VAULT: path.join(home, 'configured-vault') },
   });
-  assert.ok(fs.existsSync(vault), 'the scan technique does find files once a vault is configured');
+  assert.ok(walk(home).length > 0, 'the same scan does find files once a vault is configured');
 });
 
 test('the WORKER writes nothing and exits non-zero when invoked with no cwd', (t) => {

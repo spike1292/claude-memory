@@ -64,9 +64,10 @@ export function vault() {
  * Vault root for a WRITE path: env var or config.json only, never the built-in default.
  *
  * A write that falls through to the default scaffolds an empty vault and can move one project's
- * notes into another's — docs/decisions/... the 2026-08-15 incident this closes. A read that falls
- * back gives a bad answer; a write that falls back writes to the wrong place, so only writers call
- * this. Names every place it looked, since the error is the only thing standing in for the write.
+ * notes into another's — the 2026-08-15 incident CLAUDE.md's "Machine-specific configuration"
+ * section records. A read that falls back gives a bad answer; a write that falls back writes to
+ * the wrong place, so only writers call this. Names every place it looked, since the error is the
+ * only thing standing in for the write.
  *
  * @returns {string}
  */

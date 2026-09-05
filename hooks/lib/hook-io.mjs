@@ -67,7 +67,7 @@ export function hookCwd(p) {
  * worker or an agent-spawned subprocess — the same silent-fallback shape as `requireVault()` in
  * paths.mjs, and for the same reason: a write that guesses scope can write into the wrong project.
  *
- * @param {HookPayload} [p]
+ * @param {HookPayload | null} [p]
  * @returns {string}
  */
 export function requireHookCwd(p) {
