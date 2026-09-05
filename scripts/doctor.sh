@@ -315,6 +315,17 @@ else
 fi
 
 echo
+echo "cowork auto memory (a separate, global feature — not this plugin, not Claude Code's own auto memory)"
+# A THIRD memory surface, distinct from the autoMemoryDirectory one covered above: one folder for
+# every repo on the machine, with its own typed-note convention. docs/decisions/2026-09-05-cowork-auto-memory.md
+if [ -n "${CLAUDE_COWORK_MEMORY_PATH_OVERRIDE:-}" ]; then
+  warn "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE is set: $CLAUDE_COWORK_MEMORY_PATH_OVERRIDE" \
+       "repo lessons belong in this vault (Memory/$slug), not there — that folder is global and unrelated to this plugin. See docs/decisions/2026-09-05-cowork-auto-memory.md"
+else
+  ok "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE not set"
+fi
+
+echo
 echo "index"
 model="${MEMORY_SEMANTIC_MODEL:-bge-m3}"
 db="$STATE/db/semantic-$slug-$model.db"

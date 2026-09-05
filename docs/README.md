@@ -23,6 +23,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Where a comment lives](decisions/2026-08-23-comment-reader-distance.md) | Reader distance decides, not line count — and the count that shows why length would have deleted the load-bearing blocks first. |
 | [The eval gate](decisions/2026-09-04-eval-gate.md) | Soft, opt-in and fail-closed — the −52.8-point ablation behind it, and why a hard gate would stall on sets this small. |
 | [The prose ceiling](decisions/2026-09-05-prose-ceiling.md) | Comments may not outnumber code; CI fails at 1.00. Supersedes the reader-distance record's "No CI guard", and buries the scanner that scored 0. |
+| [A third memory system: `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`](decisions/2026-09-05-cowork-auto-memory.md) | Not `autoMemoryDirectory` — a separate, global, typed-note feature. Why `/memory:doctor` warns rather than tries to merge it. |
 
 ## Guides
 
