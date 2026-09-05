@@ -25,7 +25,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
   prompt gained the two checks that need a reader — a measurement lives in exactly one place, and a
   comment restating what a named test already pins is a finding.
 
-
 ### Fixed
 
 - **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)
