@@ -334,6 +334,16 @@ has the numbers and the two designs that were built, reviewed and then deleted. 
 it names: **test the round trip, not each half**, and make a scan-based guard assert that it found
 something.
 
+**Run a CUT pass after round three, before the final round.** Each round answers a finding by fixing
+the code *and* writing a comment explaining what was wrong, so prose compounds one block per finding
+per site and round four then flags the block. #87 measured it: three rounds took
+`scripts/lib/memory-eval.mjs` from 1.17 comment lines per code line to 1.42, and the cut pass
+returned it to 1.27 with no fact lost. The cut is mechanical — **one home per fact**. A code comment
+is for whoever edits *that function*; `docs/decisions/` is for why it is that way; a test named after
+the failure is already the record and needs no comment restating it. Prose is also where the numbers
+go wrong: the same three rounds left one measurement stated four ways (142 vs 143 unique prompts,
+3227 vs 3862 turns) across code, tests, CHANGELOG and two docs, and every contradiction was a copy.
+
 **A reason string that an outcome mapper decides on is a constant, not a literal** (`GATE_REASONS`,
 `REASONS`) — a literal in the plan and a copy in the mapper drift apart in silence, and every test
 written against the copy stays green while a dead dependency starts reporting as `ran`.

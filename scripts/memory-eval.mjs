@@ -111,10 +111,8 @@ const SLUG = val('--slug') || paths.projectKey(repo);
 // script, always with a confident-looking wrong answer.
 console.error(`project: ${SLUG}  (from ${repo})`);
 const STYLE = val('--style') || 'semantic';
-// A tuning set may be fitted to; a held-out set may not, and the difference has to be mechanical
-// rather than remembered (#87). Default `tuning`, so every existing invocation resolves the file it
-// always did. defaultCasesPath throws on an unknown kind — caught here because a typo that fell
-// through to the tuning set would print a tuning number under a held-out label.
+// Default `tuning`, so every existing invocation resolves the file it always did. An unknown kind
+// throws rather than falling through, which would print a tuning number under a held-out label.
 const CASE_KIND = val('--kind') || KIND.tuning;
 // Case sets are generated FROM a real vault and contain its content, so they live in
 // machine-local state, never in the plugin (which is a public repo).
@@ -127,13 +125,10 @@ try {
   process.exit(1);
 }
 const CASES = val('--cases') || val('--out') || SCOPED_CASES;
-// Reported from the resolved FILE, never from the flag. `--cases` names a path outright, so
-// `--kind held-out --cases <a tuning set>` printed a tuning number under a held-out label — the
-// mislabelling `--kind` exists to prevent, reached by the override instead of by a typo. `--kind`
-// still decides which file the DEFAULT resolves to; it does not get to assert what a named file is.
+// From the FILE, never the flag: `--kind` decides which file the DEFAULT resolves to, and does not
+// get to assert what an explicit `--cases` path is. It warns rather than deferring silently,
+// because the freeze banner is what gets pasted into an issue as provenance.
 const REPORTED_KIND = kindOfPath(CASES);
-// Under-claiming is the safe direction, but silence is not: the freeze banner is what gets pasted
-// into an issue as provenance, so a caller who asked for held-out and got tuning has to be told.
 if (val('--kind') && CASE_KIND !== REPORTED_KIND)
   console.error(
     `warning: --kind ${CASE_KIND} ignored — ${path.basename(CASES)} is a ${REPORTED_KIND} set, and the file decides.`,
@@ -234,8 +229,7 @@ if (flag('--mine')) {
         .filter((f) => f.endsWith('.jsonl'))
         .map((f) => path.join(r, f));
     } catch (e) {
-      // One unreadable subdirectory aborted the whole walk, where the per-file read below has
-      // always skipped and continued. Same policy, same reason: mining is best-effort.
+      // Skip and continue, the same as the per-file read below: mining is best-effort.
       console.error(`skipping ${r}: ${e instanceof Error ? e.message : e}`);
       return [];
     }
@@ -263,11 +257,8 @@ if (flag('--mine')) {
 
 // ---------------------------------------------------------------- freeze
 
-// --freeze: record a case set's identity as a sha256 sidecar. A held-out set carries vault content
-// and stays machine-local, so "this set was not edited to fit the result" cannot be shown by
-// publishing it — the hash can be quoted in an issue or a decision record and checked later (#87).
-// `--run` verifies the sidecar whenever one exists, so freezing is what makes the promise enforced
-// rather than stated.
+// --freeze: record a case set's identity as a sha256 sidecar. The set stays machine-local (vault
+// content), so the hash is what gets quoted; `--run` verifies it whenever one exists.
 if (flag('--freeze')) {
   if (!fs.existsSync(CASES)) {
     console.log(`no case set at ${CASES} to freeze.`);
@@ -275,8 +266,7 @@ if (flag('--freeze')) {
   }
   const h = casesHash(fs.readFileSync(CASES, 'utf8'));
   const side = `${CASES}.sha256`;
-  // Re-freezing is how a held-out set gets edited without anyone noticing, so it takes --force —
-  // the same gate --generate has, for the same reason.
+  // Re-freezing is how a set gets edited unnoticed, so it takes --force.
   if (fs.existsSync(side) && fs.readFileSync(side, 'utf8').trim() !== h && !flag('--force')) {
     console.log(
       `${side} records a DIFFERENT set. Re-freezing invalidates every number quoted against the old hash — pass --force if that is what you want.`,
@@ -322,9 +312,7 @@ if (flag('--author')) {
     console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`);
     process.exit(1);
   }
-  // A frozen set is one someone has quoted a hash for. Re-authoring over it is how a held-out set
-  // gets edited to fit a result — the one thing freezing is sold as preventing. `--run` would
-  // refuse the mismatch afterwards, but by then the questions are gone; refuse here instead.
+  // `--run` would refuse the hash mismatch afterwards, but by then the questions are gone.
   if (fs.existsSync(`${CASES}.sha256`) && !flag('--force')) {
     console.log(
       `${CASES} is frozen. Re-authoring replaces the questions every number quoted against its hash was measured on — pass --force if that is what you want, then --freeze --force.`,
@@ -345,10 +333,8 @@ if (flag('--author')) {
 }
 
 if (flag('--generate')) {
-  // A held-out set is mined and hand-labelled; `--generate` extracts sentences the note contains
-  // verbatim (its own banner below: BM25 finds them trivially, 97.5%). Generating one under the
-  // held-out name would put an inflated number behind a held-out label and a publishable freeze
-  // hash — the producer-writes-both-halves failure #87 exists to stop, one flag away.
+  // `--generate` extracts sentences the note contains verbatim (its banner below: BM25 finds them
+  // trivially). Under the held-out name that is an inflated number with a publishable hash.
   if (CASE_KIND === KIND.heldOut) {
     console.log(
       '--generate cannot make a held-out set: it extracts sentences the notes already contain.\n' +
@@ -424,13 +410,11 @@ if (fs.statSync(CASES).isDirectory()) {
   process.exit(1);
 }
 const casesText = fs.readFileSync(CASES, 'utf8');
-// A frozen set that no longer hashes to its sidecar is not this set. Refuse rather than score: the
-// only thing a held-out number is worth is the guarantee that the questions did not move.
+// A set that no longer hashes to its sidecar is not this set.
 const sidecar = `${CASES}.sha256`;
 let frozen = null;
 if (fs.existsSync(sidecar)) {
-  // Unreadable or a directory is bad input, the way a mistyped --cases is — the same lesson the
-  // --cases branch above already learned, on a path added later.
+  // Unreadable or a directory is bad input, the way a mistyped --cases is.
   let want;
   try {
     want = fs.readFileSync(sidecar, 'utf8').trim();
@@ -519,11 +503,9 @@ if (!Number.isInteger(K) || K < 1) {
 }
 const KS = RECALL_KS.filter((k) => k <= K);
 
-// --min-rank1 turns a report into a GATE: below the floor the process exits non-zero, so CI or a
-// tuning loop fails instead of printing a regression nobody reads. Opt-in, because every existing
-// caller wants the report. Taken as a percentage to match how the numbers are quoted everywhere
-// else in this repo, and validated like --fetch-k — `--min-rank1 abc` gating on NaN would compare
-// false and pass every run silently, which is the failure the flag exists to prevent.
+// --min-rank1 turns a report into a GATE: below the floor the process exits non-zero. A percentage,
+// to match how the numbers are quoted. Validated like --fetch-k: NaN would compare false and pass
+// every run silently, which is the failure the flag exists to prevent.
 const minRaw = flag('--min-rank1') ? Number(val('--min-rank1')) : null;
 if (minRaw !== null && (!Number.isFinite(minRaw) || minRaw < 0 || minRaw > 100)) {
   console.log(`--min-rank1 takes a percentage between 0 and 100, got: ${val('--min-rank1')}`);
@@ -576,16 +558,16 @@ const scored = cases.map((c, i) => {
   };
 });
 const perCase = scored.filter((c) => !c.pair);
-// Unscorable pairwise cases leave BOTH sides of the tally: `gold: []` makes `named` Infinity, so
-// `owner < named` is vacuously true and the case was counted as a pass in the line people paste.
+// Unscorable pairwise cases leave BOTH sides of the tally, or `gold: []` counts as a pass in the
+// line people paste (`named` is Infinity, so `owner < named` is vacuously true).
 const pairs = scored.filter((c) => c.pair && !c.unscorable);
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
 const unscorable = scored.filter((c) => c.unscorable);
 const pairFails = pairs.filter((c) => !c.pair?.pass);
-// Decided before either report branch prints, because --json exits on its own and a gate that only
-// ran on the human path would pass every automated caller — which is the only caller a gate is for.
+// Before either report branch: --json exits on its own, and an automated caller is the only caller
+// a gate is for.
 const failures = gateFailures({
   recall1: recall[1],
   minRank1: MIN_RANK1,
@@ -615,18 +597,15 @@ if (flag('--json')) {
         // path honours that while this one printed the lot, so `--fetch-k 3 --json` reported an
         // @5 and an @10 that were @3 censored to the window. Indistinguishable from a measurement
         // to whatever reads this, which is the whole failure #97 is about.
-        // Omitted, never zero, when nothing was measured: metrics() divides by `|| 1`, so an
-        // all-pairwise set shipped `recall: {1:0,…}, mrr: 0` to the only caller a gate is for. The
-        // human report suppresses the same block; this is the path that matters.
+        // Omitted, never zero: metrics() divides by `|| 1`, so an all-pairwise set shipped
+        // `recall: {1:0,…}` to a consumer that could not tell it from a measurement.
         ...(perCase.length
           ? { recall: Object.fromEntries(KS.map((k) => [k, recall[k]])), mrr: +mrr.toFixed(3) }
           : {}),
-        // Separate keys, never folded into `n` or into the misses: a machine reading this envelope
-        // has to be able to tell a case that scored zero from one that was never scored at all.
+        // Its own key: a consumer must be able to tell a case that scored zero from one never
+        // scored at all.
         unscorable: unscorable.length,
-        // Null when no sidecar exists. Deleting one silently un-freezes a set, so a consumer has to
-        // be able to see that verification did not happen — without this the two runs were
-        // byte-identical.
+        // Null when no sidecar exists — deleting one un-freezes a set silently.
         frozen,
         pairwise: { total: pairs.length, failed: pairFails.length },
         gate: failures,
@@ -646,8 +625,7 @@ console.log(
 // cannot be silently misread, whatever routed us to the wrong one.
 console.log(`  cases: ${CASES}`);
 console.log(frozen ? `  frozen: ${frozen}` : '  frozen: no (this set is not pinned)');
-// Printed only when something was measured. metrics() divides by `|| 1`, so an all-pairwise set
-// rendered a full bar chart of 0.0% that no case had contributed to.
+// metrics() divides by `|| 1`, so an all-pairwise set rendered a bar chart no case contributed to.
 if (!perCase.length) console.log('  no recall cases in this set — pairwise assertions only');
 else {
   for (const k of KS)
@@ -674,16 +652,14 @@ if (pairs.length)
   console.log(
     `\nPairwise (owner must outrank the named note): ${pairs.length - pairFails.length}/${pairs.length} passed`,
   );
-// `absent` rather than `Infinity`: an owner that never appeared and an owner that came second are
-// different failures — one is a vocabulary gap, the other is a ranking one — and they want
-// different fixes.
+// `absent` rather than `Infinity`: an owner that never appeared is a vocabulary gap, one that came
+// second is a ranking gap, and they want opposite fixes.
 const rankLabel = (/** @type {number} */ r) => (Number.isFinite(r) ? String(r) : 'absent');
 for (const f of pairFails.slice(0, 8))
   console.log(
     `  owner ${rankLabel(f.pair?.owner ?? Infinity)}  named ${rankLabel(f.pair?.named ?? Infinity)}  Q: ${f.q.slice(0, 70)}`,
   );
-// Named, not counted. An unscorable case is a broken instrument and the operator has to be able to
-// go and look at the one that broke; a bare tally is the quiet form of the same failure.
+// Named, not counted: a tally cannot be gone and looked at.
 if (unscorable.length) {
   console.log(`\n${unscorable.length} case(s) could not be scored at all:`);
   for (const u of unscorable.slice(0, 10))

@@ -114,11 +114,9 @@ export function lexicalRank(docs, queries, k) {
   });
 }
 
-// An unscorable case is scored here as an ordinary miss, deliberately: dropping it would make the
-// printed recall improve because the instrument broke. So the figure is never flattered by one —
-// but it is DILUTED by one, which is why the caller reports and blocks on them separately rather
-// than leaving the recall number to carry the news. Counting them is the caller's too, over the
-// whole set including the pairwise cases this function never sees.
+// An unscorable case scores as an ordinary miss: dropping it would let the figure improve because
+// the instrument broke. So it is never flattered, only diluted — which is why the caller reports
+// and blocks on them separately instead of leaving the percentage to carry the news.
 /**
  * @param {readonly { rank: number }[]} perCase
  * @returns {{ recall: Record<number, number>, mrr: number }}
@@ -243,11 +241,9 @@ const MINE_NOISE = /Caveat:|tool_result|system-reminder/;
 /**
  * A parsed transcript record -> the human's prompt, or null when the record is not one.
  *
- * Split from the line form so the caller can count TURNS without parsing twice. The tally has to
- * separate "lines read" from "user turns seen": a transcript is mostly assistant and tool records,
- * so reporting lines as turns overstates the pool by two orders of magnitude — 217458 lines against
- * 3862 real turns (see MINE_MIN). An estimate printed like a measurement is the failure this whole
- * case-set effort exists to stop.
+ * Split from the line form so the caller can count TURNS without parsing twice: a transcript is
+ * mostly assistant and tool records, so reporting lines as turns overstates the pool by two orders
+ * of magnitude (see MINE_MIN).
  *
  * @param {any} o
  * @returns {string|null}
@@ -266,10 +262,8 @@ function mineTurn(o) {
 /**
  * The speech in a record, normalised, or '' when it carries none.
  *
- * Empty is the signal that separates a HUMAN turn from a tool result: both arrive as `type: user`,
- * because that is how the harness threads a tool's answer back. Counting tool results as turns
- * reported 37878 against the 3862 real ones in MINE_MIN's measurement — the same overstatement as
- * counting lines, one level down.
+ * Empty separates a HUMAN turn from a tool result: both arrive as `type: user`. Counting tool
+ * results as turns reported 37878 against the 3862 real ones (see MINE_MIN).
  *
  * @param {any} o
  * @returns {string}
@@ -326,10 +320,9 @@ function mineParse(line) {
 /**
  * Fold transcript lines into a candidate set, deduplicating on the prompt text.
  *
- * `seen` is the caller's, because deduplication has to span FOLDERS and not just files: the same
- * sessions appear under more than one cwd-slug when a home directory is renamed. Measured
- * 2026-09-05 — two such folders yield 142 candidates each and 142 between them, so a per-folder Set
- * would have reported the pool at exactly twice its size.
+ * `seen` is the caller's because deduplication has to span FOLDERS: the same sessions appear under
+ * more than one cwd-slug when a home directory is renamed. Two such folders yield 142 candidates
+ * each and 142 between them (2026-09-05), so a per-folder Set doubles the apparent pool.
  *
  * @param {Iterable<string>} lines
  * @param {Set<string>} seen mutated
@@ -354,10 +347,7 @@ export function minePrompts(lines, seen) {
 
 // ---------------------------------------------------------------- set kind, gate, pairwise (#87)
 
-// A tuning set may be fitted to; a held-out set may not. The distinction is only worth anything if
-// it is mechanical, so it lives in the FILENAME and in every report — not in a convention someone
-// remembers. Constants, not literals: a copy in the resolver and another in the reporter drift
-// apart in silence.
+// The distinction is only worth anything if it is mechanical, so it lives in the FILENAME.
 export const KIND = /** @type {const} */ ({ tuning: 'tuning', heldOut: 'held-out' });
 
 const HELD_OUT_SUFFIX = '-heldout.jsonl';
@@ -374,9 +364,7 @@ export function kindOfPath(p) {
   return p.endsWith(HELD_OUT_SUFFIX) ? KIND.heldOut : KIND.tuning;
 }
 
-// Why a case produced no number at all. Each is a broken instrument, not a bad result, and the gate
-// treats them as blocking for that reason: SkillOpt's ungated run lost 52.8 points by acting on
-// scores it should have refused (docs/decisions/2026-09-04-eval-gate.md).
+// A broken instrument, not a bad result — which is why the gate blocks on these.
 export const UNSCORABLE = /** @type {const} */ ({
   gold: 'a gold or owner note named by this case is not in the vault',
   empty: 'retrieval returned nothing for this question',
@@ -397,19 +385,13 @@ export function unscorableReason(c, results, known) {
   if (!results.length) return UNSCORABLE.empty;
   if (results.some((r) => r.score !== undefined && !Number.isFinite(r.score)))
     return UNSCORABLE.score;
-  // A window that ties end to end is not a ranking. `--mode lexical` sorts a fully tied BM25 vector
-  // and returns it in directory arrival order, so a question sharing no token with any note scored
-  // recall@1 100% and the gate signed it. `isQuestion()` guards the case TEXT and cannot see this:
-  // the scores are 0, which is finite, and k results came back, so neither other arm fires.
+  // A tie end to end is arrival order, not a ranking — `--mode lexical` returns k results all
+  // scoring 0 for a question matching nothing, which the two arms above cannot see.
   const scores = results.map((r) => r.score).filter((x) => x !== undefined);
   if (scores.length > 1 && scores.every((x) => x === scores[0])) return UNSCORABLE.tied;
-  // `some` for gold, `every` for owner, and the asymmetry is the point. `gold` is a DISJUNCTION
-  // everywhere else — `c.gold.includes(r.note)` scores a hit on ANY member — so one pruned member
-  // leaves the case perfectly scorable, and the `some(!known)` this replaces reported a case that
-  // ranked 1 as unmeasurable, then blocked the gate on it. `owner` is a single ref naming the note
-  // that must win, so losing it loses the assertion outright.
+  // `gold` is a disjunction — `c.gold.includes()` hits on ANY member — so one surviving member
+  // leaves the case scorable. `owner` is one ref, so losing it loses the assertion.
   const gold = Array.isArray(c.gold) ? c.gold : [];
-  // Its own reason: `gold` sends the operator hunting for a pruned note, and there was never one.
   if (!gold.length) return UNSCORABLE.noGold;
   if (!gold.some((g) => known.has(g))) return UNSCORABLE.gold;
   if (c.owner && !known.has(String(c.owner))) return UNSCORABLE.gold;
@@ -419,10 +401,8 @@ export function unscorableReason(c, results, known) {
 /**
  * A pairwise case: the question belongs to `owner`, and `gold` names the note that must NOT win it.
  *
- * The owner has to be FOUND, not merely ahead. A question matching nothing satisfies "the named
- * note did not win" and would score as a pass — a case that passes precisely when retrieval is
- * broken. The `Infinity` sentinel is what makes that impossible, rather than a separate guard on
- * the owner: `named` is at most Infinity, so an absent owner can never compare less than it.
+ * The owner must be FOUND, not merely ahead, or a question matching nothing passes. `named` is at
+ * most Infinity, so the sentinel enforces that and no extra guard is needed.
  *
  * @param {{ gold: readonly string[], owner: string }} c
  * @param {readonly { note: string }[]} results
@@ -442,9 +422,8 @@ export function pairwise(c, results) {
 /**
  * The accept/reject rule, as a list of reasons to reject. Empty means accept.
  *
- * Separate from the reporting path because a report and a gate answer different questions: `--run`
- * with no floor prints a number and exits 0, which is what every existing caller does. A floor is
- * opt-in, and asking for one is what turns unscorable cases from a warning into a refusal.
+ * Opt-in: `--run` with no floor prints a number and exits 0, as every existing caller expects.
+ * Why soft rather than strict-improvement: docs/decisions/2026-09-04-eval-gate.md.
  *
  * @param {{ recall1: number, minRank1: number|null, unscorable: number, pairFails: number,
  *   recallCases: number }} x
@@ -452,20 +431,15 @@ export function pairwise(c, results) {
  */
 export function gateFailures({ recall1, minRank1, unscorable, pairFails, recallCases }) {
   const out = [];
-  // A pairwise case is an ASSERTION, not a metric, so it fails the run whether or not a floor was
-  // asked for. No existing case set has an owner field, so this changes nothing for any caller.
+  // An assertion, not a metric: it fails with or without a floor.
   if (pairFails) out.push(`${pairFails} pairwise case(s) failed: the owner did not outrank`);
-  // Unscorable blocks only under a floor, and the reason is the `churn` band: a gold note removed
-  // by a prune is unscorable and has always been reported as a warning and scored past
-  // (goldCoverage above). Refusing it unprompted would break every plain `--run`. Asking for a
-  // floor is asking for an accept/reject decision, and that decision is the one that must fail
-  // closed — docs/decisions/2026-09-04-eval-gate.md.
+  // Unscorable blocks only under a floor: goldCoverage's `churn` band has always warned about a
+  // pruned gold note and scored past it, and refusing that unprompted breaks every plain `--run`.
   if (minRank1 == null) return out;
   if (unscorable)
     out.push(`${unscorable} unscorable case(s) — the set did not measure them, so it did not pass`);
-  // A set of only pairwise cases has NO recall cases, and `metrics()` divides by `|| 1`, so the
-  // floor was compared against a 0 that nothing had measured — "0 cases · recall@1 0.0% · GATE
-  // FAILED" on a set where every assertion passed. A floor over an empty population is not a score.
+  // metrics() divides by `|| 1`, so an all-pairwise set compared the floor against a 0 nothing
+  // had measured. A floor over an empty population is not a low score.
   if (!recallCases) return out;
   if (recall1 < minRank1)
     out.push(
@@ -477,10 +451,8 @@ export function gateFailures({ recall1, minRank1, unscorable, pairFails, recallC
 /**
  * The identity of a case set, publishable where its contents are not.
  *
- * A held-out set stays machine-local because it carries vault content, so "it was not edited to fit
- * the result" cannot be shown by publishing it. A hash can be quoted in an issue or a decision
- * record and checked later against the file. `trimEnd` so a trailing newline added by an editor is
- * not a different set.
+ * The set stays machine-local (vault content), so the hash is what gets quoted. `trimEnd` so an
+ * editor's trailing newline is not a different set.
  *
  * @param {string} text
  * @returns {string}
