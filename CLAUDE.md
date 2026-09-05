@@ -374,6 +374,16 @@ missing, `validate-note.mjs` warns rather than blocking a write, and the heavy h
 against recursing into themselves via a `*_CHILD` env var — they spawn headless `claude`, which
 fires SessionStart again.
 
+**One deliberate, scoped exception: the actual write onto disk aborts rather than guessing.**
+`distill-session`'s gate half (fired by Claude Code, zero-arg, reads a hook payload) still never
+blocks — a payload with no `cwd` is treated exactly like a missing transcript, a `noop-missing-dep`
+that exits 0. But its worker half (invoked with argv, the process that actually writes notes into
+the vault) calls `paths.requireVault()` and validates its own `cwd` argument, and **throws — a
+non-zero exit — rather than falling back to the built-in default vault or an inferred cwd**. That
+is what closed the 2026-08-15 incident where a silent fallback scaffolded an empty vault and
+repointed the memory symlink at it. Read paths (`paths.vault()`, `hookCwd()`) keep the old
+degrade-to-default behaviour; only a caller that is about to write calls the `require*` sibling.
+
 ## Conventions
 
 - **No retrieval number ships without a case-set run behind it.** Rewriting the questions per run

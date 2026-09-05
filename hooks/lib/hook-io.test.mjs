@@ -8,6 +8,7 @@ import { logRetentionDays } from './paths.mjs';
 import {
   payload,
   hookCwd,
+  requireHookCwd,
   withinDebounce,
   nowSeconds,
   countLines,
@@ -40,6 +41,12 @@ test('hookCwd falls back to process.cwd()', () => {
   assert.strictEqual(hookCwd({ cwd: '/a' }), '/a');
   assert.strictEqual(hookCwd({}), process.cwd());
   assert.strictEqual(hookCwd(undefined), process.cwd());
+});
+
+test('requireHookCwd throws rather than falling back — the write-path sibling of hookCwd', () => {
+  assert.strictEqual(requireHookCwd({ cwd: '/a' }), '/a');
+  assert.throws(() => requireHookCwd({}), /cwd/);
+  assert.throws(() => requireHookCwd(undefined), /cwd/);
 });
 
 test('withinDebounce treats a MISSING marker as not-recent', () => {

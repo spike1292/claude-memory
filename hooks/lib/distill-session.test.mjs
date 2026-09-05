@@ -23,6 +23,7 @@ import {
   reconcile,
   transcriptToText,
   parseEnvelope,
+  distill,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -295,27 +296,53 @@ test('gatePlan honours Claude Code stop_hook_active', () => {
 test('gatePlan needs a transcript that exists', () => {
   assert.strictEqual(
     /** @type {import('./distill-session.mjs').SkipGate} */ (
-      gatePlan({ hook_event_name: 'SessionEnd' })
+      gatePlan({ hook_event_name: 'SessionEnd', cwd: '/some/project' })
     ).reason,
     'no transcript path',
   );
   assert.strictEqual(
     /** @type {import('./distill-session.mjs').SkipGate} */ (
-      gatePlan({ hook_event_name: 'SessionEnd', transcript_path: '/nope/nope.jsonl' })
+      gatePlan({
+        hook_event_name: 'SessionEnd',
+        cwd: '/some/project',
+        transcript_path: '/nope/nope.jsonl',
+      })
     ).reason,
     'transcript missing',
+  );
+});
+
+test('gatePlan needs cwd, not just a transcript — a payload missing it is treated as the same outage as a missing transcript', () => {
+  const t = transcriptWith(500);
+  assert.strictEqual(
+    /** @type {import('./distill-session.mjs').SkipGate} */ (
+      gatePlan({ hook_event_name: 'SessionEnd', transcript_path: t })
+    ).reason,
+    'no cwd',
+  );
+  assert.strictEqual(
+    gatePlan({ hook_event_name: 'SessionEnd', transcript_path: t, cwd: '/some/project' }).run,
+    true,
+  );
+});
+
+test('distill(): a write path with no cwd throws before touching the vault', async () => {
+  await assert.rejects(() => distill('/some/transcript.jsonl', ''), /cwd/);
+  await assert.rejects(
+    () => distill('/some/transcript.jsonl', /** @type {any} */ (undefined)),
+    /cwd/,
   );
 });
 
 test('SessionEnd distils any non-trivial session; Stop does not', () => {
   const short = transcriptWith(MIN_MESSAGES + 5);
   assert.strictEqual(
-    gatePlan({ hook_event_name: 'SessionEnd', transcript_path: short }).run,
+    gatePlan({ hook_event_name: 'SessionEnd', cwd: '/some/project', transcript_path: short }).run,
     true,
     'SessionEnd is authoritative',
   );
   // Stop fires constantly during normal work — it is a crash fallback, not a second trigger.
-  const p = gatePlan({ hook_event_name: 'Stop', transcript_path: short });
+  const p = gatePlan({ hook_event_name: 'Stop', cwd: '/some/project', transcript_path: short });
   assert.strictEqual(p.run, false);
   assert.strictEqual(p.reason, 'stop: session too short');
 });
@@ -323,7 +350,7 @@ test('SessionEnd distils any non-trivial session; Stop does not', () => {
 test('a trivial session is skipped on every event', () => {
   const tiny = transcriptWith(MIN_MESSAGES - 1);
   for (const ev of ['SessionEnd', 'Stop']) {
-    const p = gatePlan({ hook_event_name: ev, transcript_path: tiny });
+    const p = gatePlan({ hook_event_name: ev, cwd: '/some/project', transcript_path: tiny });
     assert.strictEqual(p.run, false, ev);
     assert.strictEqual(p.reason, 'trivial session', ev);
   }
@@ -333,9 +360,10 @@ test('Stop distils a LONG session, then debounces it', () => {
   const long = transcriptWith(STOP_MIN_MESSAGES + 1);
   const sid = `gate-test-${process.pid}`;
   const now = 1_700_000_000;
+  const cwd = '/some/project';
 
   const first = gatePlan(
-    { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+    { hook_event_name: 'Stop', cwd, transcript_path: long, session_id: sid },
     { now },
   );
   assert.strictEqual(first.run, true, 'no marker yet — must run');
@@ -343,21 +371,21 @@ test('Stop distils a LONG session, then debounces it', () => {
   fs.writeFileSync(first.marker, `${now}\n`);
   try {
     const soon = gatePlan(
-      { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+      { hook_event_name: 'Stop', cwd, transcript_path: long, session_id: sid },
       { now: now + STOP_DEBOUNCE_SECONDS - 1 },
     );
     assert.strictEqual(soon.run, false);
     assert.strictEqual(soon.reason, 'stop: debounced');
 
     const later = gatePlan(
-      { hook_event_name: 'Stop', transcript_path: long, session_id: sid },
+      { hook_event_name: 'Stop', cwd, transcript_path: long, session_id: sid },
       { now: now + STOP_DEBOUNCE_SECONDS },
     );
     assert.strictEqual(later.run, true, 'the window is open at exactly the boundary');
 
     // SessionEnd is never debounced: it is the authoritative pass.
     const end = gatePlan(
-      { hook_event_name: 'SessionEnd', transcript_path: long, session_id: sid },
+      { hook_event_name: 'SessionEnd', cwd, transcript_path: long, session_id: sid },
       { now: now + 1 },
     );
     assert.strictEqual(end.run, true);
@@ -710,6 +738,71 @@ test('the distill WORKER really writes its own line, outcome and reason and all'
   assert.ok(rec.ms > 0);
 });
 
+test('the WORKER writes nothing and exits non-zero when the vault cannot be resolved', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'no-vault-home-'));
+  const memHome = fs.mkdtempSync(path.join(os.tmpdir(), 'no-vault-state-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'no-vault-cwd-'));
+  t.after(() => {
+    for (const d of [home, memHome, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+  const transcript = path.join(cwd, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i}` } }),
+    ).join('\n') + '\n',
+  );
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  const { CLAUDE_VAULT: _cv, DISTILL_VAULT: _dv, ...restEnv } = process.env;
+  const env = { ...restEnv, HOME: home, CLAUDE_MEMORY_HOME: memHome, DISTILL_DRYRUN: '1' };
+
+  assert.throws(
+    () => execFileSync(process.execPath, [entry, transcript, cwd], { stdio: 'pipe', env }),
+    /Command failed/,
+  );
+  // The default this used to fall back to, silently, on 2026-08-15 — resolved the same way
+  // paths.vault() resolves it, off the HOME this subprocess was given.
+  const wouldHaveDefaulted = path.join(home, 'Documents', 'ClaudeVault');
+  assert.ok(!fs.existsSync(wouldHaveDefaulted), 'nothing written to the built-in default location');
+
+  // Positive control, same transcript and cwd: with a vault configured, the run DOES write there.
+  // Without this, a scan of the wrong directory above would also find nothing and pass by mistake.
+  const vault = path.join(home, 'configured-vault');
+  execFileSync(process.execPath, [entry, transcript, cwd], {
+    stdio: 'pipe',
+    env: { ...env, DISTILL_VAULT: vault },
+  });
+  assert.ok(fs.existsSync(vault), 'the scan technique does find files once a vault is configured');
+});
+
+test('the WORKER writes nothing and exits non-zero when invoked with no cwd', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'no-cwd-worker-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i}` } }),
+    ).join('\n') + '\n',
+  );
+  const vault = path.join(root, 'vault');
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, [entry, transcript, ''], {
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+          DISTILL_DRYRUN: '1',
+          DISTILL_VAULT: vault,
+        },
+      }),
+    /Command failed/,
+  );
+  assert.ok(!fs.existsSync(vault), 'a missing cwd must not fall back to writing under any vault');
+});
+
 test('every reason gatePlan can return is one gateOutcome actually recognises', () => {
   // The round trip, not the two halves separately. Round 5 added `stopShort` to the mapper and left
   // the plan emitting the literal, so the branch it shipped to fix never fired — with both existing
@@ -738,8 +831,14 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
   // And the stand-downs really do map away from `ran`, which is documented as "did its work".
   for (const r of [GATE_REASONS.stopShort, GATE_REASONS.trivial, GATE_REASONS.debounced])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'debounced', r);
-  // A transcript that is absent, unreadable, or not a file at all is the same outage.
-  for (const r of [GATE_REASONS.noTranscript, GATE_REASONS.badTranscript, GATE_REASONS.notAFile])
+  // A transcript that is absent, unreadable, or not a file at all is the same outage — and so is a
+  // payload missing cwd: the gate itself still never blocks, it just declines to spawn.
+  for (const r of [
+    GATE_REASONS.noTranscript,
+    GATE_REASONS.badTranscript,
+    GATE_REASONS.notAFile,
+    GATE_REASONS.noCwd,
+  ])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'noop-missing-dep', r);
   assert.ok(seen.size >= 6, 'the constant table still covers every branch');
 });
