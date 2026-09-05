@@ -1,27 +1,9 @@
 /**
- * Extract the review instructions out of `.github/workflows/claude-review.yml`.
- *
- * The prompt lives inline in the workflow and MUST stay there. `claude-code-action` refuses to run
- * unless the workflow file invoking it is byte-identical to the copy on the default branch — a
- * server-side check, scoped to that one file (`workflow_not_found_on_default_branch`). Moving the
- * prompt to its own file would leave the `.yml` identical while the instructions changed, so a PR
- * could be reviewed under rules it had just rewritten. Verified against the action's inputs on
- * 2026-08-19: there is no `prompt_file` input either, so the alternative was an env var, which
- * would have bought the regression for nothing.
- *
- * Inline is therefore the source of truth, and this reads it back out so the same instructions can
- * be applied locally before pushing — the reviewer that gates the PR is the one worth running early.
- * It is also the only review a PR editing `claude-review.yml` can get: the action skips those and
- * exits SUCCESS, so the check goes green having read nothing.
- *
- * A hand-rolled block-scalar reader rather than a YAML dependency: one `prompt: |` key, and every
- * dependency ships into a user's version-pinned plugin cache. One key, so it is not parameterised
- * by one either — a `key` argument with a single argument ever passed was deleted 2026-08-19.
+ * Extracts the review instructions out of `.github/workflows/claude-review.yml` — inline on purpose; see docs/ci-and-releases.md, "The review prompt stays inline in that file".
  */
 
 /**
  * Indentation width of a line, or null for a blank one (blanks never close a block scalar).
- *
  * @param {string} line
  * @returns {number | null}
  */
@@ -31,11 +13,7 @@ function indentOf(line) {
 }
 
 /**
- * The review instructions: the dedented body of the workflow's `prompt: |` block scalar.
- *
- * Returns null when the key is absent — null rather than a throw, because the caller wants to say
- * something better than a stack trace about a workflow it could not read.
- *
+ * The review instructions: the dedented body of the workflow's `prompt: |` block scalar, or null if absent.
  * @param {string} yaml
  * @returns {string | null}
  */
@@ -49,9 +27,8 @@ export function reviewPrompt(yaml) {
   const body = [];
   for (const line of lines.slice(start + 1)) {
     const ind = indentOf(line);
-    // A blank line inside a block scalar is content, not a terminator; anything at or left of the
-    // key's own indentation ends it. `claude_args: |` sits directly after `prompt: |` in the real
-    // workflow, which is exactly this case.
+    // A blank line inside a block scalar is content, not a terminator — only a line at or left of
+    // the key's own indentation (e.g. the `claude_args: |` sibling that follows) ends it.
     if (ind !== null && ind <= keyIndent) break;
     body.push(line);
   }

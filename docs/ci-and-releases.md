@@ -102,6 +102,11 @@ as a comment you repush over, and for a PR editing `claude-review.yml` it is the
 available at all. `scripts/lib/review-prompt.test.mjs` fails if the workflow is restructured such
 that the prompt no longer extracts.
 
+`scripts/lib/review-prompt.mjs` reads the `prompt: |` block scalar with a hand-rolled reader rather
+than a YAML dependency — one key, and a dependency for it ships into every user's version-pinned
+plugin cache. It is not parameterised by key either; a single-caller `key` argument was deleted
+2026-08-19.
+
 ## Releasing
 
 Changelog entries land with the change, under `## [Unreleased]` in `CHANGELOG.md` — Keep a

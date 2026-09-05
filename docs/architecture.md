@@ -620,6 +620,36 @@ bare `$`, a backtick or a quote is an injection. POSIX single-quoting suppresses
 and `'\''` is the only escape it needs. The test's oracle is bash itself: quote it, echo it back,
 compare byte for byte.
 
+**H15 — `trimLog()` truncates an oversized log in place, and NOT ATOMICALLY, deliberately
+(2026-08-19, raised twice in review of #24).** `openLog()` hands detached children an `O_APPEND`
+fd they hold for the whole run — minutes, for a headless `claude`. Two hooks can therefore be
+writing while a third trims, and anything appended between the `readSync` and the `writeFileSync`
+is overwritten: a microseconds-wide window, firing only past 1 MB, costing at most a debug-log
+line. The read is POSITIONED (one `fs.readSync` at `size - LOG_KEEP_BYTES`), so a log that has run
+away to hundreds of MB never enters memory — `readFileSync` + slice would be the bug, not the fix.
+The retained tail starts mid-line, so everything up to the first newline is dropped (a truncated
+first line reads as corrupt rather than partial); a tail with no newline at all keeps its partial
+line, since dropping it would discard the whole tail.
+
+The obvious fix — write a temp file and `rename()` — is strictly worse here. Truncating in place
+keeps the inode, so every held `O_APPEND` fd goes on landing in the file a reader opens; the loss
+is bounded by that one window. A rename leaves those fds pointing at an unlinked inode, so every
+child holding one writes the rest of its output into a file nothing can open — seconds of racy
+overlap traded for minutes of silently discarded output. Atomicity is the wrong property to buy
+when the writers outlive the swap. **Do not "fix" this with a rename.**
+
+**H16 — `takeLock()`'s stale-reclaim race is narrowed, not closed.** `wx` is atomic, so two
+sessions racing for a FREE lock always pick one winner. Reclaiming a STALE one cannot be atomic —
+unlink and create are two syscalls — and a plain unlink-then-create is wrong: the loser's unlink
+deletes the winner's fresh lock and it then claims the empty path, so both believe they hold it and
+both start the work this exists to deduplicate. The inode is therefore captured before the
+staleness verdict and re-checked after it: a lock that has been replaced in the meantime is
+somebody else's, and the caller stands down rather than unlinking it. That narrows the race to the
+gap between the re-check and the unlink and does not close it — closing it needs an OS-level lock,
+which Node's `fs` does not expose (the upgrade is a native `flock` binding); the residual cost is
+one extra re-index in an interleaving of microseconds that also requires the previous owner to be
+dead.
+
 ## Where failure is silent
 
 The system's defences are excellent where it has already been burned and absent where it has not.

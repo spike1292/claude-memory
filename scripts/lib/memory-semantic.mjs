@@ -14,16 +14,7 @@
 // comparison against bge-small-en and e5-multi. Wrong pooling is silent (CLAUDE.md "Model
 // profiles are not interchangeable").
 //
-// Setup on a new machine (node_modules is gitignored, so the dep does not travel with the repo):
-//   cd ~/.claude && npm install @huggingface/transformers && npm approve-scripts onnxruntime-node
-//   (the postinstall fetches the native runtime; without it the pipeline cannot start)
-//
-// Usage:
-//   node ~/.claude/scripts/memory-semantic.mjs --dupes                # same-folder near-duplicates
-//   node ~/.claude/scripts/memory-semantic.mjs --clusters               # topics with no permanent/ note
-//   node ~/.claude/scripts/memory-semantic.mjs --index [repo-dir]     # build/refresh (idempotent)
-//   node ~/.claude/scripts/memory-semantic.mjs --query "how long was the site down" [-k 5]
-//   node --test scripts/lib/memory-semantic.test.mjs
+// Usage: CLAUDE.md's "Exercising the real pipeline" section (--index/--query/--dupes/--clusters).
 //
 // ponytail: linear cosine scan over a few thousand 384-d vectors is ~5ms. No ANN index, no server.
 
@@ -57,16 +48,10 @@ import { CARD, lexTokens, bm25 } from './lexical.mjs';
  */
 
 // Which sibling servers should this one evict? Anything else under run/ is a leftover (CLAUDE.md's
-// "One --serve for the whole machine, keyed by MODEL") — a warm server costs 800MB-1.4GB, pure
-// waste, so a starting server asks each of them to quit.
-//
-// Sockets are the registry: no pidfile, no lock, nothing to leave stale. A legacy per-slug name
-// needs no special case here — it just isn't "mine" under the same `search-<model>.sock` rule a
-// current sibling fails too.
-//
-// ponytail: last-writer-wins, no coordination. Two servers starting in the same instant can evict
-// each other and both die; the next prompt respawns one, so it self-heals at the cost of one
-// keyword-only recall. Needs a lock only if that is ever observed.
+// "One --serve for the whole machine, keyed by MODEL"). Sockets are the registry — no pidfile, no
+// lock, nothing to leave stale.
+// ponytail: last-writer-wins, no coordination. Two servers starting at once can evict each other and
+// both die; the next prompt respawns one. Needs a lock only if that is ever observed.
 /**
  * @param {readonly string[]} names
  * @param {string} ownName
@@ -81,18 +66,11 @@ export const QUIT = { quit: 1 };
 /**
  * A lazily-loaded value that is loaded AT MOST ONCE at a time, and can be taken back out.
  *
- * `if (!x) x = await load()` is a check-then-act across an await. It was unreachable while the model
- * loaded once at startup and never went back to null; making it unloadable made it reachable, and
- * then two requests arriving after an unload would both load, with the second assignment silently
- * dropping the first ~1.3GB onnxruntime session — no dispose(), exactly the leak this file exists to
- * prevent. In `lib/` rather than beside its one caller because a regression here is SILENT: it costs
- * memory, not correctness, so nothing fails and no answer changes.
- *
- * - `get()` shares the in-flight promise, so N concurrent callers cause ONE load.
- * - a rejected load clears the in-flight slot, so one failure does not poison every later call.
- * - `take()` removes and returns the value for the caller to release; a `take()` while a load is
- *   still in flight returns null and lets that load land. Bounded: the value then waits for the
- *   next `take()`, and for the server that is the following idle tick.
+ * `if (!x) x = await load()` is a check-then-act across an await: two requests arriving after an
+ * unload would both load, with the second silently dropping the first ~1.3GB onnxruntime session
+ * (no dispose() — the leak this exists to prevent). `get()` shares the in-flight promise so N
+ * concurrent callers cause ONE load; `take()` returns null while a load is in flight and lets that
+ * load land instead of racing it.
  *
  * @template T
  * @param {() => Promise<T>} load
@@ -121,13 +99,9 @@ export function singleFlight(load) {
       return inFlight;
     },
     /**
-     * Hold the value for the duration of `use`, so `take()` cannot pull it out mid-flight.
-     *
-     * singleFlight originally guarded concurrent LOADS. The mirror hazard is on the release side:
-     * an idle timer calling take() → dispose() while another request is still running inference on
-     * that same session frees it underneath native code. Rare — it needs an inference outlasting
-     * the idle timer — but it is the same class of bug, and the failure is a native crash rather
-     * than a wrong answer.
+     * Hold the value for the duration of `use`, so `take()` cannot pull it out mid-flight — an idle
+     * timer calling take() -> dispose() while inference still runs on that session would free it
+     * underneath native code (a crash, not a wrong answer).
      *
      * @template R
      * @param {(v: T) => R | Promise<R>} use
@@ -160,14 +134,10 @@ export function singleFlight(load) {
 
 /**
  * Per-key cache that reloads when the source has been written since it was loaded.
- *
- * Split out for the same reason as singleFlight: the staleness comparison is one expression whose
- * failure modes are all silent. `mtimeMs <= entry.loadedAt` must be written in that direction so a
- * NaN — which is what a failed stat gives — falls through to a RELOAD rather than serving a cached
- * index forever. The other order (`mtimeMs > entry.loadedAt`) reads identically and is wrong.
- *
- * Entries are never evicted: an index is ~15MB of vectors against the ~1.3GB model, so the process
- * idle timer is a good enough upper bound on how long they live.
+ * `mtimeMs <= entry.loadedAt` must be written in that direction — a NaN (a failed stat) then falls
+ * through to a RELOAD rather than serving a cached index forever; the other order reads identically
+ * and is wrong. Entries are never evicted: an index is ~15MB against the ~1.3GB model, so the
+ * process idle timer already bounds how long they live.
  *
  * @template {{ loadedAt: number }} T
  * @param {(key: string) => T} load
@@ -193,16 +163,10 @@ export function mtimeCache(load) {
 }
 
 /**
- * Documents for the keyword arm, tokenised once.
- *
- * Granularity is a real choice, not a detail. `chunk` keeps both arms scoring the same units.
- * `note` concatenates a note's chunks first, which suits a LONG note whose matching terms are spread
- * thin — one where no single chunk looks convincing but the note carries the query's vocabulary
- * across many sections. It also inflates df for the identity header repeated in every chunk, though
- * BM25 saturates term frequency so the effect is bounded. MEMORY_FUSE_LEX=note|chunk.
- *
- * Tokenising here rather than per query matters: df/idf does not change per question, so doing it
- * inside the loop would re-tokenise thousands of chunks for every question asked.
+ * Documents for the keyword arm, tokenised once (df/idf doesn't change per question, so
+ * re-tokenising inside the query loop would cost every question the whole corpus).
+ * `chunk` keeps both arms scoring the same units; `note` concatenates a note's chunks first, which
+ * suits a long note whose matching terms are spread thin. MEMORY_FUSE_LEX=note|chunk.
  *
  * @param {readonly ResultRow[]} rowsUsed
  * @param {string} [mode]
@@ -233,23 +197,12 @@ export function buildLexDocs(rowsUsed, mode) {
   return [...byNote.values()].map((d) => ({ ...d, toks: lexTokens(d.text) }));
 }
 
-// Is something already listening on this unix socket?
-//
-// One resident server per slug+model, or bge-m3 multiplies. Measured 2026-08-17 on a 16GB machine:
-// SIX --serve processes at once, each 797MB-1.5GB phys_footprint — mostly swapped out, so they
-// cost the machine without showing up in RSS.
-//
-// They used to pile up because --serve unlinked the socket unconditionally and rebound over it,
-// leaving the previous server running with a listening fd on an unlinked inode: reachable by
-// nobody, exiting only when its 30m idle timer fired. Fixed 2026-08-17 by probing first — full
-// history: docs/decisions/2026-08-17-socket-unlink-race.md.
-//
-// Probing costs ~1ms and has to happen BEFORE the index load and the warm-up, or a duplicate has
-// already paid for both by the time it discovers it is redundant.
-//
-// A connect that neither succeeds nor errors is treated as LIVE: not stealing from a server that
-// might be there is the safe direction, and a genuinely wedged one still dies on its idle timer.
-// Only ECONNREFUSED — nobody bound, the file is a leftover — earns an unlink.
+// Is something already listening on this unix socket? Full history and the measured server pile-up
+// this replaced: docs/decisions/2026-08-17-socket-unlink-race.md.
+// Probing must happen BEFORE the index load and warm-up, or a duplicate has already paid for both
+// by the time it discovers it is redundant. A connect that neither succeeds nor errors is treated
+// as LIVE — not stealing from a server that might be there is the safe direction. Only
+// ECONNREFUSED (nobody bound, the file is a leftover) earns an unlink.
 /**
  * @param {string} sockPath
  * @param {number} [timeoutMs]
@@ -307,29 +260,17 @@ export function stripFrontmatter(raw) {
   return { meta: desc.trim().replace(/^["']|["']$/g, ''), body: raw.slice(m[0].length) };
 }
 
-// Does this note still hash to what the index embedded? Every touched note used to be re-embedded
-// at batch size 1 — a 20-40 min CPU storm for content nobody changed (2026-08-19) — before this
-// became a hash check instead of an mtime check; full mtime/Synology story: docs/architecture.md's
-// closed risk R1.
+// Does this note still hash to what the index embedded? mtime is only a fast-path hint now, not
+// the decision — docs/architecture.md's closed risk R1 has why (a 20-40 min re-embed storm for
+// unchanged Synology-touched content, 2026-08-19).
 //
-// The RAW FILE BYTES are hashed, not the chunk text. The property that has to hold is "the hash
-// changes if the embeddings would change", and it holds in the direction that matters: chunkNote()
-// is pure and deterministic, so identical bytes give identical chunks give identical vectors. The
-// converse is deliberately loose — a frontmatter-only edit changes the hash and costs one needless
-// re-embed, which is the safe way to be wrong and is exactly what mtime does today. Hashing bytes
-// also means the caller hashes what it already read, with no chunking pass on files it will skip.
+// Hashes the RAW FILE BYTES, not the chunk text: chunkNote() is pure, so identical bytes give
+// identical vectors, and a frontmatter-only edit costing one needless re-embed is the safe way to
+// be wrong — same as mtime. A change to chunkNote() itself is invisible to this, same as to mtime;
+// --rebuild is the escape hatch for both.
 //
-// Callers pass the Buffer readFileSync returned and decode it only for a file they will re-embed,
-// so this really is over the file's bytes; a string argument is hashed as its UTF-8 encoding, and
-// the two agree for anything that round-trips (invalid UTF-8 does not, which is the reason to hand
-// it the Buffer).
-//
-// (A change to chunkNote() itself is invisible to this, as it was to mtime: --rebuild is the escape
-// hatch, same as for a model change.)
-//
-// sha256 via crypto.hash(): stdlib, one-shot, no dependency, hardware-accelerated, and not a digest
-// a FIPS build disables — the boring choice. Speed sweep vs sha1:
-// docs/decisions/2026-08-19-content-hash.md.
+// sha256 via crypto.hash(): stdlib, hardware-accelerated, not a digest a FIPS build disables.
+// Speed sweep vs sha1: docs/decisions/2026-08-19-content-hash.md.
 /**
  * @param {import('node:crypto').BinaryLike} raw
  * @returns {string}
@@ -706,12 +647,7 @@ export function fuseRRF(semRanked, lexRanked, w, k) {
 
 /**
  * A query-ready index bundle from raw chunk rows. No SQLite here — `lib/` must not import
- * node:sqlite (CI enforces it — "node:sqlite is imported only by entry points"), so the entry
- * reads the rows and this owns everything after.
- *
- * Split out for the reason singleFlight and mtimeCache were: the alias ablation and the card map
- * are both silent when wrong. Dropping alias chunks changes retrieval without erroring, and a
- * missing card map degrades every brief to raw chunk text that still looks like a result.
+ * node:sqlite (CI enforces it), so the entry reads the rows and this owns everything after.
  *
  * @template {ResultRow} T
  * @param {string} slug

@@ -171,6 +171,10 @@ that rots.
 
 ## No CI guard
 
+**Superseded 2026-09-05 by [2026-09-05-prose-ceiling.md](2026-09-05-prose-ceiling.md):** CI now fails
+when comments outnumber code in a file a change touches. The objection below still stands and is
+what shapes the fix — a fact worth keeping is MOVED to a doc, never deleted.
+
 Declined, deliberately. A check that fails on long blocks fights the load-bearing comments forever,
 and the first three rows of the table above are exactly what it would fire on. **The ledger is the
 check** — one row per outcome: module, subject, outcome, destination, with a `pointer` row carrying
