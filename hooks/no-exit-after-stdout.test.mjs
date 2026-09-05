@@ -37,8 +37,10 @@ test('no hook entry writes stdout then exits without draining', () => {
     .readdirSync(HOOKS_DIR)
     .filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'));
   assert.ok(entries.length > 0, 'expected to find hook entry files to scan');
+  let consoleLogSites = 0;
   for (const file of entries) {
     const source = fs.readFileSync(path.join(HOOKS_DIR, file), 'utf8');
+    consoleLogSites += (source.match(/console\.log\(/g) ?? []).length;
     const violations = findViolations(source);
     assert.deepEqual(
       violations,
@@ -46,4 +48,7 @@ test('no hook entry writes stdout then exits without draining', () => {
       `${file}: console.log immediately followed by process.exit at line(s) ${violations.join(', ')}`,
     );
   }
+  // If the regex stopped matching real code (a rename, a logger wrapper), every file would
+  // report zero violations for the wrong reason — this is what tells that apart from a real pass.
+  assert.ok(consoleLogSites > 0, 'expected to find console.log sites in the scanned files');
 });
