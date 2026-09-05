@@ -498,12 +498,9 @@ export function dupeScore(a, b) {
   return a.layer === b.layer ? cosine(a.vec, b.vec) : 0;
 }
 
-// #96's "second finding": dupeScore()'s same-layer gate is right for the merge predicate above (a
-// Pattern and its matching Mistake are complementary, not duplicates) but it also hides a genuine
-// same-lesson note restated in a different folder. This is a DIFFERENT question — not "is this the
-// duplicate predicate", which stays dupeScore() alone — so it does not reuse dupeScore: it takes
-// raw cosine within a cluster's own members, across layers, for a human to judge in /memory:prune.
-// Nothing here merges anything.
+// #96's "second finding": dupeScore()'s same-layer gate hides a genuine same-lesson note restated
+// in a different folder. A different question from "is this a duplicate" — stays out of that
+// predicate on purpose — so raw cosine, across layers, for a human to judge in /memory:prune.
 /**
  * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
  * @param {readonly T[]} members one cluster from clusterNotes()

@@ -647,7 +647,7 @@ if (flag('--clusters') || flag('--propose')) {
 if (flag('--cross-dupes')) {
   const linkMin = Number(val('--min') || PROFILE.clusterMin);
   const dupeMin = Number(val('--dupe-min') || PROFILE.dupeMin);
-  const minSize = 4;
+  const minSize = Number(val('--size') || 4); // same clustering step as --clusters/--propose
   const cards = /** @type {CardRow[]} */ (
     /** @type {DatabaseSync} */ (db)
       .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')

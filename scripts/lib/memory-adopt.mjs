@@ -1,16 +1,12 @@
-// The adopt/rollback state machine for /memory:adopt (#96): the ONLY path that writes to
-// `permanent/`. Every mutation is injected as an `io` function, so the gate — a held-out eval run
-// that shells out to memory-eval.mjs — is testable without spawning a subprocess or touching a real
-// vault, the same seam memory-eval.mjs's own scoring functions use.
-//
-// Logic half; the CLI entry is scripts/memory-adopt.mjs.
-// Tests: node --test scripts/lib/memory-adopt.test.mjs
+// The adopt/rollback state machine for /memory:adopt (#96), the only path that writes to
+// `permanent/`. `io` is injected so the gate — a held-out eval run shelling out to
+// memory-eval.mjs — is testable without a subprocess or a real vault.
+// CLI entry: scripts/memory-adopt.mjs. Tests: node --test scripts/lib/memory-adopt.test.mjs
 
 /**
- * A note is still the /memory:synthesize skeleton, already drafted into the permanent shape, or
- * neither. Read off the frontmatter `type:` line only — matching the placeholder PROSE would break
- * the moment a drafted note quotes its own history.
- *
+ * Undrafted skeleton, drafted into the permanent shape, or neither — read off the frontmatter
+ * `type:` line only, since matching the placeholder PROSE would break on a note quoting its own
+ * history.
  * @param {string} raw
  * @returns {'undrafted' | 'ready' | 'wrong-type'}
  */
@@ -22,27 +18,13 @@ export function checkDraftStatus(raw) {
 }
 
 /** @typedef {{ failures: string[] }} GateResult */
-/**
- * @typedef {{
- *   readFile: (p: string) => string,
- *   writeFile: (p: string, s: string) => void,
- *   removeFile: (p: string) => void,
- *   exists: (p: string) => boolean,
- *   reindex: () => void,
- *   runGate: () => GateResult,
- * }} AdoptIO
- */
+/** @typedef {{ readFile: (p: string) => string, writeFile: (p: string, s: string) => void, removeFile: (p: string) => void, exists: (p: string) => boolean, reindex: () => void, runGate: () => GateResult }} AdoptIO */
+/** @typedef {{ stagedPath: string, targetPath: string, dryRun: boolean, force: boolean }} AdoptOpts */
+/** @typedef {{ status: 'undrafted' | 'wrong-type' | 'exists' | 'dry-run' | 'rejected' | 'adopted', reasons?: string[] }} AdoptResult */
 
 /**
- * @typedef {{ stagedPath: string, targetPath: string, dryRun: boolean, force: boolean }} AdoptOpts
- * @typedef {{ status: 'undrafted' | 'wrong-type' | 'exists' | 'dry-run' | 'rejected' | 'adopted', reasons?: string[] }} AdoptResult
- */
-
-/**
- * Copy staged -> permanent/, reindex, run the held-out gate, and roll back on failure. Nothing
- * written to `permanent/` survives a failing gate; nothing removed from Staging/ survives one
- * either, so a rejected proposal can be fixed and retried.
- *
+ * Copy staged -> permanent/, reindex, run the held-out gate, roll back on failure. A rejected
+ * proposal keeps its staged file so it can be fixed and retried.
  * @param {AdoptIO} io
  * @param {AdoptOpts} opts
  * @returns {AdoptResult}

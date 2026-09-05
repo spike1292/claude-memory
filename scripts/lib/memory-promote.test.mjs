@@ -79,15 +79,19 @@ test('mergeProposal falls back to the fresh render when no sentinel is present',
   assert.equal(mergeProposal(existing, fresh), fresh);
 });
 
-test('mergeProposal preserves a drafted note past @generated:end after /memory:synthesize edits it', () => {
-  // A drafted note keeps the marker in its body (renderProposal's own instruction says so) but its
-  // frontmatter is now `type: permanent` — mergeProposal must not clobber the draft on a re-propose.
-  const drafted = `---\ntype: permanent\nconfidence: high\n---\n\n${GEN_END}\n\n## Real title\n\nCited content — [[some-note]].\n`;
+test('mergeProposal is never the right tool for a drafted note — it always overwrites the frontmatter-through-marker region', () => {
+  // /memory:synthesize's draft lives BEFORE the marker (it replaces "frontmatter through the
+  // marker" per commands/synthesize.md), which is exactly the region mergeProposal always
+  // regenerates. Calling it on a drafted note would destroy the draft — proposeStagingNotes must
+  // never do this (see the test below); this pins the reason why.
+  const drafted = `---\ntype: permanent\nconfidence: high\n---\n\n## Real title\n\nCited content — [[some-note]].\n\n${GEN_END}\n`;
   const fresh = renderProposal(gap(), 'candidate-x');
   const merged = mergeProposal(drafted, fresh);
-  assert.ok(merged.includes('## Real title'));
-  assert.ok(merged.includes('Cited content'));
-  assert.match(merged, /best_permanent_match: context-mode/); // fresh evidence still lands
+  assert.ok(
+    !merged.includes('## Real title'),
+    'the draft sat before the marker and was overwritten',
+  );
+  assert.match(merged, /type: promotion-candidate/, 'the skeleton frontmatter came back');
 });
 
 test('proposeStagingNotes writes one file per gap under Staging/<slug>, never touching permanent/', () => {
@@ -123,4 +127,29 @@ test('proposeStagingNotes is a no-op write when nothing changed', () => {
   proposeStagingNotes(vault, 's', [gap()]);
   const [second] = proposeStagingNotes(vault, 's', [gap()]);
   assert.equal(second.status, 'unchanged');
+});
+
+test('proposeStagingNotes never regenerates a proposal /memory:synthesize has already drafted', () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-test-'));
+  const [first] = proposeStagingNotes(vault, 's', [gap()]);
+  const full = path.join(stagingDir(vault, 's'), first.file);
+  const drafted = `---\ntype: permanent\nconfidence: high\n---\n\n## Real title\n\nCited content — [[some-note]].\n\n${GEN_END}\n`;
+  fs.writeFileSync(full, drafted);
+
+  // A later run over a bigger/changed cluster (still resolving to the same candidate id) must not
+  // touch the drafted file at all — this is the gap a re-propose used to destroy silently.
+  const [second] = proposeStagingNotes(vault, 's', [{ ...gap(), typical: 0.99 }]);
+  assert.equal(second.status, 'drafted');
+  assert.equal(fs.readFileSync(full, 'utf8'), drafted);
+});
+
+test('proposeStagingNotes leaves an unrecognized file alone rather than guessing', () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-test-'));
+  const [first] = proposeStagingNotes(vault, 's', [gap()]);
+  const full = path.join(stagingDir(vault, 's'), first.file);
+  fs.writeFileSync(full, 'no frontmatter at all\n');
+
+  const [second] = proposeStagingNotes(vault, 's', [gap()]);
+  assert.equal(second.status, 'drafted');
+  assert.equal(fs.readFileSync(full, 'utf8'), 'no frontmatter at all\n');
 });

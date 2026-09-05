@@ -7,6 +7,7 @@
 // Tests: node --test scripts/lib/memory-promote.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
+import { checkDraftStatus } from './memory-adopt.mjs';
 
 // Sentinel pair, same convention GRAPH_REPORT.md uses: everything after @generated:end is
 // hand-maintained and a re-propose must carry it forward verbatim.
@@ -21,8 +22,8 @@ export function stagingDir(vault, slug) {
 
 /**
  * Deterministic candidate id: the alphabetically-first member's stem. Not a stable identity across
- * reruns if cluster membership shifts — it doesn't need to be, since /memory:synthesize renames the
- * file to its real topic once drafted.
+ * reruns if cluster membership shifts — /memory:synthesize is instructed to `mv` the file to its
+ * real topic slug once drafted, so this name is temporary by design.
  *
  * @param {readonly { note: string }[]} members
  * @returns {string}
@@ -86,10 +87,11 @@ export function renderProposal(gap, slug) {
 }
 
 /**
- * Carry forward everything after @generated:end from an existing proposal (or a drafted one — the
- * marker survives /memory:synthesize's frontmatter rewrite as long as the body keeps it) when a
- * later --propose regenerates the evidence block. No sentinel found means nothing hand-written to
- * preserve, so the fresh render replaces the file outright.
+ * Carry forward everything after @generated:end from an UNDRAFTED skeleton (a human can append to
+ * its "## Notes" section before drafting) when a later --propose regenerates the evidence block.
+ * Never called on a drafted note — see proposeStagingNotes, which skips those entirely, because
+ * /memory:synthesize's draft lives BEFORE the marker (replacing frontmatter through it), the exact
+ * region this function always regenerates. No sentinel found means nothing to preserve.
  *
  * @param {string} existingRaw
  * @param {string} freshRaw
@@ -103,10 +105,13 @@ export function mergeProposal(existingRaw, freshRaw) {
   return freshRaw.slice(0, freshIdx + GEN_END.length) + trailing;
 }
 
-/** @typedef {{ file: string, status: 'written'|'updated'|'unchanged', members: number, bestScore: string }} ProposeResult */
+/** @typedef {{ file: string, status: 'written'|'updated'|'unchanged'|'drafted', members: number, bestScore: string }} ProposeResult */
 
 /**
- * Write (or update) a staging proposal per gap. Never touches `permanent/`.
+ * Write (or update) a staging proposal per gap. Never touches `permanent/`, and never touches a
+ * proposal /memory:synthesize has already drafted (or anything not shaped like this module's own
+ * skeleton) — regenerating it would overwrite the draft, since the draft occupies the same
+ * frontmatter-through-marker region a fresh render always replaces.
  *
  * @param {string} vault
  * @param {string} slug
@@ -128,6 +133,15 @@ export function proposeStagingNotes(vault, slug, gaps) {
     let status = 'written';
     if (fs.existsSync(full)) {
       const existing = fs.readFileSync(full, 'utf8');
+      if (checkDraftStatus(existing) !== 'undrafted') {
+        out.push({
+          file,
+          status: 'drafted',
+          members: gap.members.length,
+          bestScore: gap.best.s.toFixed(3),
+        });
+        continue;
+      }
       final = mergeProposal(existing, fresh);
       status = final === existing ? 'unchanged' : 'updated';
     }

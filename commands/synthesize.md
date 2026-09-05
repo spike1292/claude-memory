@@ -73,13 +73,20 @@ softened.**
 5. **Show the draft and ask, then write it into Staging/, never into `permanent/`.** If a staged
    skeleton already exists for this cluster, write the draft there — replacing everything from its
    frontmatter through the `<!-- @generated:end -->` marker, and leaving whatever a human already
-   wrote below that marker untouched (the same sentinel convention `GRAPH_REPORT.md` uses). If none
-   exists yet, create `<vault>/Staging/<slug>/<topic-slug>.md`. Do not delete or rewrite the member
-   notes — they are the evidence the synthesis rests on, and the lifecycle keeps them as staging. At
-   most, add a pointer line to the two or three that are most load-bearing. **This command's job
-   ends here.** Promoting the draft into `permanent/` is `/memory:adopt`'s job, and it runs a
-   held-out eval gate that this command does not — a synthesis that reads well is not evidence it
-   helps retrieval.
+   wrote below that marker untouched (the same sentinel convention `GRAPH_REPORT.md` uses). **A
+   re-run of `--propose`/`/memory:prune` will never touch this file once it does this** — it reads
+   `type: permanent` in the frontmatter as "already drafted" and skips it outright, rather than
+   regenerating the region the draft now occupies. If none exists yet, create
+   `<vault>/Staging/<slug>/<topic-slug>.md` directly. Do not delete or rewrite the member notes —
+   they are the evidence the synthesis rests on, and the lifecycle keeps them as staging. At most,
+   add a pointer line to the two or three that are most load-bearing.
+
+   **Rename the file to its real topic slug** (`mv candidate-*.md <topic-slug>.md`, same directory)
+   — the auto-generated `candidate-<first-member>` name is a placeholder for an unread cluster, not
+   the name a promoted note should carry forever. `/memory:adopt` takes the name to adopt as its
+   argument, so this is what the next step actually names. **This command's job ends here.**
+   Promoting the draft into `permanent/` is `/memory:adopt`'s job, and it runs a held-out eval gate
+   that this command does not — a synthesis that reads well is not evidence it helps retrieval.
 
 6. **Tell the user to adopt it:**
 
