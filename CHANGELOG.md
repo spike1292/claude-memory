@@ -17,7 +17,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   at all blocks the run and is named, rather than being averaged into the misses. A case may carry
   an `owner`, which the runner asserts outranks the case's own note; the owner must be found, so a
   question matching nothing fails instead of passing vacuously. Existing sets resolve unchanged as
-  tuning sets. Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
+  tuning sets; the reported kind is read off the resolved filename, so `--kind` cannot assert what
+  an explicit `--cases` path is (it warns and defers), and `--style` may not end in `heldout`.
+  `--author` refuses to overwrite a frozen set without `--force`. A set with no recall cases gets no
+  recall floor, and the report and envelope omit the recall block there rather than printing zeros.
+  Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
   `docs/decisions/2026-09-04-eval-gate.md`.
 
 - **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
@@ -29,10 +33,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   banners, tool results and anything outside 15–400 characters, then reports turns read, candidates
   kept and the number dropped.
 
-  Measured 2026-09-04 on one machine: 1332 transcripts, 3735 human turns, **947 candidates** —
-  142 for this repo, 498 for the largest project. Roughly one candidate in three is a retrieval
-  question rather than an instruction, so a usable held-out set is smaller again; that ratio is a
-  hand sample, not a count.
+  Measured 2026-09-05 on one machine: 217458 transcript lines across 1368 files → 3862 human turns
+  → **977 candidates**, of which 142 are this repo's. The corpus grows with use — the same machine
+  read 3735 turns a day earlier — so re-run `--mine` rather than quoting these. Roughly one
+  candidate in three is a retrieval question rather than an instruction, so a usable held-out set is
+  smaller again; that ratio is a hand sample, not a count.
 
 ### Fixed
 

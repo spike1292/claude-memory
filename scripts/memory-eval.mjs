@@ -132,6 +132,12 @@ const CASES = val('--cases') || val('--out') || SCOPED_CASES;
 // mislabelling `--kind` exists to prevent, reached by the override instead of by a typo. `--kind`
 // still decides which file the DEFAULT resolves to; it does not get to assert what a named file is.
 const REPORTED_KIND = kindOfPath(CASES);
+// Under-claiming is the safe direction, but silence is not: the freeze banner is what gets pasted
+// into an issue as provenance, so a caller who asked for held-out and got tuning has to be told.
+if (val('--kind') && CASE_KIND !== REPORTED_KIND)
+  console.error(
+    `warning: --kind ${CASE_KIND} ignored — ${path.basename(CASES)} is a ${REPORTED_KIND} set, and the file decides.`,
+  );
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
 
@@ -199,8 +205,8 @@ const isQuestion = (q) => typeof q === 'string' && /[\p{L}\p{N}]/u.test(q);
 // would reproduce the failure that put inflated figures in five artefacts.
 //
 // A LIST of roots, because one project's history is spread over several cwd-slug folders and the
-// deduplication has to span them: two folders holding 142 unique prompts each deduplicated to 143
-// between them (2026-09-04), so mining them separately would report the pool at twice its size.
+// deduplication has to span them: two folders holding 142 candidates each hold 142 between them
+// (2026-09-05), so mining them separately would report the pool at exactly twice its size.
 //
 // Candidates go to stdout and the tally to stderr, so the output pipes into an editor or a
 // labelling pass while the operator still sees what was dropped.
@@ -574,8 +580,12 @@ if (flag('--json')) {
         // path honours that while this one printed the lot, so `--fetch-k 3 --json` reported an
         // @5 and an @10 that were @3 censored to the window. Indistinguishable from a measurement
         // to whatever reads this, which is the whole failure #97 is about.
-        recall: Object.fromEntries(KS.map((k) => [k, recall[k]])),
-        mrr: +mrr.toFixed(3),
+        // Omitted, never zero, when nothing was measured: metrics() divides by `|| 1`, so an
+        // all-pairwise set shipped `recall: {1:0,…}, mrr: 0` to the only caller a gate is for. The
+        // human report suppresses the same block; this is the path that matters.
+        ...(perCase.length
+          ? { recall: Object.fromEntries(KS.map((k) => [k, recall[k]])), mrr: +mrr.toFixed(3) }
+          : {}),
         // Separate keys, never folded into `n` or into the misses: a machine reading this envelope
         // has to be able to tell a case that scored zero from one that was never scored at all.
         unscorable: unscorable.length,

@@ -707,7 +707,7 @@ test('minePrompts deduplicates across folders via the shared set', () => {
   const q = 'how is the project key derived when there is no git remote';
   const line = userLine({ message: { content: q } });
   const seen = new Set();
-  // The two-folders-one-history case: 142 + 142 measured to 143 unique on 2026-09-04, so a
+  // The two-folders-one-history case: 142 and 142 measured to 142 unique on 2026-09-05, so a
   // per-folder Set would double the reported pool.
   assert.equal(minePrompts([line], seen).kept, 1);
   assert.equal(minePrompts([line], seen).kept, 0);
@@ -749,6 +749,14 @@ test('an unknown kind is refused rather than silently treated as tuning', () => 
   assert.throws(() => defaultCasesPath('/e', 'proj', 'semantic', 'holdout'), /kind/);
 });
 
+test('a --style that would forge the held-out suffix is refused', () => {
+  // kindOfPath reads the suffix, so `--style heldout` built a TUNING path that reported as
+  // held-out — the same over-claim --kind is guarded against, reached through the other flag.
+  assert.throws(() => defaultCasesPath('/e', 'proj', 'heldout'), /heldout/);
+  assert.throws(() => defaultCasesPath('/e', 'proj', 'semantic-heldout'), /heldout/);
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'proj', 'keyword')), KIND.tuning);
+});
+
 test('unscorableReason separates a broken instrument from a bad score', () => {
   const known = new Set(['note-a', 'note-b']);
   const ok = [{ note: 'note-b', score: 0.4 }];
@@ -759,7 +767,8 @@ test('unscorableReason separates a broken instrument from a bad score', () => {
   // scorable. Requiring every member marked a case that ranked 1 as unmeasurable, then blocked the
   // gate on it.
   assert.equal(unscorableReason({ gold: ['note-a', 'gone'] }, ok, known), null);
-  assert.equal(unscorableReason({ gold: [] }, ok, known), UNSCORABLE.gold);
+  // Its own reason: `gold` would send the operator hunting for a pruned note that never existed.
+  assert.equal(unscorableReason({ gold: [] }, ok, known), UNSCORABLE.noGold);
   assert.equal(unscorableReason({ gold: ['note-a'] }, [], known), UNSCORABLE.empty);
   assert.equal(
     unscorableReason({ gold: ['note-a'] }, [{ note: 'note-b', score: NaN }], known),
@@ -1061,4 +1070,32 @@ test('CLI --author refuses to replace a frozen case set without --force', () => 
   );
   assert.match(blocked.stdout, /is frozen/);
   assert.equal(run('--author', '--force', '--out', casesPath, { stdin: line }).status, 0);
+});
+
+test('CLI --json omits recall for a population of zero rather than reporting it as 0', () => {
+  // The human report suppresses the block; this is the path a gate actually reads.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' }],
+    RANKED_BODIES,
+  );
+  const env = JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout);
+  assert.equal(env.n, 0);
+  assert.ok(!('recall' in env), `a recall of 0 nothing measured must be omitted: ${env.recall}`);
+  assert.ok(!('mrr' in env));
+  assert.deepEqual(env.pairwise, { total: 1, failed: 0 });
+});
+
+test('CLI warns when --kind disagrees with the file --cases named', () => {
+  // Under-claiming is safe; silence is not. The freeze banner gets pasted into issues as provenance.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--kind', 'held-out', '--mode', 'lexical');
+  assert.match(r.stderr, /--kind held-out ignored/);
+  assert.match(r.stdout, /· tuning ·/);
+  // No flag, no warning.
+  assert.ok(!run('--run', '--cases', casesPath, '--mode', 'lexical').stderr.includes('ignored'));
 });

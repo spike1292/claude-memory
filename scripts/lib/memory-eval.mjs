@@ -152,6 +152,11 @@ export function metrics(perCase) {
  * @returns {string}
  */
 export function defaultCasesPath(dir, slug, style, kind = KIND.tuning) {
+  // `kindOfPath` reads the kind off the suffix, so `--style heldout` would build
+  // `eval-cases-<slug>-heldout.jsonl` — a TUNING set that reports as held-out. Refusing the style is
+  // cheaper than making the reader reconstruct slug and style from a path it is only given whole.
+  if (new RegExp(`${HELD_OUT_SUFFIX.replace('.jsonl', '')}$`).test(`-${style}`))
+    throw new Error(`--style may not end in "heldout": it would mislabel a tuning set as held-out`);
   // Throwing, not defaulting: `--kind holdout` silently scoring the TUNING set would report a
   // number the operator reads as held out, which is worse than no number at all.
   if (kind !== KIND.tuning && kind !== KIND.heldOut)
@@ -219,9 +224,13 @@ export function goldCoverage(cases, known) {
 // actually used. Authored paraphrases are not — this repo shipped inflated figures to five
 // artefacts because the questions moved with the result (#87).
 //
-// The bounds are empirical, from 3227 raw user turns across 26 transcript folders (2026-09-04).
-// Under 15 chars is "ok", "yes", "do 1" — no retrievable content. Over 400 is a pasted log or
-// diff, which is a document, not a question.
+// Under 15 chars is "ok", "yes", "do 1" — no retrievable content. Over 400 is a pasted log or a
+// diff, which is a document rather than a question.
+//
+// THE measurement, stated once and pointed at from everywhere else that needs it. One machine,
+// 2026-09-05: 217458 transcript lines across 1368 files → 3862 human turns → 977 unique candidates.
+// It is a snapshot and it grows with use — the same machine read 3735 turns a day earlier. Re-run
+// `--mine` rather than quoting these; a figure with no date is the failure this whole set is for.
 export const MINE_MIN = 15;
 export const MINE_MAX = 400;
 
@@ -235,14 +244,14 @@ const MINE_NOISE = /Caveat:|tool_result|system-reminder/;
  *
  * Split from the line form so the caller can count TURNS without parsing twice. The tally has to
  * separate "lines read" from "user turns seen": a transcript is mostly assistant and tool records,
- * so reporting lines as turns overstates the pool by two orders of magnitude — 212043 lines against
- * 3227 real turns on this machine (2026-09-04). An estimate printed like a measurement is the
- * failure this whole case-set effort exists to stop.
+ * so reporting lines as turns overstates the pool by two orders of magnitude — 217458 lines against
+ * 3862 real turns (see MINE_MIN). An estimate printed like a measurement is the failure this whole
+ * case-set effort exists to stop.
  *
  * @param {any} o
  * @returns {string|null}
  */
-export function mineTurn(o) {
+function mineTurn(o) {
   const t = mineText(o);
   if (t.length < MINE_MIN || t.length > MINE_MAX) return null;
   // A slash command is an instruction to the harness, and `<` opens an injected XML payload. Both
@@ -258,8 +267,8 @@ export function mineTurn(o) {
  *
  * Empty is the signal that separates a HUMAN turn from a tool result: both arrive as `type: user`,
  * because that is how the harness threads a tool's answer back. Counting tool results as turns
- * reported 37878 where the machine holds ~3227 human ones (2026-09-04) — the same overstatement as
- * counting lines, one level down.
+ * reported 37878 where the same machine held ~3200 human ones — the same overstatement as counting
+ * lines, one level down.
  *
  * @param {any} o
  * @returns {string}
@@ -318,8 +327,8 @@ function mineParse(line) {
  *
  * `seen` is the caller's, because deduplication has to span FOLDERS and not just files: the same
  * sessions appear under more than one cwd-slug when a home directory is renamed. Measured
- * 2026-09-04 — mining two such folders separately reported 142 unique each where the pair holds
- * 142 between them, so a per-folder Set would have doubled the apparent pool.
+ * 2026-09-05 — two such folders yield 142 candidates each and 142 between them, so a per-folder Set
+ * would have reported the pool at exactly twice its size.
  *
  * @param {Iterable<string>} lines
  * @param {Set<string>} seen mutated
@@ -355,10 +364,7 @@ const HELD_OUT_SUFFIX = '-heldout.jsonl';
 /**
  * The kind of the case set actually being read, from its resolved path.
  *
- * Reported kind comes from the FILE, never from `--kind`, because the two can disagree: `--cases`
- * names a path outright, so `--kind held-out --cases <a tuning set>` would otherwise print a tuning
- * number under a held-out label — the exact mislabelling the kind exists to prevent, reached by the
- * override path instead of by a typo.
+ * The suffix is the whole test, which is why `--style` may not end in it — see `defaultCasesPath`.
  *
  * @param {string} p
  * @returns {string}
@@ -374,6 +380,7 @@ export const UNSCORABLE = /** @type {const} */ ({
   gold: 'a gold or owner note named by this case is not in the vault',
   empty: 'retrieval returned nothing for this question',
   score: 'a returned result carries a non-finite score',
+  noGold: 'this case names no gold note at all',
 });
 
 /**
@@ -394,6 +401,8 @@ export function unscorableReason(c, results, known) {
   // ranked 1 as unmeasurable, then blocked the gate on it. `owner` is a single ref naming the note
   // that must win, so losing it loses the assertion outright.
   const gold = Array.isArray(c.gold) ? c.gold : [];
+  // Its own reason: `gold` sends the operator hunting for a pruned note, and there was never one.
+  if (!gold.length) return UNSCORABLE.noGold;
   if (!gold.some((g) => known.has(g))) return UNSCORABLE.gold;
   if (c.owner && !known.has(String(c.owner))) return UNSCORABLE.gold;
   return null;

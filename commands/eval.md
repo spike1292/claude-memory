@@ -75,13 +75,19 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
    That writes a `.sha256` sidecar and prints the hash. Quote the hash wherever you quote a number
    from the set; the questions stay machine-local. `--run` refuses a frozen set that no longer
-   matches, so "it was not edited to fit the result" is enforced rather than promised.
+   matches, and `--author` refuses to overwrite one without `--force`, so "it was not edited to fit
+   the result" is enforced rather than promised. Editing a frozen set on purpose is
+   `--author --force` followed by `--freeze --force`; the old hash stops being valid at that point.
+   `--style` may not end in `heldout`, since that would build a tuning path the reader would read
+   as held out.
 
    **`--min-rank1 <percent>` turns a report into a gate** — below the floor the process exits
    non-zero, so CI or a tuning loop fails instead of printing a regression nobody reads. Under a
-   floor the gate **fails closed**: a case that could not be scored at all (no results, a non-finite
-   score, a gold note missing from the vault) blocks the run and is named in the output, rather than
-   being averaged away. Soft rather than strict-improvement, and why, in
+   floor the gate **fails closed**: a case that could not be scored at all blocks the run and is
+   named in the output, rather than being averaged away. That means no results, a non-finite score,
+   a case naming no gold note, or one whose gold notes have *all* gone from the vault — one
+   surviving member is enough to score a case, since `gold` is a disjunction. A set with no recall
+   cases at all gets no floor applied, rather than failing on a zero nobody measured. Soft rather than strict-improvement, and why, in
    [docs/decisions/2026-09-04-eval-gate.md](../docs/decisions/2026-09-04-eval-gate.md).
 
    **Pairwise cases are cheap headroom on a small set.** A case may carry
