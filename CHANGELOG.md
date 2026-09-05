@@ -56,6 +56,23 @@ what a user's setup depends on: config keys, command names, vault layout, and
   candidate in three is a retrieval question rather than an instruction, so a usable held-out set is
   smaller again; that ratio is a hand sample, not a count.
 
+- **Promotion is staged and gated, not just found** (#96). `--clusters`'s gap-detection is now
+  `consolidationGaps()` in `lib/memory-semantic.mjs`, shared by a new `--propose` flag that writes
+  the same gaps as skeleton files under `<vault>/Staging/<slug>/` — never into `permanent/`. The
+  minimum cluster size behind both is `--size` (default 4, reviving the flag deleted 2026-08-19),
+  so the candidate rule is configuration rather than a literal; the proposal's evidence also names
+  the oldest member's last content change, when the index has one, alongside the existing size and
+  permanent/-gap figures. `/memory:synthesize` drafts into the staged file instead of directly into
+  `permanent/`, and the new `/memory:adopt` command (`scripts/memory-adopt.mjs`) is the only thing
+  that promotes a draft: it copies the note into `permanent/`, reindexes, runs the eval harness
+  against the project's **held-out** set (#87/#126, never the tuning set), and rolls the copy back
+  on a failing floor, leaving the staged draft in place to retry. A staging file re-proposed after a
+  human (or a draft) has written past its `<!-- @generated:end -->` marker keeps that text, the same
+  sentinel convention `GRAPH_REPORT.md` uses. Also adds `--cross-dupes`, which surfaces same-lesson
+  notes restated in a *different* folder within an existing topic cluster — a case same-folder-first
+  dedup is built to miss on purpose — for a human to judge and mark with `memory-mark.mjs`; nothing
+  is merged automatically.
+
 ### Fixed
 
 - **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)

@@ -509,6 +509,40 @@ export function centroid(vecs) {
   return out;
 }
 
+// The gap `--clusters` reports and the candidate rule for promotion (#96) both read: a cluster
+// whose centroid sits further from its best permanent/ match than a typical member does. ONE
+// computation for both callers — a second scoring path here is the same failure CLAUDE.md names
+// for dupeScore() below. Bar = 25th percentile of member distances, not the median or an absolute
+// threshold — a synthesis note only needs to be as central as a typical member; calibration in
+// docs/decisions/2026-08-31-consolidation-gap-percentile.md.
+/**
+ * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
+ * @param {readonly T[]} working
+ * @param {readonly T[]} permanent
+ * @param {number} minScore cluster linkage threshold
+ * @param {number} minSize
+ * @returns {{ members: T[], best: { note: string | null, s: number }, typical: number, borderline: boolean }[]}
+ */
+export function consolidationGaps(working, permanent, minScore, minSize) {
+  const clusters = clusterNotes(working, minScore).filter((g) => g.length >= minSize);
+  /** @type {{ members: T[], best: { note: string | null, s: number }, typical: number, borderline: boolean }[]} */
+  const gaps = [];
+  for (const g of clusters) {
+    const c = centroid(g.map((x) => x.vec));
+    /** @type {{ note: string | null, s: number }} */
+    let best = { note: null, s: 0 };
+    for (const p of permanent) {
+      const s = cosine(c, p.vec);
+      if (s > best.s) best = { note: p.note, s };
+    }
+    const memberSims = g.map((x) => cosine(c, x.vec)).sort((a, b) => a - b);
+    const typical = memberSims[Math.floor(memberSims.length * 0.25)];
+    if (best.s >= typical) continue; // a permanent/ note sits inside the topic's own spread
+    gaps.push({ members: g, best, typical, borderline: best.s >= typical - 0.02 });
+  }
+  return gaps;
+}
+
 // Cross-layer pairs score 0 by construction: a Pattern and a Mistake on one topic are
 // complementary by design. `layer` IS the folder — see vaultSources() in the entry.
 // The single shared duplicate predicate (write-time reconcile and --dupes both call this) and
@@ -521,6 +555,30 @@ export function centroid(vecs) {
  */
 export function dupeScore(a, b) {
   return a.layer === b.layer ? cosine(a.vec, b.vec) : 0;
+}
+
+// #96's "second finding": dupeScore()'s same-layer gate is right for the merge predicate above (a
+// Pattern and its matching Mistake are complementary, not duplicates) but it also hides a genuine
+// same-lesson note restated in a different folder. This is a DIFFERENT question — not "is this the
+// duplicate predicate", which stays dupeScore() alone — so it does not reuse dupeScore: it takes
+// raw cosine within a cluster's own members, across layers, for a human to judge in /memory:prune.
+// Nothing here merges anything.
+/**
+ * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
+ * @param {readonly T[]} members one cluster from clusterNotes()
+ * @param {number} minScore
+ * @returns {{ s: number, a: T, b: T }[]}
+ */
+export function crossFolderPairs(members, minScore) {
+  /** @type {{ s: number, a: T, b: T }[]} */
+  const out = [];
+  for (let i = 0; i < members.length; i++)
+    for (let j = i + 1; j < members.length; j++) {
+      if (members[i].layer === members[j].layer) continue; // same-folder is dupeScore()'s job
+      const s = cosine(members[i].vec, members[j].vec);
+      if (s >= minScore) out.push({ s, a: members[i], b: members[j] });
+    }
+  return out.sort((x, y) => y.s - x.s);
 }
 
 /**
