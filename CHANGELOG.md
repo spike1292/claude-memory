@@ -24,7 +24,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   scanner built first and deleted for scoring 0 against the drift it was written for. The reviewer
   prompt gained the two checks that need a reader — a measurement lives in exactly one place, and a
   comment restating what a named test already pins is a finding.
-
+- `/memory:doctor` warns when `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` is set — a separate, global,
+  typed-note memory feature distinct from both this plugin and Claude Code's own
+  `autoMemoryDirectory`. It caused a note to be written outside the vault; see
+  [docs/decisions/2026-09-05-cowork-auto-memory.md](docs/decisions/2026-09-05-cowork-auto-memory.md).
 - `/memory:eval` gains a **held-out set kind and a gate** (#87). `--kind held-out` resolves its own
   case file and every report and `--json` envelope echoes the kind; `--freeze` pins a set with a
   sha256 sidecar that `--run` verifies, so a set edited after the fact is refused. `--min-rank1
