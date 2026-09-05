@@ -21,6 +21,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Claude Code's auto memory reads our `MEMORY.md`](decisions/2026-08-22-auto-memory.md) | Co-operate rather than separate, the 25 KB load cap that becomes ours to report, and what to do about a second writer's frontmatter stamps. |
 | [The distiller dedups on embeddings](decisions/2026-08-23-embedding-reconcile.md) | Why the body-overlap arm caught 0 of 25, and why one predicate now serves both callers. |
 | [Where a comment lives](decisions/2026-08-23-comment-reader-distance.md) | Reader distance decides, not line count — and the count that shows why length would have deleted the load-bearing blocks first. |
+| [The prose ceiling](decisions/2026-09-05-prose-ceiling.md) | Comments may not outnumber code; CI fails at 1.00. Supersedes the reader-distance record's "No CI guard", and buries the scanner that scored 0. |
 
 ## Guides
 
