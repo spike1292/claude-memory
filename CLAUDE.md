@@ -334,6 +334,15 @@ has the numbers and the two designs that were built, reviewed and then deleted. 
 it names: **test the round trip, not each half**, and make a scan-based guard assert that it found
 something.
 
+**Comments may not outnumber code, and CI fails when they do.** Ceiling 1.00 on every `.mjs` a
+change touches (`npm run prose`; `*.test.mjs` exempt). The fix is never deletion: a fact needed when
+*changing the design* moves to `docs/decisions/` or `docs/architecture.md`, and one a named test
+already pins goes. Eleven files were over when it landed and are cut by whoever next touches them —
+`node scripts/prose-guard.mjs --all` is the backlog.
+[docs/decisions/2026-09-05-prose-ceiling.md](docs/decisions/2026-09-05-prose-ceiling.md) supersedes
+the "No CI guard" section of the reader-distance record, and records the measurement scanner that
+was built and deleted for scoring 0 against the drift it was written for.
+
 **Run a CUT pass after round three, before the final round.** Each round answers a finding by fixing
 the code *and* writing a comment explaining what was wrong, so prose compounds one block per finding
 per site and round four then flags the block. #87 measured it: three rounds took

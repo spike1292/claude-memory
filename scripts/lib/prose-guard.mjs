@@ -1,18 +1,11 @@
 #!/usr/bin/env node
 // Logic half; the CLI entry is scripts/prose-guard.mjs.
 //
-// A diff budget for prose. #87 ran three review rounds and each answered a finding by fixing the
-// code AND writing a comment explaining what had been wrong, so the file went from 1.17 comment
-// lines per code line to 1.42 before anyone noticed. This prints the number while the change is
-// still open, for nothing.
-//
-// It REPORTS and does not fail. A threshold on comment length was declined with reasons in
-// docs/decisions/2026-08-23-comment-reader-distance.md — it fires on the load-bearing blocks first,
-// which are the only record of several silent failures. The enforcement is the reviewer and the
-// cut-pass rule in CLAUDE.md; this is the cheap instrument that tells you to run one.
-//
-// A conflicting-measurement SCANNER was built here first and deleted: see the decision record. It
-// scored 0 against the real drift it was written for.
+// Comments may not outnumber code in a file a change touches; CI fails at 1.00. Why a ceiling at
+// all, why it is a ratchet over the eleven files already above it, and the measurement scanner
+// built and deleted before it: docs/decisions/2026-09-05-prose-ceiling.md.
+
+export const CEILING = 1.0;
 
 /**
  * @param {string} text
@@ -49,4 +42,19 @@ export function addedLines(diff) {
     else code++;
   }
   return { comment, code };
+}
+
+/**
+ * Files over the ceiling. `.test.mjs` is exempt: a test's comment is the failure it pins, which is
+ * the one place restating the code earns its keep.
+ *
+ * @param {readonly { file: string, text: string }[]} files
+ * @returns {{ file: string, ratio: number }[]}
+ */
+export function overCeiling(files) {
+  return files
+    .filter((f) => !f.file.endsWith('.test.mjs'))
+    .map((f) => ({ file: f.file, ratio: commentRatio(f.text).ratio }))
+    .filter((f) => f.ratio > CEILING)
+    .sort((a, b) => b.ratio - a.ratio);
 }

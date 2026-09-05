@@ -31,13 +31,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
   `docs/decisions/2026-09-04-eval-gate.md`.
 
-- **`npm run prose` prints a diff's comment/code budget, and CI prints it on every PR.** Three
-  review rounds on #87 each answered a finding by fixing the code *and* writing a comment explaining
-  what had been wrong, which took one file from 1.17 comment lines per code line to 1.42 before
-  anyone noticed. It REPORTS and never fails: a threshold on comment length was declined in
-  `docs/decisions/2026-08-23-comment-reader-distance.md` because it fires on the load-bearing blocks
-  first. The reviewer prompt gained the two matching checks — a measurement lives in exactly one
-  place, and a comment restating what a named test already pins is a finding.
+- **Comments may not outnumber code, and CI now fails when they do.** Ceiling 1.00 on every `.mjs` a
+  change touches (`npm run prose`; `*.test.mjs` exempt, since a test's comment is the failure it
+  pins). Three review rounds on #87 each answered a finding by fixing the code *and* writing a
+  comment explaining what had been wrong, taking one file from 1.17 comment lines per code line to
+  1.42 before anyone noticed. The fix is never deletion: a fact needed when *changing the design*
+  moves to `docs/decisions/` or `docs/architecture.md`, and the failure message says so. Scoped to
+  changed files, so the eleven already over are cut by whoever next touches them rather than in one
+  sweep — `node scripts/prose-guard.mjs --all` is the backlog. This supersedes the "No CI guard"
+  section of `docs/decisions/2026-08-23-comment-reader-distance.md`; the reasoning is in
+  `docs/decisions/2026-09-05-prose-ceiling.md`, which also buries the conflicting-measurement
+  scanner built first and deleted for scoring 0 against the drift it was written for. The reviewer
+  prompt gained the two checks that need a reader — a measurement lives in exactly one place, and a
+  comment restating what a named test already pins is a finding.
 
 - **`/memory:eval` gained the labelling loop, and `/memory:doctor` reports whether you have a
   held-out set at all.** The flags existed with no way for a human to reach them. `/memory:eval`
