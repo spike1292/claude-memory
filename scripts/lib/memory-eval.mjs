@@ -181,9 +181,9 @@ export function goldCoverage(cases, known) {
 // any tuning run. Authored paraphrases are not (#87).
 //
 // Under 15 chars is "ok", "yes", "do 1"; over 400 is a pasted log, a document rather than a
-// question. THE measurement behind both, and behind every turn count in this file, is stated once
-// in docs/decisions/2026-08-24-eval-harness-design.md: 3862 human turns on one machine, 2026-09-05.
-// It grows with use, so re-run `--mine` rather than quoting it.
+// question. The pool these bounds were cut against is thousands of turns, not the hundreds of
+// thousands of LINES a transcript holds — the count itself is dated once in
+// docs/decisions/2026-08-24-eval-harness-design.md and grows with use, so re-run `--mine`.
 export const MINE_MIN = 15;
 export const MINE_MAX = 400;
 
@@ -213,7 +213,7 @@ function mineTurn(o) {
  * The speech in a record, normalised, or '' when it carries none.
  *
  * Empty separates a HUMAN turn from a tool result: both arrive as `type: user`. Counting tool
- * results as turns reported 37878 against the 3862 real ones (see MINE_MIN).
+ * results as turns reported 37878 against roughly a tenth as many real ones (see MINE_MIN).
  *
  * @param {any} o
  * @returns {string}

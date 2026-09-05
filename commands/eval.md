@@ -93,11 +93,8 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    no token with any note scores every candidate 0, and the "ranking" is directory arrival order),
    a case naming no gold note, or one whose gold notes have *all* gone from the vault. One surviving
    gold member is enough, since `gold` is a disjunction. A set with no recall cases at all gets no
-   floor, rather than failing on a zero nobody measured. That means no results, a non-finite score,
-   a case naming no gold note, or one whose gold notes have *all* gone from the vault — one
-   surviving member is enough to score a case, since `gold` is a disjunction. A set with no recall
-   cases at all gets no floor applied, rather than failing on a zero nobody measured. Soft rather than strict-improvement, and why, in
-   [docs/decisions/2026-09-04-eval-gate.md](../docs/decisions/2026-09-04-eval-gate.md).
+   floor, rather than failing on a zero nobody measured. Soft rather than strict-improvement, and
+   why, in [docs/decisions/2026-09-04-eval-gate.md](../docs/decisions/2026-09-04-eval-gate.md).
 
    **Pairwise cases are cheap headroom on a small set.** A case may carry
    `{"q":…,"gold":["loser"],"owner":"rightful-note"}`; the runner asserts the owner *outranks* the
