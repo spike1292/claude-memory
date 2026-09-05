@@ -32,8 +32,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `docs/decisions/2026-09-04-eval-gate.md`.
 
 - **Comments may not outnumber code, and CI now fails when they do.** Ceiling 1.00 on every `.mjs` a
-  change touches (`npm run prose`; `*.test.mjs` exempt, since a test's comment is the failure it
-  pins). Three review rounds on #87 each answered a finding by fixing the code *and* writing a
+  change touches, with a non-failing warning at 0.75 so a file arrives at the ceiling announced
+  (`npm run prose`; `*.test.mjs` exempt, since a test's comment is the failure it pins). Three review rounds on #87 each answered a finding by fixing the code *and* writing a
   comment explaining what had been wrong, taking one file from 1.17 comment lines per code line to
   1.42 before anyone noticed. The fix is never deletion: a fact needed when *changing the design*
   moves to `docs/decisions/` or `docs/architecture.md`, and the failure message says so. Scoped to

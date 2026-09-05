@@ -1,7 +1,7 @@
 // Tests for scripts/lib/prose-guard.mjs. Run: node --test scripts/lib/prose-guard.test.mjs
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { commentRatio, addedLines, overCeiling, CEILING } from './prose-guard.mjs';
+import { commentRatio, addedLines, above, CEILING, WARN } from './prose-guard.mjs';
 
 test('commentRatio ignores blank lines, counts both comment styles', () => {
   const r = commentRatio('// one\n/* two */\n * three\nconst a = 1;\n\n  \nconst b = 2;\n');
@@ -32,19 +32,38 @@ test('addedLines counts only additions, and not the +++ header', () => {
   assert.deepEqual(a, { comment: 2, code: 1 });
 });
 
-test('overCeiling fails a file where comments outnumber code, and only that file', () => {
+test('above() flags a file where comments outnumber code, and only that file', () => {
   const over = { file: 'a.mjs', text: '// one\n// two\nconst a = 1;\n' };
   const at = { file: 'b.mjs', text: '// one\nconst a = 1;\n' };
   const under = { file: 'c.mjs', text: '// one\nconst a = 1;\nconst b = 2;\n' };
   assert.deepEqual(
-    overCeiling([over, at, under]).map((f) => f.file),
+    above([over, at, under]).map((f) => f.file),
     ['a.mjs'],
   );
   // Exactly at the ceiling passes: the rule is "not MORE than code".
   assert.equal(CEILING, 1.0);
 });
 
-test('overCeiling exempts tests, where a comment names the failure it pins', () => {
+test('above() exempts tests, where a comment names the failure it pins', () => {
   const t = { file: 'a.test.mjs', text: '// one\n// two\n// three\nconst a = 1;\n' };
-  assert.deepEqual(overCeiling([t]), []);
+  assert.deepEqual(above([t]), []);
+  assert.deepEqual(above([t], WARN), []);
+});
+
+test('the warn band sits below the ceiling and catches what the ceiling does not', () => {
+  // 3 comments to 4 code is exactly 0.75, and the band is exclusive, so this one is clean.
+  const at = { file: 'a.mjs', text: '// 1\n// 2\n// 3\nlet a;\nlet b;\nlet c;\nlet d;\n' };
+  // 4 to 5 is 0.80: inside the rule, worth a glance before it drifts the last fifth.
+  const inBand = {
+    file: 'b.mjs',
+    text: '// 1\n// 2\n// 3\n// 4\nlet a;\nlet b;\nlet c;\nlet d;\nlet e;\n',
+  };
+  assert.ok(WARN < CEILING);
+  assert.deepEqual(above([at], WARN), []);
+  assert.deepEqual(
+    above([inBand], WARN).map((f) => f.file),
+    ['b.mjs'],
+  );
+  // …and it stays a warning: the ceiling is the only thing that fails.
+  assert.deepEqual(above([inBand]), []);
 });

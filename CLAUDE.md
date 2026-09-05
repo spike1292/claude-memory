@@ -335,7 +335,8 @@ it names: **test the round trip, not each half**, and make a scan-based guard as
 something.
 
 **Comments may not outnumber code, and CI fails when they do.** Ceiling 1.00 on every `.mjs` a
-change touches (`npm run prose`; `*.test.mjs` exempt). The fix is never deletion: a fact needed when
+change touches, with a non-failing warning at 0.75 so a file arrives at the ceiling announced
+(`npm run prose`; `*.test.mjs` exempt). The fix is never deletion: a fact needed when
 *changing the design* moves to `docs/decisions/` or `docs/architecture.md`, and one a named test
 already pins goes. Eleven files were over when it landed and are cut by whoever next touches them —
 `node scripts/prose-guard.mjs --all` is the backlog.

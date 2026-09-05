@@ -246,7 +246,8 @@ jobs:
       # Pinned, and via npx rather than a devDependency. Claude Code auto-runs `npm ci` on plugin
       # install, which installs devDependencies, so a prettier devDependency would ship into every
       # user's version-pinned plugin cache (already 381 MB) to format code they will never edit.
-      # Comments may not outnumber code in a file this PR touches. Ceiling 1.00, and it FAILS —
+      # Comments may not outnumber code in a file this PR touches. Ceiling 1.00 and it FAILS; 0.75
+      # warns without failing —
       # docs/decisions/2026-09-05-prose-ceiling.md, which supersedes the "No CI guard" section of
       # 2026-08-23-comment-reader-distance.md. Scoped to changed files so the eleven already over
       # get cut by whoever next touches them rather than in one sweep.

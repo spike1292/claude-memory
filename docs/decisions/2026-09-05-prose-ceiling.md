@@ -13,7 +13,8 @@ there a check for that, or does it stay a matter of taste?
 ## Answer
 
 A ceiling of **1.00**, enforced, on the files a change touches. `npm run prose` locally, a CI step on
-every PR.
+every PR. A **0.75 warning band** below it prints and does not fail, so a file arrives at the ceiling
+announced rather than by surprise — nine files are over and eight more sit in the band.
 
 2026-08-23 declined exactly this, and the objection was good: a length test fires on the
 load-bearing blocks first, and several of those are the only record of a silent failure. The answer

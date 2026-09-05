@@ -6,6 +6,9 @@
 // built and deleted before it: docs/decisions/2026-09-05-prose-ceiling.md.
 
 export const CEILING = 1.0;
+// A band below the ceiling, so a file arrives at 1.00 announced rather than by surprise. Warning
+// only: the whole repo sits above it today.
+export const WARN = 0.75;
 
 /**
  * @param {string} text
@@ -45,16 +48,17 @@ export function addedLines(diff) {
 }
 
 /**
- * Files over the ceiling. `.test.mjs` is exempt: a test's comment is the failure it pins, which is
- * the one place restating the code earns its keep.
+ * Files above a threshold, worst first. `.test.mjs` is exempt: a test's comment is the failure it
+ * pins, which is the one place restating the code earns its keep.
  *
  * @param {readonly { file: string, text: string }[]} files
+ * @param {number} [threshold]
  * @returns {{ file: string, ratio: number }[]}
  */
-export function overCeiling(files) {
+export function above(files, threshold = CEILING) {
   return files
     .filter((f) => !f.file.endsWith('.test.mjs'))
     .map((f) => ({ file: f.file, ratio: commentRatio(f.text).ratio }))
-    .filter((f) => f.ratio > CEILING)
+    .filter((f) => f.ratio > threshold)
     .sort((a, b) => b.ratio - a.ratio);
 }

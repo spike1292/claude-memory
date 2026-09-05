@@ -6,7 +6,7 @@
 //   node scripts/prose-guard.mjs --all            every tracked .mjs, reported, never failing
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { commentRatio, addedLines, overCeiling, CEILING } from './lib/prose-guard.mjs';
+import { commentRatio, addedLines, above, CEILING, WARN } from './lib/prose-guard.mjs';
 
 const argv = process.argv.slice(2);
 const base = argv.find((a) => !a.startsWith('--')) || 'origin/main';
@@ -25,15 +25,16 @@ const read = (/** @type {string} */ f) => ({ file: f, text: fs.readFileSync(f, '
 // --all is the backlog view: the files already over on the day the ceiling landed. It never fails,
 // because a ratchet that fails on code nobody touched is a ratchet everybody disables.
 if (argv.includes('--all')) {
-  const over = overCeiling(
-    git(['ls-files', '*.mjs'])
-      .split('\n')
-      .filter((f) => f && fs.existsSync(f))
-      .map(read),
-  );
-  for (const o of over) console.log(`  ${o.ratio.toFixed(2)}  ${o.file}`);
+  const all = git(['ls-files', '*.mjs'])
+    .split('\n')
+    .filter((f) => f && fs.existsSync(f))
+    .map(read);
+  const over = above(all);
+  const warn = above(all, WARN).filter((f) => f.ratio <= CEILING);
+  for (const o of over) console.log(`  FAIL ${o.ratio.toFixed(2)}  ${o.file}`);
+  for (const w of warn) console.log(`  warn ${w.ratio.toFixed(2)}  ${w.file}`);
   console.log(
-    `\n${over.length} file(s) over ${CEILING.toFixed(2)} — cut each when you next touch it.`,
+    `\n${over.length} over ${CEILING.toFixed(2)}, ${warn.length} in the ${WARN.toFixed(2)}-${CEILING.toFixed(2)} band — cut each when you next touch it.`,
   );
   process.exit(0);
 }
@@ -60,7 +61,13 @@ for (const f of changed) {
   }
   console.log(`  ${now.ratio.toFixed(2)}${was}  ${f}`);
 }
-const over = overCeiling(changed.map(read));
+const touched = changed.map(read);
+const over = above(touched);
+// Warned, not failed: a file at 0.80 is inside the rule and still worth a glance before it drifts
+// the last fifth. Printed even when the run passes, which is the only time anyone acts on it.
+const warn = above(touched, WARN).filter((f) => f.ratio <= CEILING);
+for (const w of warn)
+  console.log(`  warn ${w.ratio.toFixed(2)} is over ${WARN.toFixed(2)}  ${w.file}`);
 if (!over.length) {
   console.log(`\n  all under the ${CEILING.toFixed(2)} ceiling.`);
   process.exit(0);
