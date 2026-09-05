@@ -171,20 +171,19 @@ try {
   if (fromServer) {
     log(fromServer.entry);
     if (fromServer.output) console.log(fromServer.output);
-    process.exit(0);
+  } else {
+    // Opened only once the server has failed to answer, and never closed — process exit collects it.
+    const db = new DatabaseSync(dbPath);
+    const cards = /** @type {import('./lib/memory-recall.mjs').Card[]} */ (
+      /** @type {unknown} */ (
+        db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD)
+      )
+    );
+
+    const fromKeyword = keywordArm(cards, prompt);
+    log(fromKeyword.entry);
+    if (fromKeyword.output) console.log(fromKeyword.output);
   }
-
-  // Opened only once the server has failed to answer, and never closed — process exit collects it.
-  const db = new DatabaseSync(dbPath);
-  const cards = /** @type {import('./lib/memory-recall.mjs').Card[]} */ (
-    /** @type {unknown} */ (
-      db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD)
-    )
-  );
-
-  const fromKeyword = keywordArm(cards, prompt);
-  log(fromKeyword.entry);
-  if (fromKeyword.output) console.log(fromKeyword.output);
 } catch (e) {
   outcome = 'error';
   // With no reason this line reads as "the hook threw", which is how a malformed payload — bad
