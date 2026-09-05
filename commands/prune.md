@@ -84,7 +84,17 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
 
    Dedup asks "are these two notes the same?"; this asks the opposite question — **"are these twenty notes one topic that nothing summarises?"** It clusters across folders (a topic is normally a Pattern + a Mistake + a Decision) and reports clusters with no `permanent/` note as central to them as their own typical member. That is the `staging → promotion` step of the knowledge lifecycle, which has otherwise never happened: **965 Insights against 5 `permanent/` notes.** Two clusters found this way — 9 notes on cache-policy quota, 6 on Cache-Control ownership — had each sat unnoticed for weeks.
 
-   **It finds where a note is missing; it does not write one.** Writing a synthesis note asserts a claim no single note makes, which is exactly where the distiller has confabulated before. Judge the cluster, then write it yourself.
+   **It finds where a note is missing; it does not write one.** Writing a synthesis note asserts a claim no single note makes, which is exactly where the distiller has confabulated before. Run `/memory:synthesize` to draft it — it writes into `Staging/<slug>/`, never into `permanent/` — then `/memory:adopt` to promote the draft past a held-out eval gate (#87/#96). `--propose --top 8` does the same cluster-finding as `--clusters` but writes the staged skeletons directly, if you would rather queue candidates than draft them here.
+
+3c. **Cross-folder duplicates** (the case same-folder dedup is built to miss, on purpose — #96):
+
+   ```
+   node "$MEM/scripts/memory-semantic.mjs" --cross-dupes
+   ```
+
+   Within each topic cluster from 3b, this looks for members in DIFFERENT folders that are near-duplicates rather than complementary — the same lesson restated as a Pattern in one place and a Mistake in another, which same-folder-first dedup (step 2) is built to never compare against each other. It reuses raw cosine within the cluster, not `dupeScore()` — `dupeScore()` scoring 0 across folders is correct for step 2's merge predicate, and this is a different question asked only inside a cluster that already looks like one topic.
+
+   **Never auto-merge across folders** — a Pattern and its matching Mistake are the *intended* shape, and only a human can tell that case apart from two notes restating one lesson. For a genuine restatement: pick a survivor, fold the rest in as step 2 does, then mark every note in the decision (kept as duplicates *or* kept as intentionally complementary) with `node "$MEM/scripts/memory-mark.mjs" <note-a> <note-b> [...]` — the same reasoning as step 2's mark call: an unmarked keep is proposed again next prune, and cross-linking notes to explain the decision raises their similarity further.
 
 4. Report: N logs archived, M duplicates merged, index refreshed (K notes across Insights+Memory), and anything left for manual review.
 

@@ -9,6 +9,8 @@
 //   node memory-semantic.mjs --index [dir] [--rebuild]
 //   node memory-semantic.mjs --query "question" [-k 5] [--json]
 //   node memory-semantic.mjs --serve | --coverage | --dupes | --clusters | --check-embedding
+//   node memory-semantic.mjs --propose [--top 8]        # stage promotion candidates (#96)
+//   node memory-semantic.mjs --cross-dupes               # same lesson, different folder, within a cluster
 //   node memory-semantic.mjs --dupe-eval --truth <file.jsonl> [--bars 0.75,0.70]
 //   node --test scripts/lib/memory-semantic.test.mjs
 import fs from 'node:fs';
@@ -31,7 +33,8 @@ import {
   cosine,
   assertVectorWidth,
   clusterNotes,
-  centroid,
+  consolidationGaps,
+  crossFolderPairs,
   samefolderPairs,
   bestDupe,
   dupeScore,
@@ -45,6 +48,7 @@ import {
   searchIn,
   QUIT,
 } from './lib/memory-semantic.mjs';
+import { proposeStagingNotes } from './lib/memory-promote.mjs';
 
 /** @typedef {import('./lib/memory-semantic.mjs').ChunkRow} ChunkRow */
 /** @typedef {{ note: string, layer: string, text: string, vec: Uint8Array }} CardRow */
@@ -87,6 +91,8 @@ if (flag('--serve')) {
     '--clusters',
     '--check-embedding',
     '--dupe-eval',
+    '--propose',
+    '--cross-dupes',
   ].filter(flag);
   if (alsoAsked.length) {
     console.log(`--serve cannot be combined with ${alsoAsked.join(' ')} — run them separately.`);
@@ -563,18 +569,21 @@ if (flag('--index')) {
 
 // ---------------------------------------------------------------- consolidation gaps
 
-if (flag('--clusters')) {
+if (flag('--clusters') || flag('--propose')) {
   const min = Number(val('--min') || PROFILE.clusterMin);
-  const minSize = 4; // no caller ever set this; --size deleted 2026-08-19
-  const cards = /** @type {CardRow[]} */ (
+  // --size revives the flag deleted 2026-08-19 (no caller had ever set it) — --propose (#96) needs
+  // its candidate rule to be configuration, not a literal, so the default it inherits must be one.
+  const minSize = Number(val('--size') || 4);
+  const cards = /** @type {(CardRow & { mtime: number })[]} */ (
     /** @type {DatabaseSync} */ (db)
-      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .prepare('SELECT note, layer, text, vec, mtime FROM chunks WHERE heading = ?')
       .all(CARD)
   ).map((r) => ({
     note: r.note,
     layer: r.layer,
     text: r.text,
     vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+    mtime: r.mtime,
   }));
   if (!cards.length) {
     console.log('empty index — run --index first');
@@ -583,29 +592,27 @@ if (flag('--clusters')) {
 
   const permanent = cards.filter((c) => c.layer === 'permanent');
   const working = cards.filter((c) => c.layer !== 'permanent');
-  const clusters = clusterNotes(working, min).filter((g) => g.length >= minSize);
+  const gapList = consolidationGaps(working, permanent, min, minSize);
+
+  if (flag('--propose')) {
+    const top = Number(val('--top') || 8);
+    const written = proposeStagingNotes(VAULT, SLUG, gapList.slice(0, top));
+    for (const r of written)
+      console.log(
+        `${r.status === 'written' ? 'proposed' : r.status}: Staging/${SLUG}/${r.file} (${r.members} members, best permanent/ ${r.bestScore})`,
+      );
+    console.log(
+      `\n${written.length} candidate(s). Draft each with /memory:synthesize, then /memory:adopt to promote.`,
+    );
+    process.exit(0);
+  }
 
   console.log(
-    `${working.length} notes · ${permanent.length} permanent/ notes · clusters ≥${minSize} at ≥${min}: ${clusters.length}\n`,
+    `${working.length} notes · ${permanent.length} permanent/ notes · clusters ≥${minSize} at ≥${min}: ${gapList.length}\n`,
   );
-  let gaps = 0;
-  for (const g of clusters) {
-    const c = centroid(g.map((x) => x.vec));
-    // Is this topic already consolidated? Compare the cluster's average meaning to permanent/.
-    /** @type {{ note: string | null, s: number }} */
-    let best = { note: null, s: 0 };
-    for (const p of permanent) {
-      const s = cosine(c, p.vec);
-      if (s > best.s) best = { note: p.note, s };
-    }
-    // Bar = 25th percentile of member distances, not the median or an absolute threshold — a
-    // synthesis note only needs to be as central as a typical member. See
-    // docs/decisions/2026-08-31-consolidation-gap-percentile.md for the calibration.
-    const memberSims = g.map((x) => cosine(c, x.vec)).sort((a, b) => a - b);
-    const typical = memberSims[Math.floor(memberSims.length * 0.25)];
-    if (best.s >= typical) continue; // a permanent/ note sits inside the topic's own spread
-    gaps++;
-    if (gaps > Number(val('--top') || 8)) continue;
+  const top = Number(val('--top') || 8);
+  const shown = gapList.slice(0, top);
+  for (const { members: g, best, typical, borderline } of shown) {
     const mix = g.reduce(
       (m, x) => ((m[x.layer] = (m[x.layer] || 0) + 1), m),
       /** @type {Record<string, number>} */ ({}),
@@ -616,7 +623,7 @@ if (flag('--clusters')) {
         .join(', ')}`,
     );
     console.log(
-      best.s >= typical - 0.02
+      borderline
         ? `   nearest permanent/: ${best.note} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)} — borderline; check whether it should absorb this`
         : `   no permanent/ note covers this (best ${best.note ?? 'n/a'} ${best.s.toFixed(3)} vs typical member ${typical.toFixed(3)})`,
     );
@@ -627,11 +634,44 @@ if (flag('--clusters')) {
     for (const x of g) console.log(`   · [${x.layer}] ${x.note}`);
     console.log('');
   }
-  const shown = Math.min(gaps, Number(val('--top') || 8));
   console.log(
-    gaps
-      ? `${gaps} topic(s) with no consolidated note${gaps > shown ? ` (showing the ${shown} largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
+    gapList.length
+      ? `${gapList.length} topic(s) with no consolidated note${gapList.length > shown.length ? ` (showing the ${shown.length} largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
       : 'every cluster is covered by a permanent/ note.',
+  );
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------- cross-folder duplicates (#96)
+
+if (flag('--cross-dupes')) {
+  const linkMin = Number(val('--min') || PROFILE.clusterMin);
+  const dupeMin = Number(val('--dupe-min') || PROFILE.dupeMin);
+  const minSize = Number(val('--size') || 4); // same clustering step as --clusters/--propose
+  const cards = /** @type {CardRow[]} */ (
+    /** @type {DatabaseSync} */ (db)
+      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .all(CARD)
+  ).map((r) => ({
+    note: r.note,
+    layer: r.layer,
+    text: r.text,
+    vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
+  }));
+  const working = cards.filter((c) => c.layer !== 'permanent');
+  const clusters = clusterNotes(working, linkMin).filter((g) => g.length >= minSize);
+  let found = 0;
+  for (const g of clusters) {
+    const pairs = crossFolderPairs(g, dupeMin);
+    for (const p of pairs) {
+      found++;
+      console.log(`${p.s.toFixed(3)} — [${p.a.layer}] ${p.a.note}  ⟷  [${p.b.layer}] ${p.b.note}`);
+    }
+  }
+  console.log(
+    found
+      ? `\n${found} cross-folder pair(s) at ≥${dupeMin} within a topic cluster — same lesson, different folder. Not auto-merged: judge each, then mark kept pairs with memory-mark.mjs.`
+      : 'no cross-folder near-duplicates within any cluster.',
   );
   process.exit(0);
 }
@@ -773,7 +813,7 @@ if (flag('--dupe-eval')) {
 const queries = argv.filter((_a, i) => argv[i - 1] === '--query' || argv[i - 1] === '-q');
 if (!queries.length && !flag('--serve')) {
   console.log(
-    'usage: --index | --query "question" [--query "..."] [-k 5] | --serve | --coverage | --dupes | --clusters',
+    'usage: --index | --query "question" [--query "..."] [-k 5] | --serve | --coverage | --dupes | --clusters | --propose | --cross-dupes',
   );
   process.exit(1);
 }
