@@ -31,6 +31,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
   `docs/decisions/2026-09-04-eval-gate.md`.
 
+- **`npm run prose` prints a diff's comment/code budget, and CI prints it on every PR.** Three
+  review rounds on #87 each answered a finding by fixing the code *and* writing a comment explaining
+  what had been wrong, which took one file from 1.17 comment lines per code line to 1.42 before
+  anyone noticed. It REPORTS and never fails: a threshold on comment length was declined in
+  `docs/decisions/2026-08-23-comment-reader-distance.md` because it fires on the load-bearing blocks
+  first. The reviewer prompt gained the two matching checks — a measurement lives in exactly one
+  place, and a comment restating what a named test already pins is a finding.
+
 - **`/memory:eval` gained the labelling loop, and `/memory:doctor` reports whether you have a
   held-out set at all.** The flags existed with no way for a human to reach them. `/memory:eval`
   step 0b is the workflow: mine every transcript folder for this project in one call, filter the

@@ -246,6 +246,12 @@ jobs:
       # Pinned, and via npx rather than a devDependency. Claude Code auto-runs `npm ci` on plugin
       # install, which installs devDependencies, so a prettier devDependency would ship into every
       # user's version-pinned plugin cache (already 381 MB) to format code they will never edit.
+      # Reported, never enforced: a threshold on comment length fires on the load-bearing blocks
+      # first (docs/decisions/2026-08-23-comment-reader-distance.md). This is the instrument that
+      # says whether to run the cut pass, which is CLAUDE.md's rule and a human's call.
+      - name: Prose budget
+        run: node scripts/prose-guard.mjs "origin/${{ github.base_ref || 'main' }}"
+
       - name: Formatting
         run: npx --yes prettier@3.6.2 --check .
 
