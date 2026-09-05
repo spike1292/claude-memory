@@ -15,6 +15,13 @@ import {
   goldCoverage,
   defaultCasesPath,
   GOLD_FLOOR,
+  KIND,
+  UNSCORABLE,
+  unscorableReason,
+  pairwise,
+  gateFailures,
+  casesHash,
+  kindOfPath,
 } from './memory-eval.mjs';
 
 test('titleTokens drops short tokens', () => {
@@ -167,9 +174,11 @@ test.after(() => {
  * these tests care only about which gold names resolve.
  * @param {readonly string[]} notes
  * Both case fields are optional: several tests feed deliberately malformed lines.
- * @param {readonly {q?: unknown, gold?: unknown}[] | null} cases  null writes no file at all
+ * @param {readonly {q?: unknown, gold?: unknown, owner?: string}[] | null} cases  null writes no file at all
+ * @param {Record<string, string>} [bodies] per-note prose; the shared default ties every BM25 score,
+ *   which is fine for the guards that exit before scoring and useless for one that asserts a RANK
  */
-function scratch(notes, cases) {
+function scratch(notes, cases, bodies = {}) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-guard-')));
   tmpDirs.push(tmp);
   const vault = path.join(tmp, 'vault');
@@ -180,7 +189,7 @@ function scratch(notes, cases) {
   for (const n of notes)
     fs.writeFileSync(
       path.join(notesDir, `${n}.md`),
-      `# ${n}\n\nThe deployment finished but the release never reached production, and nobody noticed for a day.\n`,
+      `# ${n}\n\n${bodies[n] ?? 'The deployment finished but the release never reached production, and nobody noticed for a day.'}\n`,
     );
   const evalDir = path.join(tmp, 'state', 'eval');
   fs.mkdirSync(evalDir, { recursive: true });
@@ -610,4 +619,482 @@ test('CLI --run scores cleanly and names its case set when every gold note resol
   assert.equal(json.goldResolved, 2, 'the JSON envelope must carry the coverage the warning does');
   assert.equal(json.goldTotal, 2);
   assert.equal(json.cases, casesPath);
+});
+
+// ---------------------------------------------------------------- set kind, gate, pairwise (#87)
+
+test('a tuning set keeps the filename every past number was measured against', () => {
+  // No migration step: the default kind must resolve to the name that already exists on disk.
+  assert.equal(
+    defaultCasesPath('/e', 'proj', 'semantic'),
+    defaultCasesPath('/e', 'proj', 'semantic', KIND.tuning),
+  );
+  assert.ok(defaultCasesPath('/e', 'proj', 'semantic').endsWith('eval-cases-proj-semantic.jsonl'));
+});
+
+test('a held-out set resolves to its own file, never the tuning one', () => {
+  const held = defaultCasesPath('/e', 'proj', 'semantic', KIND.heldOut);
+  assert.notEqual(held, defaultCasesPath('/e', 'proj', 'semantic'));
+  assert.ok(held.includes('heldout'), 'the kind must be visible in the path, not just in a report');
+});
+
+test('an unknown kind is refused rather than silently treated as tuning', () => {
+  assert.throws(() => defaultCasesPath('/e', 'proj', 'semantic', 'holdout'), /kind/);
+});
+
+test('a --style that would forge the held-out suffix is refused', () => {
+  // kindOfPath reads the suffix, so `--style heldout` built a TUNING path that reported as
+  // held-out — the same over-claim --kind is guarded against, reached through the other flag.
+  assert.throws(() => defaultCasesPath('/e', 'proj', 'heldout'), /heldout/);
+  assert.throws(() => defaultCasesPath('/e', 'proj', 'semantic-heldout'), /heldout/);
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'proj', 'keyword')), KIND.tuning);
+});
+
+test('unscorableReason separates a broken instrument from a bad score', () => {
+  const known = new Set(['note-a', 'note-b']);
+  const ok = [{ note: 'note-b', score: 0.4 }];
+  // Gold present, retrieval answered, and the gold note lost. That is a MISS, which is a number.
+  assert.equal(unscorableReason({ gold: ['note-a'] }, ok, known), null);
+  assert.equal(unscorableReason({ gold: ['gone'] }, ok, known), UNSCORABLE.gold);
+  // `gold` is a DISJUNCTION — any member hitting is a hit — so one pruned member leaves the case
+  // scorable. Requiring every member marked a case that ranked 1 as unmeasurable, then blocked the
+  // gate on it.
+  assert.equal(unscorableReason({ gold: ['note-a', 'gone'] }, ok, known), null);
+  // Its own reason: `gold` would send the operator hunting for a pruned note that never existed.
+  assert.equal(unscorableReason({ gold: [] }, ok, known), UNSCORABLE.noGold);
+  assert.equal(unscorableReason({ gold: ['note-a'] }, [], known), UNSCORABLE.empty);
+  assert.equal(
+    unscorableReason({ gold: ['note-a'] }, [{ note: 'note-b', score: NaN }], known),
+    UNSCORABLE.score,
+  );
+  // An owner is a gold ref too — a pairwise case naming a deleted owner cannot be scored either.
+  assert.equal(unscorableReason({ gold: ['note-a'], owner: 'gone' }, ok, known), UNSCORABLE.gold);
+});
+
+test('a pairwise case fails when its owner is absent, never passes vacuously', () => {
+  // The bug this exists to stop: a question that matches NOTHING satisfies "the named note did not
+  // win" and scores as a pass, so the case measures the retriever being broken.
+  const c = { gold: ['wrong-note'], owner: 'right-note' };
+  assert.equal(pairwise(c, [{ note: 'unrelated' }]).pass, false);
+  assert.equal(pairwise(c, []).pass, false);
+  assert.equal(pairwise(c, [{ note: 'right-note' }, { note: 'wrong-note' }]).pass, true);
+  assert.equal(pairwise(c, [{ note: 'wrong-note' }, { note: 'right-note' }]).pass, false);
+  // Owner found, named note absent entirely — the owner outranks it, which is the assertion.
+  assert.equal(pairwise(c, [{ note: 'right-note' }]).pass, true);
+});
+
+test('metrics keeps an unscorable case in the denominator', () => {
+  // Dropping it would make the printed recall improve because the instrument broke. Counting them
+  // is the CLI's job — over the whole set, including the pairwise cases metrics() never sees.
+  assert.equal(metrics([{ rank: 1 }, { rank: 0 }, { rank: 0 }]).recall[1], 1 / 3);
+});
+
+test('kindOfPath reads the kind off the file, so a mislabelling flag cannot win', () => {
+  assert.equal(kindOfPath('/e/eval-cases-p-semantic.jsonl'), KIND.tuning);
+  assert.equal(kindOfPath('/e/eval-cases-p-semantic-heldout.jsonl'), KIND.heldOut);
+  // The resolver and the reader must agree, or a held-out set reports as tuning on its own path.
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'p', 'semantic', KIND.heldOut)), KIND.heldOut);
+  assert.equal(kindOfPath(defaultCasesPath('/e', 'p', 'semantic')), KIND.tuning);
+});
+
+test('the gate fails closed on an unscorable case, whatever the score is', () => {
+  // 100% recall@1 and still a failure: a set that could not score one case did not measure it.
+  const f = gateFailures({
+    recall1: 1,
+    minRank1: 0.8,
+    unscorable: 1,
+    pairFails: 0,
+    recallCases: 4,
+  });
+  assert.equal(f.length, 1);
+  assert.match(f[0], /unscorable/);
+  // Without a floor it stays a warning, because the churn band has always scored past a pruned
+  // gold note and refusing it unprompted would break every plain --run.
+  assert.deepEqual(
+    gateFailures({ recall1: 1, minRank1: null, unscorable: 1, pairFails: 0, recallCases: 4 }),
+    [],
+  );
+});
+
+test('the gate reads the floor and the pairwise cases, and passes when both hold', () => {
+  assert.deepEqual(
+    gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 4 }),
+    [],
+  );
+  assert.equal(
+    gateFailures({ recall1: 0.79, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 4 })
+      .length,
+    1,
+  );
+  assert.equal(
+    gateFailures({ recall1: 0.9, minRank1: 0.8, unscorable: 0, pairFails: 2, recallCases: 4 })
+      .length,
+    1,
+  );
+  // No floor asked for means no floor enforced — a plain report still exits 0.
+  assert.deepEqual(
+    gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 0, recallCases: 4 }),
+    [],
+  );
+  // …but a pairwise case is an assertion, not a metric, so it fails with or without a floor.
+  assert.equal(
+    gateFailures({ recall1: 0, minRank1: null, unscorable: 0, pairFails: 1, recallCases: 4 })
+      .length,
+    1,
+  );
+  // An all-pairwise set has NO recall population, and metrics() divides by `|| 1`, so the floor was
+  // compared against a 0 that nothing had measured — "0 cases · recall@1 0.0% · GATE FAILED" on a
+  // set where every assertion passed. A floor over an empty population is not a low score.
+  assert.deepEqual(
+    gateFailures({ recall1: 0, minRank1: 0.8, unscorable: 0, pairFails: 0, recallCases: 0 }),
+    [],
+  );
+  // …and the other two checks still bite there, because neither is about recall.
+  assert.equal(
+    gateFailures({ recall1: 0, minRank1: 0.8, unscorable: 1, pairFails: 0, recallCases: 0 }).length,
+    1,
+  );
+});
+
+test('casesHash ignores trailing-newline churn but not a changed question', () => {
+  const a = '{"q":"one"}\n{"q":"two"}\n';
+  assert.equal(casesHash(a), casesHash(a.trimEnd()));
+  assert.notEqual(casesHash(a), casesHash('{"q":"one"}\n{"q":"three"}\n'));
+  assert.match(casesHash(a), /^[0-9a-f]{64}$/);
+});
+
+// A ranking assertion needs notes the retriever can tell apart. The shared default body ties every
+// BM25 score, so these three carry their own vocabulary.
+const RANKED_BODIES = {
+  'owner-note':
+    'The certificate for the ingress controller expired overnight and every kubernetes request began failing at the edge.',
+  'other-note':
+    'The nightly backup job writes tarballs to object storage and prunes anything older than thirty days.',
+  'third-note':
+    'Invoices are reconciled against the ledger every morning by a scheduled batch that nobody has touched in a year.',
+};
+const RANKED_Q = 'why did the kubernetes ingress certificate expire';
+
+test('CLI --kind held-out resolves a different file from the tuning set', () => {
+  const { run, scopedPath } = scratch(['ours-one'], null);
+  const r = run('--run', '--kind', 'held-out');
+  assert.match(r.stdout, /no case set at/);
+  assert.ok(r.stdout.includes('heldout'), `held-out must resolve its own path, got:\n${r.stdout}`);
+  assert.ok(
+    !r.stdout.includes(scopedPath),
+    'a held-out run must never fall through to the tuning set',
+  );
+});
+
+test('CLI refuses a misspelled --kind rather than scoring the tuning set under its name', () => {
+  const { run } = scratch(['ours-one'], null);
+  const r = run('--run', '--kind', 'holdout');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /unknown case-set kind/);
+});
+
+test('CLI --min-rank1 exits non-zero below the floor and zero above it', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const pass = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(pass.status, 0, `gold at rank 1 must clear a 100% floor:\n${pass.stdout}`);
+  // The same vault, the same question, gold moved to the note that does not own it: recall@1 is 0
+  // and the floor is what turns that from a printed regression into a failed run.
+  const missPath = casesPath.replace(/\.jsonl$/, '-miss.jsonl');
+  fs.writeFileSync(missPath, JSON.stringify({ q: RANKED_Q, gold: ['third-note'] }) + '\n');
+  const below = run('--run', '--cases', missPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(below.status, 1, `below the floor must exit non-zero:\n${below.stdout}`);
+  assert.match(below.stdout, /GATE FAILED/);
+  // …and without the flag the very same run is a report that exits clean.
+  assert.equal(run('--run', '--cases', missPath, '--mode', 'lexical').status, 0);
+  assert.equal(
+    run('--run', '--cases', missPath, '--mode', 'lexical', '--min-rank1', 'abc').status,
+    1,
+  );
+});
+
+test('CLI --min-rank1 fails closed on a case it could not score, and names it', () => {
+  // recall@1 is 100% on the one case that CAN be scored. A gate that averaged the other away would
+  // pass here — that silent pass is the whole failure this asks to prevent.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [
+      { q: RANKED_Q, gold: ['owner-note'] },
+      { q: 'where do the nightly tarballs go', gold: ['deleted-note'] },
+    ],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '0');
+  assert.equal(r.status, 1, `an unscorable case must block the gate:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /could not be scored/);
+  assert.match(r.stdout, /where do the nightly tarballs go/, 'the message must name the case');
+});
+
+test('CLI scores a pairwise case by its owner, and fails the run when the owner loses', () => {
+  const cases = [{ q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' }];
+  const good = scratch(['owner-note', 'other-note', 'third-note'], cases, RANKED_BODIES);
+  const r = good.run('--run', '--cases', good.casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 0, `the owner does own this question:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /Pairwise .*1\/1 passed/);
+  // …and the same case with the owner and the named note swapped must fail, with no floor asked
+  // for: a pairwise case is an assertion, not a metric.
+  const bad = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'], owner: 'other-note' }],
+    RANKED_BODIES,
+  );
+  const r2 = bad.run('--run', '--cases', bad.casesPath, '--mode', 'lexical');
+  assert.equal(r2.status, 1, `a losing owner must fail the run:\n${r2.stdout}${r2.stderr}`);
+  assert.match(r2.stdout, /GATE FAILED/);
+});
+
+test('CLI does not let a pairwise case pass vacuously when nothing matches', () => {
+  // The question matches no note's vocabulary, so the named note does not win — and a naive
+  // negative would call that a pass. It is a broken instrument: the window ties end to end, so the
+  // case is unscorable, leaves the pairwise tally rather than inflating it, and is named.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note'],
+    [{ q: 'zzzz qqqq vvvv wwww xxxx', gold: ['other-note'], owner: 'owner-note' }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.ok(!r.stdout.includes('1/1 passed'), `must not count as a pass:\n${r.stdout}`);
+  assert.match(r.stdout, /could not be scored/);
+  // …and under a floor it blocks the run, which is where an accept/reject decision is made.
+  const gated = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '0');
+  assert.equal(gated.status, 1, `the gate must fail closed on it:\n${gated.stdout}`);
+});
+
+test('CLI --freeze pins a case set and --run refuses it once edited', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const f = run('--freeze', '--cases', casesPath);
+  assert.equal(f.status, 0, `${f.stdout}${f.stderr}`);
+  assert.match(f.stdout, /sha256 [0-9a-f]{64}/);
+  assert.equal(run('--run', '--cases', casesPath, '--mode', 'lexical').status, 0);
+  fs.appendFileSync(casesPath, JSON.stringify({ q: RANKED_Q, gold: ['other-note'] }) + '\n');
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1, `an edited frozen set must be refused:\n${r.stdout}`);
+  assert.match(r.stdout, /has changed since it was frozen/);
+  // Re-freezing an already-frozen set takes --force, or a held-out set can be edited to fit.
+  assert.equal(run('--freeze', '--cases', casesPath).status, 1);
+  assert.equal(run('--freeze', '--force', '--cases', casesPath).status, 0);
+});
+
+test('CLI reports the kind of the FILE, not of the flag', () => {
+  // --cases names a path outright, so --kind must not get to assert what that file is. This printed
+  // `held-out` over a tuning set's number — the mislabelling the kind exists to prevent, reached by
+  // the override path instead of by a typo.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--kind', 'held-out', '--mode', 'lexical');
+  assert.match(r.stdout, /· tuning ·/, `a tuning file must report tuning:\n${r.stdout}`);
+  assert.ok(!r.stdout.includes('· held-out ·'));
+  // …and the same file renamed to the held-out form reports held-out with no flag at all.
+  const held = casesPath.replace(/\.jsonl$/, '-heldout.jsonl');
+  fs.copyFileSync(casesPath, held);
+  assert.match(run('--run', '--cases', held, '--mode', 'lexical').stdout, /· held-out ·/);
+});
+
+test('CLI --json carries the kind and the gate, and exits non-zero on a failure', () => {
+  // The only caller a gate is for is an automated one, and --json is how it reads the run.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['third-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100', '--json');
+  assert.equal(r.status, 1, `--json must honour the gate, not just print it:\n${r.stdout}`);
+  const env = JSON.parse(r.stdout);
+  assert.equal(env.kind, 'tuning');
+  assert.equal(env.unscorable, 0);
+  assert.deepEqual(env.pairwise, { total: 0, failed: 0 });
+  assert.equal(env.gate.length, 1);
+  assert.match(env.gate[0], /recall@1/);
+  // Without the floor the same envelope reports a clean gate and exits 0.
+  const ok = run('--run', '--cases', casesPath, '--mode', 'lexical', '--json');
+  assert.equal(ok.status, 0);
+  assert.deepEqual(JSON.parse(ok.stdout).gate, []);
+});
+
+test('CLI does not call a multi-gold case unscorable because one member was pruned', () => {
+  // gold is a disjunction: the case ranked 1 on its surviving member. Reporting it as unmeasurable
+  // and blocking the gate on it is the instrument lying about itself.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note', 'pruned-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(r.status, 0, `a scorable case must not block the gate:\n${r.stdout}${r.stderr}`);
+  assert.ok(!r.stdout.includes('could not be scored'), r.stdout);
+});
+
+test('CLI does not apply a recall floor to a set that has no recall cases', () => {
+  // Every case is pairwise, so perCase is empty and metrics() divides by `|| 1`. The floor was
+  // compared against a 0 nothing had measured, and printed a bar chart beside it.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '50');
+  assert.equal(r.status, 0, `an all-pairwise set must not fail on recall:\n${r.stdout}`);
+  assert.match(r.stdout, /no recall cases in this set/);
+  assert.ok(!r.stdout.includes('recall@1'), `no bar chart without a population:\n${r.stdout}`);
+});
+
+test('CLI --author refuses to replace a frozen case set without --force', () => {
+  // Freezing is sold as "this set was not edited to fit a result". --author silently overwriting it
+  // is exactly that edit; --run would refuse the mismatch afterwards, but the questions are gone.
+  const { run, casesPath } = scratch(['owner-note', 'other-note'], null, RANKED_BODIES);
+  const line = JSON.stringify({ q: RANKED_Q, gold: ['owner-note'] }) + '\n';
+  assert.equal(run('--author', '--out', casesPath, { stdin: line }).status, 0);
+  assert.equal(run('--freeze', '--cases', casesPath).status, 0);
+  const blocked = run('--author', '--out', casesPath, { stdin: line });
+  assert.equal(
+    blocked.status,
+    1,
+    `a frozen set must not be re-authored silently:\n${blocked.stdout}`,
+  );
+  assert.match(blocked.stdout, /is frozen/);
+  assert.equal(run('--author', '--force', '--out', casesPath, { stdin: line }).status, 0);
+});
+
+test('CLI --json omits recall for a population of zero rather than reporting it as 0', () => {
+  // The human report suppresses the block; this is the path a gate actually reads.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' }],
+    RANKED_BODIES,
+  );
+  const env = JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout);
+  assert.equal(env.n, 0);
+  assert.ok(!('recall' in env), `a recall of 0 nothing measured must be omitted: ${env.recall}`);
+  assert.ok(!('mrr' in env));
+  assert.deepEqual(env.pairwise, { total: 1, failed: 0 });
+});
+
+test('CLI warns when --kind disagrees with the file --cases named', () => {
+  // Under-claiming is safe; silence is not. The freeze banner gets pasted into issues as provenance.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--kind', 'held-out', '--mode', 'lexical');
+  assert.match(r.stderr, /--kind held-out ignored/);
+  assert.match(r.stdout, /· tuning ·/);
+  // No flag, no warning.
+  assert.ok(!run('--run', '--cases', casesPath, '--mode', 'lexical').stderr.includes('ignored'));
+});
+
+test('a window that ties end to end is not a ranking', () => {
+  const known = new Set(['a', 'b']);
+  // --mode lexical returns a fully tied BM25 vector in directory arrival order, so a question
+  // sharing no token with any note scored recall@1 100% and the gate signed it.
+  const tied = [
+    { note: 'a', score: 0 },
+    { note: 'b', score: 0 },
+  ];
+  assert.equal(unscorableReason({ gold: ['a'] }, tied, known), UNSCORABLE.tied);
+  // Equal but non-zero is the same defect: the order is arbitrary either way.
+  assert.equal(
+    unscorableReason(
+      { gold: ['a'] },
+      [
+        { note: 'a', score: 2.5 },
+        { note: 'b', score: 2.5 },
+      ],
+      known,
+    ),
+    UNSCORABLE.tied,
+  );
+  // A real ranking, and a single result, both stay scorable.
+  assert.equal(
+    unscorableReason(
+      { gold: ['a'] },
+      [
+        { note: 'a', score: 2.5 },
+        { note: 'b', score: 0 },
+      ],
+      known,
+    ),
+    null,
+  );
+  assert.equal(unscorableReason({ gold: ['a'] }, [{ note: 'a', score: 0 }], known), null);
+});
+
+test('CLI refuses to mint a held-out set with --generate', () => {
+  // --generate extracts sentences the notes contain verbatim. Under the held-out name that is an
+  // inflated number with a held-out label and a publishable freeze hash, written by one process.
+  const { run } = scratch(['owner-note', 'other-note'], null, RANKED_BODIES);
+  const r = run('--generate', '4', '--kind', 'held-out');
+  assert.equal(r.status, 1, `--generate must not mint a held-out set:\n${r.stdout}`);
+  assert.match(r.stdout, /--mine/, 'the refusal must name the path that does work');
+  assert.equal(run('--generate', '4').status, 0, 'a tuning set still generates');
+});
+
+test('CLI gate refuses a question that matches nothing, instead of scoring arrival order', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: 'ζζζ zzqqxx0 ωωω', gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(r.status, 1, `a tied window must not pass the gate at 100%:\n${r.stdout}`);
+  assert.match(r.stdout, /arrival order/);
+});
+
+test('CLI reports whether the set it scored was frozen', () => {
+  // Deleting the sidecar silently un-freezes. A consumer has to see that verification did not run.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  assert.match(run('--run', '--cases', casesPath, '--mode', 'lexical').stdout, /frozen: no/);
+  assert.equal(
+    JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout).frozen,
+    null,
+  );
+  run('--freeze', '--cases', casesPath);
+  const env = JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout);
+  assert.match(env.frozen, /^[0-9a-f]{64}$/);
+});
+
+test('CLI does not count an unscorable pairwise case as a pass', () => {
+  // `gold: []` makes `named` Infinity, so `owner < named` was vacuously true and the case landed
+  // in the tally line people paste.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [
+      { q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' },
+      { q: RANKED_Q, gold: [], owner: 'owner-note' },
+    ],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.match(r.stdout, /1\/1 passed/, `the unscorable case must leave the tally:\n${r.stdout}`);
+  assert.match(r.stdout, /names no gold note at all/);
+});
+
+test('CLI --mine refuses a file and survives an unreadable directory', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-mine-')));
+  tmpDirs.push(tmp);
+  const { run } = scratch(['owner-note'], null, RANKED_BODIES);
+  const file = path.join(tmp, 'one.jsonl');
+  fs.writeFileSync(file, '');
+  const r = run('--mine', file);
+  assert.equal(r.status, 1, 'a file is not a transcript directory');
+  assert.match(r.stdout, /DIRECTORIES/);
 });

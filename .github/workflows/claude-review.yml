@@ -138,7 +138,13 @@ jobs:
                `hooks/lib/env-shell.mjs` is a correctness boundary: a vault path containing
                a `$`, a backtick or a quote is an injection without it.
             6. Retrieval changes with no numbers. No recall or MRR figure lands without a
-               case-set run behind it, and any figure quoted must name its case set. Flag
+               case-set run behind it, and any figure quoted must name its case set AND its
+               kind — `tuning` may be fitted to, `held-out` may not, and the kind is read off
+               the resolved filename, never asserted by a flag. Flag a held-out figure quoted
+               without the set's frozen sha256, a `--kind` that overrides what an explicit
+               `--cases` path says, and a gate that reports a failure instead of exiting
+               non-zero. The gate fails closed: a case that could not be scored at all blocks
+               the run rather than being averaged into the misses. Flag
                per-model assumptions that were only checked on one model — pooling, chunk
                size, query/doc prefixes, batch size and the `dupeMin`/`clusterMin`
                thresholds do not transfer, and getting them wrong degrades ranking

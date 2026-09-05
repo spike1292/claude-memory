@@ -397,7 +397,12 @@ fires SessionStart again.
 ## Conventions
 
 - **No retrieval number ships without a case-set run behind it.** Rewriting the questions per run
-  measures the questions. Any figure quoted anywhere names the case set it came from.
+  measures the questions. Any figure quoted anywhere names the case set it came from **and its
+  kind** — `tuning` may be fitted to, `held-out` may not, and the kind is read off the resolved
+  filename rather than asserted by a flag. A held-out figure quotes the set's frozen sha256
+  (`--freeze`) instead of its questions, which stay machine-local. The gate — soft, opt-in via
+  `--min-rank1`, and fail-closed on any case that could not be scored — is in
+  [docs/decisions/2026-09-04-eval-gate.md](docs/decisions/2026-09-04-eval-gate.md).
 - Load `/memory:protocol` (`skills/protocol/SKILL.md`) before writing or auditing a vault note —
   filename/frontmatter rules, per-claim recency and supersession, aliases, graduation to `permanent/`.
 - **A comment's home is reader distance, never length.** It stays if someone editing *this

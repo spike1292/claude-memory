@@ -25,6 +25,52 @@ what a user's setup depends on: config keys, command names, vault layout, and
   prompt gained the two checks that need a reader — a measurement lives in exactly one place, and a
   comment restating what a named test already pins is a finding.
 
+- `/memory:eval` gains a **held-out set kind and a gate** (#87). `--kind held-out` resolves its own
+  case file and every report and `--json` envelope echoes the kind; `--freeze` pins a set with a
+  sha256 sidecar that `--run` verifies, so a set edited after the fact is refused. `--min-rank1
+  <percent>` exits non-zero below the floor and **fails closed** — a case that could not be scored
+  at all blocks the run and is named. It still counts as a miss in the recall figure — an instrument
+  that broke may never flatter the number — so the block and the count are what carry the news, not
+  the percentage. Unscorable includes a window that ties end to end: a `--mode lexical` question
+  sharing no token with any note scores every candidate 0, and that "ranking" is directory arrival
+  order, which previously reported 100% and passed the gate. A case may carry
+  an `owner`, which the runner asserts outranks the case's own note; the owner must be found, so a
+  question matching nothing fails instead of passing vacuously. Existing sets resolve unchanged as
+  tuning sets; the reported kind is read off the resolved filename, so `--kind` cannot assert what
+  an explicit `--cases` path is (it warns and defers), and `--style` may not end in `heldout`.
+  `--author` refuses to overwrite a frozen set without `--force`, and `--generate` refuses
+  `--kind held-out` outright — it extracts sentences the notes already contain, so it cannot mint a
+  held-out set. Every run reports `frozen:` (the hash, or `no`), since deleting a sidecar un-freezes
+  a set silently. A set with no recall cases gets no
+  recall floor, and the report and envelope omit the recall block there rather than printing zeros.
+  Soft-versus-hard gate reasoning and the −52.8-point ablation behind it:
+  `docs/decisions/2026-09-04-eval-gate.md`.
+
+- **`/memory:eval` gained the labelling loop, and `/memory:doctor` reports whether you have a
+  held-out set at all.** The flags existed with no way for a human to reach them. `/memory:eval`
+  step 0b is the workflow: mine every transcript folder for this project in one call, filter the
+  instructions out, read every survivor for pasted secrets before showing it, present in batches of
+  ten with a proposed gold note each, and only write what the user kept — then freeze and quote the
+  hash. The agent mines and filters; the user decides. `/memory:doctor` grows an `eval case sets`
+  section naming the tuning and held-out sets by case count and frozen state, and warning when the
+  held-out set is missing or unpinned. It names counts and kinds, never a question.
+
+- **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
+  transcripts** (`scripts/lib/memory-mine.mjs`, its own module — it shares no import, constant or
+  helper with the eval scorer, which is the only reason they were ever one file). Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays
+  the human's half, because a producer that wrote both halves is how this repo shipped inflated
+  retrieval figures to five artefacts (#87). Takes a list of roots and deduplicates across them,
+  since one project's history is spread over several cwd-slug folders: two such folders each report
+  142 unique prompts and hold 142 between them. Filters out slash commands, injected XML, harness
+  banners, tool results and anything outside 15–400 characters, then reports turns read, candidates
+  kept and the number dropped.
+
+  Measured 2026-09-05 on one machine: 217458 transcript lines across 1368 files → 3862 human turns
+  → **977 candidates**, of which 142 are this repo's. The corpus grows with use — the same machine
+  read 3735 turns a day earlier — so re-run `--mine` rather than quoting these. Roughly one
+  candidate in three is a retrieval question rather than an instruction, so a usable held-out set is
+  smaller again; that ratio is a hand sample, not a count.
+
 ### Fixed
 
 - **A worktree checked out under a dotted directory (e.g. a hidden-folder-based worktree tool)
