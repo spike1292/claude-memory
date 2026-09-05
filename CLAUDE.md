@@ -338,8 +338,8 @@ something.
 change touches, with a non-failing warning at 0.75 so a file arrives at the ceiling announced
 (`npm run prose`; `*.test.mjs` exempt). The fix is never deletion: a fact needed when
 *changing the design* moves to `docs/decisions/` or `docs/architecture.md`, and one a named test
-already pins goes. Eleven files were over when it landed and are cut by whoever next touches them —
-`node scripts/prose-guard.mjs --all` is the backlog.
+already pins goes. Files already over are cut by whoever next touches them; `node scripts/prose-guard.mjs --all` is the
+backlog and the only place that count is current.
 [docs/decisions/2026-09-05-prose-ceiling.md](docs/decisions/2026-09-05-prose-ceiling.md) supersedes
 the "No CI guard" section of the reader-distance record, and records the measurement scanner that
 was built and deleted for scoring 0 against the drift it was written for.

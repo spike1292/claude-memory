@@ -39,6 +39,17 @@ if (argv.includes('--all')) {
   process.exit(0);
 }
 
+// A base ref that does not exist is a checkout problem, not a prose problem: a depth-1 clone has no
+// refs/remotes/origin/*, and failing the job there reports the wrong thing in red. Say so and pass.
+try {
+  git(['rev-parse', '--verify', `${base}^{commit}`], true);
+} catch {
+  console.log(
+    `prose: base ref ${base} is not in this clone — skipping. (CI needs fetch-depth: 0.)`,
+  );
+  process.exit(0);
+}
+
 const changed = git(['diff', '--name-only', `${base}...HEAD`])
   .split('\n')
   .filter((f) => f.endsWith('.mjs') && fs.existsSync(f));

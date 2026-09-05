@@ -14,7 +14,7 @@ there a check for that, or does it stay a matter of taste?
 
 A ceiling of **1.00**, enforced, on the files a change touches. `npm run prose` locally, a CI step on
 every PR. A **0.75 warning band** below it prints and does not fail, so a file arrives at the ceiling
-announced rather than by surprise — nine files are over and eight more sit in the band.
+announced rather than by surprise.
 
 2026-08-23 declined exactly this, and the objection was good: a length test fires on the
 load-bearing blocks first, and several of those are the only record of a silent failure. The answer
@@ -27,8 +27,10 @@ Maintainer's call, 2026-09-05: *"it should fail in ci. comments should not be mo
 
 ## Scope: a ratchet, not a sweep
 
-Eleven files were over on the day it landed, from 3.00 (`scripts/env.mjs`) to 1.20
-(`scripts/lib/memory-semantic.mjs`). They are not rewritten. The gate reads only files the diff
+**Nine files were over and eight more were in the warn band on 2026-09-05**, from 3.00
+(`scripts/env.mjs`) down. That count is here and nowhere else — it changes with every cut, so
+anywhere else it would be a copy going stale, which is the drift this whole PR was about. They are
+not rewritten. The gate reads only files the diff
 touches, so each gets cut by whoever next has reason to be in it. `node scripts/prose-guard.mjs
 --all` prints the backlog and never fails, because a ratchet that fails on code nobody touched is a
 ratchet everybody disables.

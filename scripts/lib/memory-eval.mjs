@@ -370,7 +370,7 @@ export function pairwise(c, results) {
  * The accept/reject rule, as a list of reasons to reject. Empty means accept.
  *
  * Opt-in: `--run` with no floor prints a number and exits 0, as every existing caller expects.
- * Why soft rather than strict-improvement: docs/decisions/2026-09-04-eval-gate.md.
+ * Soft, not strict-improvement: ungated lost 52.8 pts. docs/decisions/2026-09-04-eval-gate.md.
  *
  * @param {{ recall1: number, minRank1: number|null, unscorable: number, pairFails: number,
  *   recallCases: number }} x

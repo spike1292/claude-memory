@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Logic half; the CLI entry is scripts/prose-guard.mjs.
 //
-// Comments may not outnumber code in a file a change touches; CI fails at 1.00. Why a ceiling at
-// all, why it is a ratchet over the eleven files already above it, and the measurement scanner
-// built and deleted before it: docs/decisions/2026-09-05-prose-ceiling.md.
+// Comments may not outnumber code in a file a change touches; CI fails at 1.00, warns at 0.75. Why
+// a ceiling at all, why it is a ratchet over the files already above it, and the measurement
+// scanner built and deleted before it: docs/decisions/2026-09-05-prose-ceiling.md.
 
 export const CEILING = 1.0;
 // A band below the ceiling, so a file arrives at 1.00 announced rather than by surprise. Warning

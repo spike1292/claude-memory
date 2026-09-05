@@ -37,7 +37,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   comment explaining what had been wrong, taking one file from 1.17 comment lines per code line to
   1.42 before anyone noticed. The fix is never deletion: a fact needed when *changing the design*
   moves to `docs/decisions/` or `docs/architecture.md`, and the failure message says so. Scoped to
-  changed files, so the eleven already over are cut by whoever next touches them rather than in one
+  changed files, so the ones already over are cut by whoever next touches them rather than in one
   sweep — `node scripts/prose-guard.mjs --all` is the backlog. This supersedes the "No CI guard"
   section of `docs/decisions/2026-08-23-comment-reader-distance.md`; the reasoning is in
   `docs/decisions/2026-09-05-prose-ceiling.md`, which also buries the conflicting-measurement

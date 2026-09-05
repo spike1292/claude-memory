@@ -239,6 +239,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The prose gate diffs against the base ref, which a depth-1 clone does not have.
+          fetch-depth: 0
 
       # Its own job, not a matrix step: formatting does not depend on the Node version, and the same
       # mistake already cost `release.sh --selftest` two runs per push.

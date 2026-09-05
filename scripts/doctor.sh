@@ -383,16 +383,28 @@ echo "eval case sets"
 # Reported because the gap is invisible otherwise: a project with no held-out set has no way to tell
 # a retrieval improvement from a case set fitted to the result, and nothing else in the tool says so.
 # Names counts and kinds only, never a question — these files hold vault content (#87).
-_tuning="$STATE/eval/eval-cases-$slug-semantic.jsonl"
-_held="$STATE/eval/eval-cases-$slug-semantic-heldout.jsonl"
-if [ -f "$_tuning" ]; then
-  ok "tuning set: $(grep -c . "$_tuning" 2>/dev/null || echo 0) cases"
-else
-  echo "  none   tuning set: not authored for this project"
-fi
-if [ -f "$_held" ]; then
+# Globbed, not rebuilt: defaultCasesPath() is the one place a case-set filename is constructed, and
+# a second copy here would also miss every style but `semantic`.
+# Reported inside the loop, never accumulated into a string: `for f in $list` word-splits, and
+# $CLAUDE_MEMORY_HOME may contain a space.
+_held="" _tuning=0
+for f in "$STATE"/eval/eval-cases-"$slug"-*.jsonl; do
+  [ -f "$f" ] || continue
+  case "$f" in
+    *-heldout.jsonl) _held="$f" ;;
+    *)
+      _tuning=$((_tuning + 1))
+      # Style only. The slug is this project's and doctor echoes it already, but the line is long
+      # enough without it.
+      _style=$(basename "$f" .jsonl); _style=${_style##*-}
+      ok "tuning set ($_style): $(grep -c . "$f") cases"
+      ;;
+  esac
+done
+[ "$_tuning" -eq 0 ] && echo "  none   tuning set: not authored for this project"
+if [ -n "$_held" ]; then
   if [ -f "$_held.sha256" ]; then
-    ok "held-out set: $(grep -c . "$_held" 2>/dev/null || echo 0) cases, frozen"
+    ok "held-out set: $(grep -c . "$_held") cases, frozen"
   else
     warn "held-out set is not frozen" \
          "a set nobody pinned can be edited to fit a result. Run /memory:eval and freeze it."
