@@ -69,19 +69,6 @@ jobs:
             AT it (CLAUDE.md, docs/, README.md, this file, other modules) moved with it.
             docs/decisions/2026-08-23-comment-reader-distance.md is the rule.
 
-            Two checks on the prose itself, because a fix that adds prose buys new
-            findings and three rounds of that is how #87 shipped one measurement written
-            four ways:
-
-            - **A measurement appears in exactly ONE place; everything else points at
-              it.** Flag the same figure restated in a second comment, a test comment, the
-              CHANGELOG or a doc — that copy is where the drift comes from, not the
-              original. 142 vs 143 unique prompts and 3227 vs 3862 turns both got through
-              as copies nobody updated together. A figure with no date is the same defect.
-            - **Flag a comment that restates what a named test already pins.** If
-              `CLI gate refuses a question that matches nothing` exists as a test, the
-              block above the code saying the same thing is the copy, not the record.
-
             Weight the review toward the things that break silently here. In rough order:
 
             1. PRIVACY. This is a public repo and the vault is private. Flag any real note

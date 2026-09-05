@@ -31,9 +31,10 @@ another number from the exact same file.
 
 ## Facts rehomed from the code, 2026-09-05
 
-Moved out of `scripts/lib/memory-eval.mjs` under the prose ceiling
-([2026-09-05-prose-ceiling.md](2026-09-05-prose-ceiling.md)). Each is needed when *changing* the
-harness, not when editing the function it sat above.
+Moved out of `scripts/lib/memory-eval.mjs`, which had grown more comment than code over three
+review rounds. Each is needed when *changing* the harness, not when editing the function it sat
+above, which is where the reader-distance rule puts it
+([2026-08-23-comment-reader-distance.md](2026-08-23-comment-reader-distance.md)).
 
 **`lexicalRank` scores WHOLE NOTES, and is not a model of the recall hook.** It is a baseline for
 the semantic arm, which searches every chunk; the recall hook scores only the `(card)` chunk. On the
