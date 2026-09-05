@@ -26,10 +26,17 @@ import {
   lexicalRank,
   goldCoverage,
   defaultCasesPath,
+  unscorableReason,
+  pairwise,
+  gateFailures,
+  casesHash,
+  kindOfPath,
+  KIND,
   GOLD,
   GOLD_FLOOR,
   RECALL_KS,
 } from './lib/memory-eval.mjs';
+import { minePrompts } from './lib/memory-mine.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -80,6 +87,10 @@ const KNOWN_FLAGS = new Set([
   '--style',
   '--mode',
   '--fetch-k',
+  '--mine',
+  '--kind',
+  '--min-rank1',
+  '--freeze',
 ]);
 const unknownFlag = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
 if (unknownFlag) {
@@ -100,11 +111,28 @@ const SLUG = val('--slug') || paths.projectKey(repo);
 // script, always with a confident-looking wrong answer.
 console.error(`project: ${SLUG}  (from ${repo})`);
 const STYLE = val('--style') || 'semantic';
+// Default `tuning`, so every existing invocation resolves the file it always did. An unknown kind
+// throws rather than falling through, which would print a tuning number under a held-out label.
+const CASE_KIND = val('--kind') || KIND.tuning;
 // Case sets are generated FROM a real vault and contain its content, so they live in
 // machine-local state, never in the plugin (which is a public repo).
 const DATA = paths.stateDir('eval');
-const SCOPED_CASES = defaultCasesPath(DATA, SLUG, STYLE);
+let SCOPED_CASES;
+try {
+  SCOPED_CASES = defaultCasesPath(DATA, SLUG, STYLE, CASE_KIND);
+} catch (e) {
+  console.log(String(e instanceof Error ? e.message : e));
+  process.exit(1);
+}
 const CASES = val('--cases') || val('--out') || SCOPED_CASES;
+// From the FILE, never the flag: `--kind` decides which file the DEFAULT resolves to, and does not
+// get to assert what an explicit `--cases` path is. It warns rather than deferring silently,
+// because the freeze banner is what gets pasted into an issue as provenance.
+const REPORTED_KIND = kindOfPath(CASES);
+if (val('--kind') && CASE_KIND !== REPORTED_KIND)
+  console.error(
+    `warning: --kind ${CASE_KIND} ignored — ${path.basename(CASES)} is a ${REPORTED_KIND} set, and the file decides.`,
+  );
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
 
@@ -164,6 +192,95 @@ const parseJsonl = (text, src) => {
 /** @param {unknown} q @returns {boolean} */
 const isQuestion = (q) => typeof q === 'string' && /[\p{L}\p{N}]/u.test(q);
 
+// ---------------------------------------------------------------- mine
+
+// --mine <dir>[,<dir>…]: emit candidate questions from Claude Code transcripts as {q} JSONL, with
+// NO gold. It never writes a case set. Assigning gold is the human's half, and keeping the two
+// halves in different hands is the whole point of a held-out set (#87) — a producer that wrote both
+// would reproduce the failure that put inflated figures in five artefacts.
+//
+// A LIST of roots, because one project's history is spread over several cwd-slug folders and the
+// deduplication has to span them: two folders holding 142 candidates each hold 142 between them
+// (2026-09-05), so mining them separately would report the pool at exactly twice its size.
+//
+// Candidates go to stdout and the tally to stderr, so the output pipes into an editor or a
+// labelling pass while the operator still sees what was dropped.
+if (flag('--mine')) {
+  const roots = (val('--mine') || '').split(',').filter(Boolean);
+  const absent = roots.filter((r) => !fs.existsSync(r));
+  if (!roots.length || absent.length) {
+    console.log(
+      `--mine needs transcript directories. Not found: ${absent.join(', ') || '(none given)'}`,
+    );
+    process.exit(1);
+  }
+  // Recursive: Claude Code keeps one FOLDER per cwd-slug, so a useful root is the parent of many
+  // folders as often as it is one folder.
+  const notDir = roots.filter((r) => !fs.statSync(r).isDirectory());
+  if (notDir.length) {
+    console.log(`--mine takes transcript DIRECTORIES, not files: ${notDir.join(', ')}`);
+    process.exit(1);
+  }
+  const files = roots.flatMap((r) => {
+    try {
+      return fs
+        .readdirSync(r, { recursive: true })
+        .map(String)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => path.join(r, f));
+    } catch (e) {
+      // Skip and continue, the same as the per-file read below: mining is best-effort.
+      console.error(`skipping ${r}: ${e instanceof Error ? e.message : e}`);
+      return [];
+    }
+  });
+  const seen = new Set();
+  let turns = 0;
+  for (const f of files) {
+    let text;
+    try {
+      text = fs.readFileSync(f, 'utf8');
+    } catch {
+      continue; // a transcript deleted mid-walk is not an error worth stopping a mining run for
+    }
+    turns += minePrompts(text.split('\n'), seen).turns;
+  }
+  for (const q of seen) console.log(JSON.stringify({ q }));
+  // Read, kept and dropped, all three: a candidate count alone cannot tell an operator whether the
+  // filters are too tight or the history is too thin, and those want opposite responses.
+  console.error(
+    `${files.length} transcripts under ${roots.length} root(s): ${turns} user turns → ${seen.size} candidates (${turns - seen.size} dropped as noise or duplicate)`,
+  );
+  console.error('No gold notes attached — assign them by hand, then pipe to --author.');
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------- freeze
+
+// --freeze: record a case set's identity as a sha256 sidecar. The set stays machine-local (vault
+// content), so the hash is what gets quoted; `--run` verifies it whenever one exists.
+if (flag('--freeze')) {
+  if (!fs.existsSync(CASES)) {
+    console.log(`no case set at ${CASES} to freeze.`);
+    process.exit(1);
+  }
+  const h = casesHash(fs.readFileSync(CASES, 'utf8'));
+  const side = `${CASES}.sha256`;
+  // Re-freezing is how a set gets edited unnoticed, so it takes --force.
+  if (fs.existsSync(side) && fs.readFileSync(side, 'utf8').trim() !== h && !flag('--force')) {
+    console.log(
+      `${side} records a DIFFERENT set. Re-freezing invalidates every number quoted against the old hash — pass --force if that is what you want.`,
+    );
+    process.exit(1);
+  }
+  fs.writeFileSync(side, `${h}\n`);
+  console.log(`${REPORTED_KIND} set frozen: ${CASES}\n  sha256 ${h}`);
+  console.log(
+    'Quote this hash wherever you quote a number from this set; the questions stay local.',
+  );
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------- generate
 
 // --author: read {q, gold} JSONL on stdin, validate every gold note exists, and save as the case
@@ -195,6 +312,13 @@ if (flag('--author')) {
     console.log(`gold note(s) not found — fix these first:\n  ${bad.join('\n  ')}`);
     process.exit(1);
   }
+  // `--run` would refuse the hash mismatch afterwards, but by then the questions are gone.
+  if (fs.existsSync(`${CASES}.sha256`) && !flag('--force')) {
+    console.log(
+      `${CASES} is frozen. Re-authoring replaces the questions every number quoted against its hash was measured on — pass --force if that is what you want, then --freeze --force.`,
+    );
+    process.exit(1);
+  }
   // Never write an empty set. `--author` has no --force gate, so an upstream producer that failed,
   // a `< /dev/null`, or a filter that matched nothing would silently replace the authored baseline
   // every past number was measured against — the same data loss `--generate` was just given a
@@ -209,6 +333,15 @@ if (flag('--author')) {
 }
 
 if (flag('--generate')) {
+  // `--generate` extracts sentences the note contains verbatim (its banner below: BM25 finds them
+  // trivially). Under the held-out name that is an inflated number with a publishable hash.
+  if (CASE_KIND === KIND.heldOut) {
+    console.log(
+      '--generate cannot make a held-out set: it extracts sentences the notes already contain.\n' +
+        'Mine candidates with --mine, assign gold by hand, then --author --kind held-out.',
+    );
+    process.exit(1);
+  }
   // `--generate` may be bare, so `val()` cannot refuse a missing value here — and what follows is
   // then the NEXT FLAG. `Number('--force')` is NaN, the stride is NaN, the sample loop never runs,
   // and `--generate --force` wrote an EMPTY case set over a real one and exited 0. A count is
@@ -276,9 +409,33 @@ if (fs.statSync(CASES).isDirectory()) {
   console.log(`${CASES} is a directory. --cases takes a .jsonl case set.`);
   process.exit(1);
 }
-const cases = /** @type {{ q: string, gold: string[], layer?: string, style?: string }[]} */ (
-  parseJsonl(fs.readFileSync(CASES, 'utf8'), CASES)
-);
+const casesText = fs.readFileSync(CASES, 'utf8');
+// A set that no longer hashes to its sidecar is not this set.
+const sidecar = `${CASES}.sha256`;
+let frozen = null;
+if (fs.existsSync(sidecar)) {
+  // Unreadable or a directory is bad input, the way a mistyped --cases is.
+  let want;
+  try {
+    want = fs.readFileSync(sidecar, 'utf8').trim();
+  } catch (e) {
+    console.log(`${sidecar} exists but cannot be read: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  }
+  const got = casesHash(casesText);
+  frozen = got;
+  if (want !== got) {
+    console.log(
+      `${CASES} has changed since it was frozen.\n  frozen ${want}\n  now    ${got}\n` +
+        `Every number quoted against the frozen hash was measured on different questions. Re-freeze with --freeze --force if the edit was intended.`,
+    );
+    process.exit(1);
+  }
+}
+const cases =
+  /** @type {{ q: string, gold: string[], owner?: string, layer?: string, style?: string }[]} */ (
+    parseJsonl(casesText, CASES)
+  );
 
 // A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
@@ -346,6 +503,16 @@ if (!Number.isInteger(K) || K < 1) {
 }
 const KS = RECALL_KS.filter((k) => k <= K);
 
+// --min-rank1 turns a report into a GATE: below the floor the process exits non-zero. A percentage,
+// to match how the numbers are quoted. Validated like --fetch-k: NaN would compare false and pass
+// every run silently, which is the failure the flag exists to prevent.
+const minRaw = flag('--min-rank1') ? Number(val('--min-rank1')) : null;
+if (minRaw !== null && (!Number.isFinite(minRaw) || minRaw < 0 || minRaw > 100)) {
+  console.log(`--min-rank1 takes a percentage between 0 and 100, got: ${val('--min-rank1')}`);
+  process.exit(1);
+}
+const MIN_RANK1 = minRaw === null ? null : minRaw / 100;
+
 /** @type {{ q: string, results: { note: string }[] }[]} */
 let ranked; // [{q, results:[{note}]}]
 if (mode === 'semantic') {
@@ -376,14 +543,38 @@ if (mode === 'semantic') {
   );
 }
 
-const perCase = cases.map((c, i) => {
+const scored = cases.map((c, i) => {
   const res = ranked[i]?.results || [];
-  const rank = res.findIndex((r) => c.gold.includes(r.note)) + 1;
-  return { q: c.q, gold: c.gold[0], layer: c.layer, rank, top1: res[0]?.note ?? null };
+  return {
+    q: c.q,
+    gold: c.gold[0],
+    layer: c.layer,
+    rank: res.findIndex((r) => c.gold.includes(r.note)) + 1,
+    // A pairwise case inverts what `gold` means — it names the note that must LOSE — so it is
+    // scored by pairwise() and kept out of recall@k, where it would count as a miss by design.
+    pair: c.owner ? pairwise(/** @type {{gold: string[], owner: string}} */ (c), res) : null,
+    unscorable: unscorableReason(c, res, known),
+    top1: res[0]?.note ?? null,
+  };
 });
+const perCase = scored.filter((c) => !c.pair);
+// Unscorable pairwise cases leave BOTH sides of the tally, or `gold: []` counts as a pass in the
+// line people paste (`named` is Infinity, so `owner < named` is vacuously true).
+const pairs = scored.filter((c) => c.pair && !c.unscorable);
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
+const unscorable = scored.filter((c) => c.unscorable);
+const pairFails = pairs.filter((c) => !c.pair?.pass);
+// Before either report branch: --json exits on its own, and an automated caller is the only caller
+// a gate is for.
+const failures = gateFailures({
+  recall1: recall[1],
+  minRank1: MIN_RANK1,
+  unscorable: unscorable.length,
+  pairFails: pairFails.length,
+  recallCases: perCase.length,
+});
 
 // Every semantic number is model-dependent, so the model IS part of the measurement. Reporting a
 // recall figure without it is the provenance gap CLAIM-1 exists to catch.
@@ -395,6 +586,7 @@ if (flag('--json')) {
       // envelope could not tell a full case set from one a prune had eaten a quarter of.
       {
         cases: CASES,
+        kind: REPORTED_KIND,
         mode,
         model,
         fetchK: K,
@@ -405,30 +597,46 @@ if (flag('--json')) {
         // path honours that while this one printed the lot, so `--fetch-k 3 --json` reported an
         // @5 and an @10 that were @3 censored to the window. Indistinguishable from a measurement
         // to whatever reads this, which is the whole failure #97 is about.
-        recall: Object.fromEntries(KS.map((k) => [k, recall[k]])),
-        mrr: +mrr.toFixed(3),
+        // Omitted, never zero: metrics() divides by `|| 1`, so an all-pairwise set shipped
+        // `recall: {1:0,…}` to a consumer that could not tell it from a measurement.
+        ...(perCase.length
+          ? { recall: Object.fromEntries(KS.map((k) => [k, recall[k]])), mrr: +mrr.toFixed(3) }
+          : {}),
+        // Its own key: a consumer must be able to tell a case that scored zero from one never
+        // scored at all.
+        unscorable: unscorable.length,
+        // Null when no sidecar exists — deleting one un-freezes a set silently.
+        frozen,
+        pairwise: { total: pairs.length, failed: pairFails.length },
+        gate: failures,
       },
       null,
       2,
     ),
   );
-  process.exit(0);
+  process.exit(failures.length ? 1 : 0);
 }
+// A number whose set kind is unknown is not printable (#87).
 console.log(
-  `${perCase.length} cases · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
+  `${perCase.length} cases · ${REPORTED_KIND} · style ${cases[0]?.style ?? '?'} · mode ${mode} · model ${model}`,
 );
 // Name the file the number came from, the way the `project:` echo names the vault. Every failure
 // in #97 is a figure attributed to a case set nobody checked; a number printed beside its source
 // cannot be silently misread, whatever routed us to the wrong one.
 console.log(`  cases: ${CASES}`);
-for (const k of KS)
+console.log(frozen ? `  frozen: ${frozen}` : '  frozen: no (this set is not pinned)');
+// metrics() divides by `|| 1`, so an all-pairwise set rendered a bar chart no case contributed to.
+if (!perCase.length) console.log('  no recall cases in this set — pairwise assertions only');
+else {
+  for (const k of KS)
+    console.log(
+      `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,
+    );
+  console.log(`  MRR      ${mrr.toFixed(3)}`);
   console.log(
-    `  recall@${String(k).padEnd(2)} ${(recall[k] * 100).toFixed(1).padStart(5)}%  ${'#'.repeat(Math.round(recall[k] * 40))}`,
+    `  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`,
   );
-console.log(`  MRR      ${mrr.toFixed(3)}`);
-console.log(
-  `  misses (gold absent from top ${K}): ${misses.length}   buried (rank>3): ${buried.length}`,
-);
+}
 // What beat the gold note is the diagnosis: a keyword magnet, a near-duplicate, or a better answer.
 if (misses.length) {
   console.log('\nMisses — and what ranked #1 instead:');
@@ -439,4 +647,25 @@ if (buried.length) {
   console.log('\nBuried (found, but below rank 3):');
   for (const b of buried.slice(0, 8))
     console.log(`  rank ${b.rank}  ${b.gold}  (beaten by ${b.top1})`);
+}
+if (pairs.length)
+  console.log(
+    `\nPairwise (owner must outrank the named note): ${pairs.length - pairFails.length}/${pairs.length} passed`,
+  );
+// `absent` rather than `Infinity`: an owner that never appeared is a vocabulary gap, one that came
+// second is a ranking gap, and they want opposite fixes.
+const rankLabel = (/** @type {number} */ r) => (Number.isFinite(r) ? String(r) : 'absent');
+for (const f of pairFails.slice(0, 8))
+  console.log(
+    `  owner ${rankLabel(f.pair?.owner ?? Infinity)}  named ${rankLabel(f.pair?.named ?? Infinity)}  Q: ${f.q.slice(0, 70)}`,
+  );
+// Named, not counted: a tally cannot be gone and looked at.
+if (unscorable.length) {
+  console.log(`\n${unscorable.length} case(s) could not be scored at all:`);
+  for (const u of unscorable.slice(0, 10))
+    console.log(`  ${u.unscorable}\n    Q: ${u.q.slice(0, 80)}`);
+}
+if (failures.length) {
+  console.log(`\nGATE FAILED:\n  ${failures.join('\n  ')}`);
+  process.exit(1);
 }

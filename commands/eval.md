@@ -50,9 +50,95 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
    **No retrieval change ships without before/after numbers on the same cases.** Every previous run of this command hand-wrote its questions, so the reported movement measured the question set as much as the retrieval — "0.60 → 1.00" compared two different sets, written by someone who knew the vault and knew what had just been fixed. The versioned set measured **46.4%** where the hand-written one said 94%.
 
+   **Where the questions come from matters more than how many there are.** `--mine <dir>[,<dir>…]`
+   reads Claude Code transcript folders (`~/.claude/projects/<cwd-slug>/`) and emits candidate
+   questions as `{q}` JSONL with no gold note. Those prompts were typed before any tuning run, in
+   the words actually used, so they cannot have been shaped to fit a result — which is what a
+   held-out set needs and an authored paraphrase cannot give (#87). Pass every folder belonging to
+   the project in one comma-separated call so deduplication spans them. Assign gold notes by hand,
+   then pipe to `--author`. **Read what you mined before you keep it**: transcripts contain
+   whatever was pasted into a session, including credentials — one mining run here surfaced a
+   1Password item id. Case sets stay machine-local and gitignored for this reason.
+
+   **Two kinds of set, and the difference is mechanical.** `--kind tuning` (the default, and what
+   every existing set is) may be fitted to. `--kind held-out` resolves its own file
+   `$STATE/eval/eval-cases-<slug>-<style>-heldout.jsonl` and is **off-limits to tuning**: not for
+   threshold selection, not for fusion-weight sweeps, not consulted while iterating. Every report and
+   `--json` envelope echoes the kind — a number whose set kind is unknown is not printable. The kind
+   is read off the resolved **filename**, so `--kind` decides which file the default resolves to and
+   does not get to assert what an explicit `--cases` path is. Freeze a
+   held-out set once it is authored:
+
+   ```
+   node "$MEM/scripts/memory-eval.mjs" --kind held-out --freeze
+   ```
+
+   That writes a `.sha256` sidecar and prints the hash. Quote the hash wherever you quote a number
+   from the set; the questions stay machine-local. `--run` refuses a frozen set that no longer
+   matches, and `--author` refuses to overwrite one without `--force`, so "it was not edited to fit
+   the result" is enforced rather than promised. Editing a frozen set on purpose is
+   `--author --force` followed by `--freeze --force`; the old hash stops being valid at that point.
+   `--style` may not end in `heldout`, since that would build a tuning path the reader would read
+   as held out, and `--generate` refuses `--kind held-out` outright: it extracts sentences the notes
+   already contain, so generating one would put an inflated number behind a held-out label and a
+   publishable hash. Every run prints `frozen:` — the hash, or `no` — because deleting a sidecar
+   un-freezes a set silently and a consumer has to see that verification did not happen.
+
+   **`--min-rank1 <percent>` turns a report into a gate** — below the floor the process exits
+   non-zero, so CI or a tuning loop fails instead of printing a regression nobody reads. Under a
+   floor the gate **fails closed**: a case that could not be scored at all blocks the run and is named
+   in the output. It still counts as a miss in `recall@k` — an instrument that broke may never
+   flatter the number — so read the block and the count, not the percentage. Unscorable means: no
+   results, a non-finite score, a window that ties end to end (a `--mode lexical` question sharing
+   no token with any note scores every candidate 0, and the "ranking" is directory arrival order),
+   a case naming no gold note, or one whose gold notes have *all* gone from the vault. One surviving
+   gold member is enough, since `gold` is a disjunction. A set with no recall cases at all gets no
+   floor, rather than failing on a zero nobody measured. Soft rather than strict-improvement, and
+   why, in [docs/decisions/2026-09-04-eval-gate.md](../docs/decisions/2026-09-04-eval-gate.md).
+
+   **Pairwise cases are cheap headroom on a small set.** A case may carry
+   `{"q":…,"gold":["loser"],"owner":"rightful-note"}`; the runner asserts the owner *outranks* the
+   named note, and the owner must be found — a question that matches nothing fails rather than
+   passing vacuously. These are scored apart from `recall@k`, where the inverted `gold` would count
+   as a miss by design, and they fail the run with or without `--min-rank1`.
+
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.
 
    ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
+
+0b. **Building a held-out set WITH the user — the labelling loop.**
+
+   This is the one part of this command that is not the agent's to do alone. Follow it literally.
+
+   **Never author both halves.** If the agent writes the questions *and* picks the gold notes, the
+   set is fitted to what the agent already knows, which is the failure #87 exists to prevent. The
+   agent mines and filters; the user decides which questions count and which note answers each one.
+
+   1. **Mine.** Find every transcript folder belonging to this project — Claude Code names them
+      after the cwd, so one project usually has several, including old ones under a previous home
+      directory. Pass them all in one comma-separated `--mine` call so deduplication spans them.
+
+   2. **Filter before showing anything.** Most candidates are instructions ("do 1", "open a PR"),
+      not questions. Drop them. Keep only prompts that a future session would plausibly ask *and*
+      that some note in this vault could answer. Roughly one in three survives.
+
+   3. **Read every survivor for secrets before it reaches the screen.** Transcripts contain whatever
+      was pasted into a session. One mining run here surfaced a 1Password item id. A candidate
+      carrying a token, a key, a customer name or an internal hostname is dropped, not redacted.
+
+   4. **Present in batches of about ten.** For each: the question, and the note the agent believes
+      answers it, with one line on why. Ask the user to keep, drop, or name a different note. Do not
+      proceed to the next batch until the current one is answered.
+
+   5. **Write and freeze.** Pipe the kept cases to `--author --kind held-out`, then `--freeze`.
+      Report the case count and the sha256. Quote that hash wherever a number from this set is
+      quoted; the questions stay machine-local.
+
+   6. **Say what it is worth.** With `n` cases, one case is `100/n` points of recall@k. Say that
+      number out loud, so nobody reads a two-case swing as a result.
+
+   `/memory:doctor` reports whether this project has a held-out set and whether it is frozen, which
+   is where a user finds out the gap exists.
 
 1. **Build a question set.** From notes under `Memory/<slug>/` and `Insights/<slug>/`, derive ~15–20 natural-language questions a future session would realistically ask — phrased in the user's words, deliberately **paraphrased**, NOT copied from note titles (paraphrase is what stresses retrieval). For each, record the note(s) that are the correct answer = the gold set.
 
