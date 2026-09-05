@@ -26,7 +26,6 @@ import {
   lexicalRank,
   goldCoverage,
   defaultCasesPath,
-  minePrompts,
   unscorableReason,
   pairwise,
   gateFailures,
@@ -37,6 +36,7 @@ import {
   GOLD_FLOOR,
   RECALL_KS,
 } from './lib/memory-eval.mjs';
+import { minePrompts } from './lib/memory-mine.mjs';
 
 // ---------------------------------------------------------------- setup
 

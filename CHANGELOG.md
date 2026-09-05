@@ -41,7 +41,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   held-out set is missing or unpinned. It names counts and kinds, never a question.
 
 - **`memory-eval.mjs --mine <dir>[,<dir>…]` extracts candidate eval questions from Claude Code
-  transcripts.** Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays
+  transcripts** (`scripts/lib/memory-mine.mjs`, its own module — it shares no import, constant or
+  helper with the eval scorer, which is the only reason they were ever one file). Emits `{q}` JSONL on stdout with **no gold note attached** — assigning gold stays
   the human's half, because a producer that wrote both halves is how this repo shipped inflated
   retrieval figures to five artefacts (#87). Takes a list of roots and deduplicates across them,
   since one project's history is spread over several cwd-slug folders: two such folders each report
