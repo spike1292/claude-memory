@@ -114,10 +114,11 @@ export function lexicalRank(docs, queries, k) {
   });
 }
 
-// An unscorable case stays in the denominator: the printed recall must not quietly improve by
-// dropping the cases the instrument could not measure. Counting them is the CALLER's, over the
-// whole set including pairwise cases, which this function does not see — a count here would be a
-// second definition of one quantity over a different population.
+// An unscorable case is scored here as an ordinary miss, deliberately: dropping it would make the
+// printed recall improve because the instrument broke. So the figure is never flattered by one —
+// but it is DILUTED by one, which is why the caller reports and blocks on them separately rather
+// than leaving the recall number to carry the news. Counting them is the caller's too, over the
+// whole set including the pairwise cases this function never sees.
 /**
  * @param {readonly { rank: number }[]} perCase
  * @returns {{ recall: Record<number, number>, mrr: number }}
@@ -155,8 +156,8 @@ export function defaultCasesPath(dir, slug, style, kind = KIND.tuning) {
   // `kindOfPath` reads the kind off the suffix, so `--style heldout` would build
   // `eval-cases-<slug>-heldout.jsonl` — a TUNING set that reports as held-out. Refusing the style is
   // cheaper than making the reader reconstruct slug and style from a path it is only given whole.
-  if (new RegExp(`${HELD_OUT_SUFFIX.replace('.jsonl', '')}$`).test(`-${style}`))
-    throw new Error(`--style may not end in "heldout": it would mislabel a tuning set as held-out`);
+  if (`-${style}`.endsWith(HELD_OUT_SUFFIX.replace('.jsonl', '')))
+    throw new Error(`--style "${style}" would mislabel a tuning set as held-out`);
   // Throwing, not defaulting: `--kind holdout` silently scoring the TUNING set would report a
   // number the operator reads as held out, which is worse than no number at all.
   if (kind !== KIND.tuning && kind !== KIND.heldOut)
@@ -267,8 +268,8 @@ function mineTurn(o) {
  *
  * Empty is the signal that separates a HUMAN turn from a tool result: both arrive as `type: user`,
  * because that is how the harness threads a tool's answer back. Counting tool results as turns
- * reported 37878 where the same machine held ~3200 human ones — the same overstatement as counting
- * lines, one level down.
+ * reported 37878 against the 3862 real ones in MINE_MIN's measurement — the same overstatement as
+ * counting lines, one level down.
  *
  * @param {any} o
  * @returns {string}
@@ -381,6 +382,7 @@ export const UNSCORABLE = /** @type {const} */ ({
   empty: 'retrieval returned nothing for this question',
   score: 'a returned result carries a non-finite score',
   noGold: 'this case names no gold note at all',
+  tied: 'every returned result scored the same, so the order is arrival order, not a ranking',
 });
 
 /**
@@ -395,6 +397,12 @@ export function unscorableReason(c, results, known) {
   if (!results.length) return UNSCORABLE.empty;
   if (results.some((r) => r.score !== undefined && !Number.isFinite(r.score)))
     return UNSCORABLE.score;
+  // A window that ties end to end is not a ranking. `--mode lexical` sorts a fully tied BM25 vector
+  // and returns it in directory arrival order, so a question sharing no token with any note scored
+  // recall@1 100% and the gate signed it. `isQuestion()` guards the case TEXT and cannot see this:
+  // the scores are 0, which is finite, and k results came back, so neither other arm fires.
+  const scores = results.map((r) => r.score).filter((x) => x !== undefined);
+  if (scores.length > 1 && scores.every((x) => x === scores[0])) return UNSCORABLE.tied;
   // `some` for gold, `every` for owner, and the asymmetry is the point. `gold` is a DISJUNCTION
   // everywhere else — `c.gold.includes(r.note)` scores a hit on ANY member — so one pruned member
   // leaves the case perfectly scorable, and the `some(!known)` this replaces reported a case that

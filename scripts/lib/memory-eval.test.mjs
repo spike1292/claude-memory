@@ -699,7 +699,7 @@ test('minePrompts counts lines and turns apart', () => {
     seen,
   );
   // Lines are mostly assistant and tool records: reporting them as turns overstated the pool by
-  // two orders of magnitude (212043 vs 3227 on 2026-09-04).
+  // two orders of magnitude (lines vs turns; see MINE_MIN).
   assert.deepEqual(t, { lines: 3, turns: 2, kept: 1 });
 });
 
@@ -723,8 +723,8 @@ test('a tool result is not a human turn', () => {
     ],
     seen,
   );
-  // Both arrive as `type: user`. Counting the first as a turn reported 37878 where the machine
-  // holds ~3227 (2026-09-04), which makes the dropped count meaningless.
+  // Both arrive as `type: user`. Counting the first as a turn reported 37878 against the real count
+  // in MINE_MIN's measurement, which makes the dropped count meaningless.
   assert.deepEqual(t, { lines: 2, turns: 1, kept: 1 });
 });
 
@@ -960,14 +960,19 @@ test('CLI scores a pairwise case by its owner, and fails the run when the owner 
 
 test('CLI does not let a pairwise case pass vacuously when nothing matches', () => {
   // The question matches no note's vocabulary, so the named note does not win — and a naive
-  // negative would call that a pass. It is a broken retrieval, and the run must say so.
+  // negative would call that a pass. It is a broken instrument: the window ties end to end, so the
+  // case is unscorable, leaves the pairwise tally rather than inflating it, and is named.
   const { run, casesPath } = scratch(
     ['owner-note', 'other-note'],
     [{ q: 'zzzz qqqq vvvv wwww xxxx', gold: ['other-note'], owner: 'owner-note' }],
     RANKED_BODIES,
   );
   const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
-  assert.equal(r.status, 1, `a vacuous negative must not pass:\n${r.stdout}${r.stderr}`);
+  assert.ok(!r.stdout.includes('1/1 passed'), `must not count as a pass:\n${r.stdout}`);
+  assert.match(r.stdout, /could not be scored/);
+  // …and under a floor it blocks the run, which is where an accept/reject decision is made.
+  const gated = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '0');
+  assert.equal(gated.status, 1, `the gate must fail closed on it:\n${gated.stdout}`);
 });
 
 test('CLI --freeze pins a case set and --run refuses it once edited', () => {
@@ -1098,4 +1103,105 @@ test('CLI warns when --kind disagrees with the file --cases named', () => {
   assert.match(r.stdout, /· tuning ·/);
   // No flag, no warning.
   assert.ok(!run('--run', '--cases', casesPath, '--mode', 'lexical').stderr.includes('ignored'));
+});
+
+test('a window that ties end to end is not a ranking', () => {
+  const known = new Set(['a', 'b']);
+  // --mode lexical returns a fully tied BM25 vector in directory arrival order, so a question
+  // sharing no token with any note scored recall@1 100% and the gate signed it.
+  const tied = [
+    { note: 'a', score: 0 },
+    { note: 'b', score: 0 },
+  ];
+  assert.equal(unscorableReason({ gold: ['a'] }, tied, known), UNSCORABLE.tied);
+  // Equal but non-zero is the same defect: the order is arbitrary either way.
+  assert.equal(
+    unscorableReason(
+      { gold: ['a'] },
+      [
+        { note: 'a', score: 2.5 },
+        { note: 'b', score: 2.5 },
+      ],
+      known,
+    ),
+    UNSCORABLE.tied,
+  );
+  // A real ranking, and a single result, both stay scorable.
+  assert.equal(
+    unscorableReason(
+      { gold: ['a'] },
+      [
+        { note: 'a', score: 2.5 },
+        { note: 'b', score: 0 },
+      ],
+      known,
+    ),
+    null,
+  );
+  assert.equal(unscorableReason({ gold: ['a'] }, [{ note: 'a', score: 0 }], known), null);
+});
+
+test('CLI refuses to mint a held-out set with --generate', () => {
+  // --generate extracts sentences the notes contain verbatim. Under the held-out name that is an
+  // inflated number with a held-out label and a publishable freeze hash, written by one process.
+  const { run } = scratch(['owner-note', 'other-note'], null, RANKED_BODIES);
+  const r = run('--generate', '4', '--kind', 'held-out');
+  assert.equal(r.status, 1, `--generate must not mint a held-out set:\n${r.stdout}`);
+  assert.match(r.stdout, /--mine/, 'the refusal must name the path that does work');
+  assert.equal(run('--generate', '4').status, 0, 'a tuning set still generates');
+});
+
+test('CLI gate refuses a question that matches nothing, instead of scoring arrival order', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: 'ζζζ zzqqxx0 ωωω', gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '100');
+  assert.equal(r.status, 1, `a tied window must not pass the gate at 100%:\n${r.stdout}`);
+  assert.match(r.stdout, /arrival order/);
+});
+
+test('CLI reports whether the set it scored was frozen', () => {
+  // Deleting the sidecar silently un-freezes. A consumer has to see that verification did not run.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [{ q: RANKED_Q, gold: ['owner-note'] }],
+    RANKED_BODIES,
+  );
+  assert.match(run('--run', '--cases', casesPath, '--mode', 'lexical').stdout, /frozen: no/);
+  assert.equal(
+    JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout).frozen,
+    null,
+  );
+  run('--freeze', '--cases', casesPath);
+  const env = JSON.parse(run('--run', '--cases', casesPath, '--mode', 'lexical', '--json').stdout);
+  assert.match(env.frozen, /^[0-9a-f]{64}$/);
+});
+
+test('CLI does not count an unscorable pairwise case as a pass', () => {
+  // `gold: []` makes `named` Infinity, so `owner < named` was vacuously true and the case landed
+  // in the tally line people paste.
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [
+      { q: RANKED_Q, gold: ['other-note'], owner: 'owner-note' },
+      { q: RANKED_Q, gold: [], owner: 'owner-note' },
+    ],
+    RANKED_BODIES,
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.match(r.stdout, /1\/1 passed/, `the unscorable case must leave the tally:\n${r.stdout}`);
+  assert.match(r.stdout, /names no gold note at all/);
+});
+
+test('CLI --mine refuses a file and survives an unreadable directory', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-mine-')));
+  tmpDirs.push(tmp);
+  const { run } = scratch(['owner-note'], null, RANKED_BODIES);
+  const file = path.join(tmp, 'one.jsonl');
+  fs.writeFileSync(file, '');
+  const r = run('--mine', file);
+  assert.equal(r.status, 1, 'a file is not a transcript directory');
+  assert.match(r.stdout, /DIRECTORIES/);
 });

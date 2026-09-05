@@ -221,13 +221,25 @@ if (flag('--mine')) {
   }
   // Recursive: Claude Code keeps one FOLDER per cwd-slug, so a useful root is the parent of many
   // folders as often as it is one folder.
-  const files = roots.flatMap((r) =>
-    fs
-      .readdirSync(r, { recursive: true })
-      .map(String)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => path.join(r, f)),
-  );
+  const notDir = roots.filter((r) => !fs.statSync(r).isDirectory());
+  if (notDir.length) {
+    console.log(`--mine takes transcript DIRECTORIES, not files: ${notDir.join(', ')}`);
+    process.exit(1);
+  }
+  const files = roots.flatMap((r) => {
+    try {
+      return fs
+        .readdirSync(r, { recursive: true })
+        .map(String)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => path.join(r, f));
+    } catch (e) {
+      // One unreadable subdirectory aborted the whole walk, where the per-file read below has
+      // always skipped and continued. Same policy, same reason: mining is best-effort.
+      console.error(`skipping ${r}: ${e instanceof Error ? e.message : e}`);
+      return [];
+    }
+  });
   const seen = new Set();
   let turns = 0;
   for (const f of files) {
@@ -333,6 +345,17 @@ if (flag('--author')) {
 }
 
 if (flag('--generate')) {
+  // A held-out set is mined and hand-labelled; `--generate` extracts sentences the note contains
+  // verbatim (its own banner below: BM25 finds them trivially, 97.5%). Generating one under the
+  // held-out name would put an inflated number behind a held-out label and a publishable freeze
+  // hash — the producer-writes-both-halves failure #87 exists to stop, one flag away.
+  if (CASE_KIND === KIND.heldOut) {
+    console.log(
+      '--generate cannot make a held-out set: it extracts sentences the notes already contain.\n' +
+        'Mine candidates with --mine, assign gold by hand, then --author --kind held-out.',
+    );
+    process.exit(1);
+  }
   // `--generate` may be bare, so `val()` cannot refuse a missing value here — and what follows is
   // then the NEXT FLAG. `Number('--force')` is NaN, the stride is NaN, the sample loop never runs,
   // and `--generate --force` wrote an EMPTY case set over a real one and exited 0. A count is
@@ -404,9 +427,19 @@ const casesText = fs.readFileSync(CASES, 'utf8');
 // A frozen set that no longer hashes to its sidecar is not this set. Refuse rather than score: the
 // only thing a held-out number is worth is the guarantee that the questions did not move.
 const sidecar = `${CASES}.sha256`;
+let frozen = null;
 if (fs.existsSync(sidecar)) {
-  const want = fs.readFileSync(sidecar, 'utf8').trim();
+  // Unreadable or a directory is bad input, the way a mistyped --cases is — the same lesson the
+  // --cases branch above already learned, on a path added later.
+  let want;
+  try {
+    want = fs.readFileSync(sidecar, 'utf8').trim();
+  } catch (e) {
+    console.log(`${sidecar} exists but cannot be read: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  }
   const got = casesHash(casesText);
+  frozen = got;
   if (want !== got) {
     console.log(
       `${CASES} has changed since it was frozen.\n  frozen ${want}\n  now    ${got}\n` +
@@ -543,7 +576,9 @@ const scored = cases.map((c, i) => {
   };
 });
 const perCase = scored.filter((c) => !c.pair);
-const pairs = scored.filter((c) => c.pair);
+// Unscorable pairwise cases leave BOTH sides of the tally: `gold: []` makes `named` Infinity, so
+// `owner < named` is vacuously true and the case was counted as a pass in the line people paste.
+const pairs = scored.filter((c) => c.pair && !c.unscorable);
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
@@ -589,6 +624,10 @@ if (flag('--json')) {
         // Separate keys, never folded into `n` or into the misses: a machine reading this envelope
         // has to be able to tell a case that scored zero from one that was never scored at all.
         unscorable: unscorable.length,
+        // Null when no sidecar exists. Deleting one silently un-freezes a set, so a consumer has to
+        // be able to see that verification did not happen — without this the two runs were
+        // byte-identical.
+        frozen,
         pairwise: { total: pairs.length, failed: pairFails.length },
         gate: failures,
       },
@@ -606,6 +645,7 @@ console.log(
 // in #97 is a figure attributed to a case set nobody checked; a number printed beside its source
 // cannot be silently misread, whatever routed us to the wrong one.
 console.log(`  cases: ${CASES}`);
+console.log(frozen ? `  frozen: ${frozen}` : '  frozen: no (this set is not pinned)');
 // Printed only when something was measured. metrics() divides by `|| 1`, so an all-pairwise set
 // rendered a full bar chart of 0.0% that no case had contributed to.
 if (!perCase.length) console.log('  no recall cases in this set — pairwise assertions only');

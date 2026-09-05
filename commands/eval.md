@@ -79,12 +79,21 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    the result" is enforced rather than promised. Editing a frozen set on purpose is
    `--author --force` followed by `--freeze --force`; the old hash stops being valid at that point.
    `--style` may not end in `heldout`, since that would build a tuning path the reader would read
-   as held out.
+   as held out, and `--generate` refuses `--kind held-out` outright: it extracts sentences the notes
+   already contain, so generating one would put an inflated number behind a held-out label and a
+   publishable hash. Every run prints `frozen:` — the hash, or `no` — because deleting a sidecar
+   un-freezes a set silently and a consumer has to see that verification did not happen.
 
    **`--min-rank1 <percent>` turns a report into a gate** — below the floor the process exits
    non-zero, so CI or a tuning loop fails instead of printing a regression nobody reads. Under a
-   floor the gate **fails closed**: a case that could not be scored at all blocks the run and is
-   named in the output, rather than being averaged away. That means no results, a non-finite score,
+   floor the gate **fails closed**: a case that could not be scored at all blocks the run and is named
+   in the output. It still counts as a miss in `recall@k` — an instrument that broke may never
+   flatter the number — so read the block and the count, not the percentage. Unscorable means: no
+   results, a non-finite score, a window that ties end to end (a `--mode lexical` question sharing
+   no token with any note scores every candidate 0, and the "ranking" is directory arrival order),
+   a case naming no gold note, or one whose gold notes have *all* gone from the vault. One surviving
+   gold member is enough, since `gold` is a disjunction. A set with no recall cases at all gets no
+   floor, rather than failing on a zero nobody measured. That means no results, a non-finite score,
    a case naming no gold note, or one whose gold notes have *all* gone from the vault — one
    surviving member is enough to score a case, since `gold` is a disjunction. A set with no recall
    cases at all gets no floor applied, rather than failing on a zero nobody measured. Soft rather than strict-improvement, and why, in
