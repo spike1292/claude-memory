@@ -62,9 +62,14 @@ softened.**
    - Note which members are *superseded* rather than merged in (`(superseded YYYY-MM-DD by [[…]])`).
    - Frontmatter: `type: permanent`, `confidence:`, `created`/`updated`, and a trailing
      `_Also asked as: …_` line in **outsider vocabulary** — the words someone uses before they know
-     this note exists. Replace the `--propose` skeleton's `type: promotion-candidate` frontmatter
-     with this shape entirely — `/memory:adopt` reads `type: permanent` as its "this is drafted"
-     signal and refuses anything still shaped like the skeleton.
+     this note exists. Replace the `--propose` skeleton's `type: promotion-candidate` and `status:`
+     lines with this shape — `/memory:adopt` reads `type: permanent` as its "this is drafted" signal
+     and refuses anything still shaped like the skeleton. **Keep the skeleton's `members:` list
+     byte-for-byte, alongside the new fields — do not remove it.** It carries no reader-facing
+     information; it is how a later `--propose`/`/memory:prune` run still recognises this proposal
+     after step 5's rename, by member set rather than by filename. Dropping it reopens the exact bug
+     the rename step exists to work around: a routine re-propose would no longer find this file and
+     would mint a duplicate skeleton for a topic that is already drafted.
 
 4. **Report coverage before writing.** List which members contributed a claim and which contributed
    nothing. A member that contributed nothing is a signal: either the cluster is too loose, or that

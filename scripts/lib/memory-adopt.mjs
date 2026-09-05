@@ -17,10 +17,10 @@ export function checkDraftStatus(raw) {
   return 'wrong-type';
 }
 
-/** @typedef {{ failures: string[] }} GateResult */
+/** @typedef {{ failures: string[], recall1?: number | null, frozen?: string | null }} GateResult */
 /** @typedef {{ readFile: (p: string) => string, writeFile: (p: string, s: string) => void, removeFile: (p: string) => void, exists: (p: string) => boolean, reindex: () => void, runGate: () => GateResult }} AdoptIO */
 /** @typedef {{ stagedPath: string, targetPath: string, dryRun: boolean, force: boolean }} AdoptOpts */
-/** @typedef {{ status: 'undrafted' | 'wrong-type' | 'exists' | 'dry-run' | 'rejected' | 'adopted', reasons?: string[] }} AdoptResult */
+/** @typedef {{ status: 'undrafted' | 'wrong-type' | 'exists' | 'dry-run' | 'rejected' | 'adopted', reasons?: string[], recall1?: number | null, frozen?: string | null }} AdoptResult */
 
 /**
  * Copy staged -> permanent/, reindex, run the held-out gate, roll back on failure. A rejected
@@ -51,5 +51,5 @@ export function adopt(io, opts) {
     return { status: 'rejected', reasons: gate.failures };
   }
   io.removeFile(opts.stagedPath);
-  return { status: 'adopted' };
+  return { status: 'adopted', recall1: gate.recall1 ?? null, frozen: gate.frozen ?? null };
 }

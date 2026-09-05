@@ -90,7 +90,12 @@ const result = adopt(
             encoding: 'utf8',
           },
         );
-        return { failures: JSON.parse(out).gate ?? [] };
+        const env = JSON.parse(out);
+        return {
+          failures: env.gate ?? [],
+          recall1: env.recall?.[1] ?? null,
+          frozen: env.frozen ?? null,
+        };
       } catch (e) {
         const stdout = /** @type {{ stdout?: string }} */ (e).stdout;
         try {
@@ -127,6 +132,12 @@ switch (result.status) {
     );
     process.exit(1);
   case 'adopted':
-    console.log(`adopted: ${target}\nremoved staged proposal: ${staged}`);
+    console.log(
+      `adopted: ${target}\nremoved staged proposal: ${staged}` +
+        (result.recall1 != null
+          ? `\nheld-out recall@1: ${(result.recall1 * 100).toFixed(1)}%`
+          : '') +
+        (result.frozen ? `\nheld-out set: ${result.frozen}` : '\nheld-out set: not frozen'),
+    );
     process.exit(0);
 }

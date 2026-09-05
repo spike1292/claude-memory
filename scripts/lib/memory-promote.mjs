@@ -75,8 +75,10 @@ export function renderProposal(gap, slug) {
     `## ${slug} — untitled promotion candidate`,
     '',
     '_Draft this with `/memory:synthesize` — cite every claim, mark unsourced synthesis explicitly.',
-    'Replace this frontmatter with the permanent shape (`type: permanent`, `confidence`, dates,',
-    '`_Also asked as:_`) when drafting; /memory:adopt refuses a note still shaped like this one._',
+    'Add the permanent shape around this frontmatter (`type: permanent`, `confidence`, dates,',
+    '`_Also asked as:_`) when drafting, but KEEP the `members:` field byte-for-byte — it is how a',
+    'later --propose recognises this proposal after it gets renamed, not something a reader needs.',
+    '/memory:adopt refuses a note still shaped like this one._',
     '',
     GEN_END,
     '',
@@ -84,6 +86,44 @@ export function renderProposal(gap, slug) {
     '',
   ].join('\n');
   return `${front}\n\n${body}`;
+}
+
+/**
+ * The note names a proposal's frontmatter `members:` list carries — order-independent identity for
+ * a cluster, so a proposal survives being renamed away from its `candidate-*` filename (see
+ * proposeStagingNotes: /memory:synthesize renames the file once drafted, and looking it up by name
+ * alone would miss it there).
+ * @param {string} raw
+ * @returns {Set<string>}
+ */
+export function memberNamesOf(raw) {
+  const fm = raw.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? '';
+  const names = new Set();
+  for (const m of fm.matchAll(/\[\[([^\]]+)\]\]/g)) names.add(m[1]);
+  return names;
+}
+
+/**
+ * Find whichever file in `dir` already covers this exact member set, whatever it's named — a
+ * renamed, drafted proposal for the same cluster included. Exact set equality only: a cluster whose
+ * membership has since changed is treated as a new candidate rather than guessed at.
+ * @param {string} dir
+ * @param {ReadonlySet<string>} wanted
+ * @returns {{ file: string, raw: string } | null}
+ */
+export function findExistingProposal(dir, wanted) {
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+  } catch {
+    return null;
+  }
+  for (const file of names) {
+    const raw = fs.readFileSync(path.join(dir, file), 'utf8');
+    const have = memberNamesOf(raw);
+    if (have.size === wanted.size && [...wanted].every((n) => have.has(n))) return { file, raw };
+  }
+  return null;
 }
 
 /**
@@ -125,25 +165,38 @@ export function proposeStagingNotes(vault, slug, gaps) {
   const out = [];
   for (const gap of gaps) {
     const topic = proposalSlug(gap.members);
-    const file = `${topic}.md`;
+    const deterministicFile = `${topic}.md`;
+    const deterministicFull = path.join(dir, deterministicFile);
+    const wanted = new Set(gap.members.map((m) => m.note));
+    // Look for the SAME cluster under any name first — /memory:synthesize renames the file once
+    // drafted, so a lookup keyed only on the fresh candidate-slug path would miss a renamed,
+    // already-drafted proposal and mint a duplicate skeleton beside it. Falling back to the exact
+    // deterministic path keeps the original safety net for anything sitting there that the member
+    // search didn't recognize (e.g. no parseable `members:` list at all).
+    const found =
+      findExistingProposal(dir, wanted) ??
+      (fs.existsSync(deterministicFull)
+        ? { file: deterministicFile, raw: fs.readFileSync(deterministicFull, 'utf8') }
+        : null);
+    const file = found?.file ?? deterministicFile;
     const full = path.join(dir, file);
     const fresh = renderProposal(gap, topic);
+
+    if (found && checkDraftStatus(found.raw) !== 'undrafted') {
+      out.push({
+        file,
+        status: 'drafted',
+        members: gap.members.length,
+        bestScore: gap.best.s.toFixed(3),
+      });
+      continue;
+    }
     let final = fresh;
     /** @type {ProposeResult['status']} */
     let status = 'written';
-    if (fs.existsSync(full)) {
-      const existing = fs.readFileSync(full, 'utf8');
-      if (checkDraftStatus(existing) !== 'undrafted') {
-        out.push({
-          file,
-          status: 'drafted',
-          members: gap.members.length,
-          bestScore: gap.best.s.toFixed(3),
-        });
-        continue;
-      }
-      final = mergeProposal(existing, fresh);
-      status = final === existing ? 'unchanged' : 'updated';
+    if (found) {
+      final = mergeProposal(found.raw, fresh);
+      status = final === found.raw ? 'unchanged' : 'updated';
     }
     if (status !== 'unchanged') fs.writeFileSync(full, final);
     out.push({ file, status, members: gap.members.length, bestScore: gap.best.s.toFixed(3) });

@@ -143,6 +143,29 @@ test('proposeStagingNotes never regenerates a proposal /memory:synthesize has al
   assert.equal(fs.readFileSync(full, 'utf8'), drafted);
 });
 
+test('proposeStagingNotes finds a drafted proposal after it has been renamed away from candidate-*.md', () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-test-'));
+  const dir = stagingDir(vault, 's');
+  const [first] = proposeStagingNotes(vault, 's', [gap()]);
+  const oldFull = path.join(dir, first.file);
+  const renamed = path.join(dir, 'the-real-topic-slug.md');
+  // commands/synthesize.md instructs keeping `members:` byte-for-byte across drafting — that field,
+  // not a body citation, is how a rename is recognised.
+  const drafted = `---\ntype: permanent\nconfidence: high\nmembers:\n  - "[[2026-08-19-re-grep-after-any-rename-or-removal]] (Patterns)"\n  - "[[2026-08-19-re-grep-the-entire-repo-after-any-rename-or-removal]] (Decisions)"\n---\n\n## Real title\n\nCited content.\n\n${GEN_END}\n`;
+  fs.renameSync(oldFull, renamed); // /memory:synthesize's `mv candidate-*.md <topic-slug>.md`
+  fs.writeFileSync(renamed, drafted);
+
+  const [second] = proposeStagingNotes(vault, 's', [{ ...gap(), typical: 0.99 }]);
+  assert.equal(second.status, 'drafted');
+  assert.equal(second.file, 'the-real-topic-slug.md', 'found by member set, not by the old name');
+  assert.equal(fs.readFileSync(renamed, 'utf8'), drafted, 'left untouched');
+  assert.deepEqual(
+    fs.readdirSync(dir),
+    ['the-real-topic-slug.md'],
+    'no duplicate candidate-*.md skeleton was minted beside it',
+  );
+});
+
 test('proposeStagingNotes leaves an unrecognized file alone rather than guessing', () => {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-test-'));
   const [first] = proposeStagingNotes(vault, 's', [gap()]);

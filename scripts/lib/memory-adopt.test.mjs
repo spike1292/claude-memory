@@ -156,6 +156,34 @@ test('adopt writes to permanent/, reindexes, and clears the staging file on a pa
   assert.deepEqual(calls.removed, ['/staged.md']);
 });
 
+test('adopt reports the held-out recall and frozen hash on success, so the caller can quote them', () => {
+  const { io } = fakeIo({
+    runGate: () => ({ failures: [], recall1: 0.82, frozen: 'abc123' }),
+  });
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: false,
+  });
+  assert.equal(r.status, 'adopted');
+  assert.equal(r.recall1, 0.82);
+  assert.equal(r.frozen, 'abc123');
+});
+
+test('adopt reports null recall/frozen when the gate result omits them, rather than throwing', () => {
+  const { io } = fakeIo(); // default runGate returns only { failures: [] }
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: false,
+  });
+  assert.equal(r.status, 'adopted');
+  assert.equal(r.recall1, null);
+  assert.equal(r.frozen, null);
+});
+
 test('adopt rolls back permanent/ and reindexes again on a failing gate, and names the reasons', () => {
   const { io, calls } = fakeIo({
     runGate: () => {
