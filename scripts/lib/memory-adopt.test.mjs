@@ -23,6 +23,7 @@ function fakeIo(overrides = {}) {
   const calls = { reindex: 0, gate: 0, removed: /** @type {string[]} */ ([]) };
   return {
     calls,
+    files,
     io: {
       readFile: (/** @type {string} */ p) => files[p],
       writeFile: (/** @type {string} */ p, /** @type {string} */ s) => {
@@ -89,6 +90,44 @@ test('adopt --force overwrites an existing target and still runs the gate', () =
   });
   assert.equal(r.status, 'adopted');
   assert.equal(calls.gate, 1);
+});
+
+test('adopt --force RESTORES the previous permanent/ content when the gate rejects, instead of deleting it', () => {
+  const OLD = '---\ntype: permanent\n---\n\nold adopted content\n';
+  const { io, files, calls } = fakeIo({
+    runGate: () => {
+      calls.gate++;
+      return { failures: ['recall@1 dropped'] };
+    },
+  });
+  files['/permanent/x.md'] = OLD;
+
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: true,
+  });
+  assert.equal(r.status, 'rejected');
+  assert.ok(!calls.removed.includes('/permanent/x.md'), 'must not delete a note that pre-existed');
+  assert.equal(files['/permanent/x.md'], OLD, 'the pre-existing note is restored, not lost');
+});
+
+test('adopt --force still deletes on reject when there was nothing there before (a fresh adopt)', () => {
+  const { io, calls } = fakeIo({
+    runGate: () => {
+      calls.gate++;
+      return { failures: ['recall@1 dropped'] };
+    },
+  });
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: true,
+  });
+  assert.equal(r.status, 'rejected');
+  assert.deepEqual(calls.removed, ['/permanent/x.md']);
 });
 
 test('adopt --dry-run writes nothing and never runs the gate', () => {

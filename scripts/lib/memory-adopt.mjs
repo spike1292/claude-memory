@@ -34,14 +34,19 @@ export function adopt(io, opts) {
   const draft = checkDraftStatus(raw);
   if (draft === 'undrafted') return { status: 'undrafted' };
   if (draft === 'wrong-type') return { status: 'wrong-type' };
-  if (io.exists(opts.targetPath) && !opts.force) return { status: 'exists' };
+  const targetExisted = io.exists(opts.targetPath);
+  if (targetExisted && !opts.force) return { status: 'exists' };
   if (opts.dryRun) return { status: 'dry-run' };
+  // --force overwrites an existing permanent/ note; a rejected gate must restore it, not delete
+  // it, or a failed re-draft of an already-adopted topic loses the note that was there before.
+  const previous = targetExisted ? io.readFile(opts.targetPath) : null;
 
   io.writeFile(opts.targetPath, raw);
   io.reindex();
   const gate = io.runGate();
   if (gate.failures.length) {
-    io.removeFile(opts.targetPath);
+    if (previous == null) io.removeFile(opts.targetPath);
+    else io.writeFile(opts.targetPath, previous);
     io.reindex();
     return { status: 'rejected', reasons: gate.failures };
   }
