@@ -1,9 +1,5 @@
-// The active embedding model, in ONE place — see CLAUDE.md's Retrieval section (~line 196) for why
-// a drifting default is silent rather than an error.
-//
-// Changing this is a real change: a different model means a different index (a full rebuild) and
-// different dupe/cluster thresholds — see MODELS in models.mjs. Do not change it without
-// a case-set run: memory-eval.mjs --run --cases "$CLAUDE_MEMORY_HOME/eval/<set>.jsonl"
+// The active embedding model, in ONE place — CLAUDE.md's Retrieval section explains why a drifting default is silent rather than an error.
+// Changing this is a real change (different model = different index, different dupe/cluster thresholds in models.mjs) — verify with memory-eval.mjs --run --cases "$CLAUDE_MEMORY_HOME/eval/<set>.jsonl" first.
 import { config } from '../../hooks/lib/paths.mjs';
 
 export const DEFAULT_MODEL = 'bge-m3';

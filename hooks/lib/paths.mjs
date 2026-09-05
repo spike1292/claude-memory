@@ -116,12 +116,7 @@ const positiveMs = (envName, configKey, fallback) => {
 
 /**
  * How long a resident --serve sits idle before dropping the MODEL (but staying alive).
- *
- * The model is the expensive part by an order of magnitude: ~1.3GB of onnxruntime session and q8
- * weights, against ~15MB of vectors for a 3400-chunk index. Releasing the session
- * (`pipeline.dispose()` → `InferenceSession.release()`) gives that back while the process keeps its
- * socket, its loaded indexes and its BM25 tokens — so the next question costs a model load and not
- * a cold start, and questions the keyword arm can answer cost nothing at all.
+ * See CLAUDE.md's "modelIdleMs (5 min) unloads the model" note for the two-timer rationale.
  */
 export function modelIdleMs() {
   return positiveMs('MEMORY_MODEL_IDLE_MS', 'modelIdleMs', 5 * 60 * 1000);
@@ -129,15 +124,8 @@ export function modelIdleMs() {
 
 /**
  * How long a resident --serve sits idle before exiting entirely.
- *
- * 30 minutes, where a *model-holding* server had to be capped at 5: once the model unloads on its
- * own timer the process is ~100-200MB, so keeping it costs little and saves the index load on
- * return. Both numbers are the same trade seen from two sides — this one now guards a cheap
- * process, not an expensive one.
- *
- * Reads config.json and not just the env var because hooks are what set this, and a value written
- * to settings.json's env block does not reach the session that wrote it — the same trap that once
- * pointed a relocating hook at an empty vault.
+ * Reads config.json, not just the env var — hooks set this, and a value written to
+ * settings.json's `env` block does not reach the session that wrote it.
  */
 export function serveIdleMs() {
   return positiveMs('MEMORY_SERVE_IDLE_MS', 'serveIdleMs', 30 * 60 * 1000);
@@ -145,35 +133,21 @@ export function serveIdleMs() {
 
 /**
  * How many days of dated JSONL logs (`recall-<date>`, `hooks-<date>`) are kept under `logs/`.
- *
- * 0 is legitimate — keep today only — so this cannot use `positiveMs`'s `> 0` guard.
- *
- * A non-digit value falls back to the default. A digits-only value is CLAMPED to a century, which
- * is the "keep everything" the person typing twelve digits meant, and never falls back — falling
- * back would delete 30 days for someone asking to delete nothing.
- *
- * The clamp exists because the alternative was a throw. `999999999999` days makes an Invalid Date,
- * whose `toISOString()` throws inside `pruneDatedLogs()`; the logs survived that, but the pass was
- * abandoned before it swept its own day-claim markers, so `logs/` accumulated a dotfile a day —
- * the unbounded directory this whole change exists to close, reappearing in a corner of it
- * (found in review, 2026-08-21). A value that cannot make a date is the bug; clamping removes it.
+ * 0 is legitimate (keep today only), so this cannot use `positiveMs`'s `> 0` guard. A non-digit
+ * value falls back to 30; a digits-only value is CLAMPED to a century rather than falling back,
+ * since an oversized value means "keep everything" and an Invalid Date would otherwise throw
+ * inside `pruneDatedLogs()` (found in review, 2026-08-21).
  */
 const MAX_RETENTION_DAYS = 36500;
 export function logRetentionDays() {
-  // An EXPORTED-BUT-EMPTY env var is unset, not a value. `??` alone keeps `''`, so a shell that
-  // exports the name without a value — or a `hooks.json` env block with a blank string — shadowed
-  // config.json and silently reinstated the default (found by this function's own test).
+  // An EXPORTED-BUT-EMPTY env var is unset, not a value — `??` alone keeps '' and shadows
+  // config.json (found by this function's own test).
   const env = process.env.MEMORY_LOG_RETENTION_DAYS;
   const raw = env === undefined || env.trim() === '' ? config().logRetentionDays : env;
-  // Digits only, NOT `Number()`. Measured here on 2026-08-21, the same defect the vault pruner
-  // records: `MEMORY_LOG_RETENTION_DAYS=" "` casts to 0 and passes an `isInteger && >= 0` guard,
-  // so a stray space in a config deletes every log but today's, silently.
+  // Digits only, not Number() — a stray space would otherwise cast to 0 and delete every log but
+  // today's, silently (2026-08-21, the same defect the vault pruner records).
   const s = String(raw ?? '').trim();
   if (!/^\d+$/.test(s)) return 30;
-  // `Math.min` is the whole clamp. A digits-only string parses to an exact number, a huge rounded
-  // one, or Infinity, and all three are far above the ceiling — so no length test is needed, and
-  // the one that stood here read `0000000007` as ten characters and gave a century to someone
-  // asking for a week (found in review, 2026-08-21).
   return Math.min(Number(s), MAX_RETENTION_DAYS);
 }
 
@@ -258,20 +232,10 @@ function writeKeyCache(all) {
   }
 }
 
-/**
- * Normalise a git remote URL into a project key.
- *
- * This was five `sed -e` expressions in vault-env.sh until 2026-08-18, and Node forked bash to run
- * them so there would be ONE implementation. The fork was the expensive half of that bargain, so
- * the pipeline moved here instead and the shell side now asks Node. Each step below is the sed
- * expression it replaces, in the same order — sed applies -e in sequence to the same line.
- *
- * ASCII lowercase on purpose, NOT toLowerCase(): the shell used `tr 'A-Z' 'a-z'`, which is
- * ASCII-only, while toLowerCase() is unicode-aware and maps things like 'İ' to a two-code-point
- * sequence. This is the same porting hazard as JS `\w` being ASCII where Python's is not, in the
- * opposite direction — a host name with a non-ASCII capital would key differently and silently
- * split one project's vault folder in two.
- */
+// Normalise a git remote URL into a project key. Each step below is the `sed -e` expression it
+// replaced in vault-env.sh, in the same order sed applied them.
+// ASCII lowercase on purpose, not toLowerCase() — toLowerCase() is unicode-aware and would key a
+// non-ASCII capital differently, silently splitting one project's vault folder in two.
 /** @param {string} t */
 const asciiLower = (t) => t.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
 
@@ -327,16 +291,11 @@ export function computeProjectKey(dir) {
 
 /**
  * Stable per-project identifier, cached on disk.
- *
- * The cache is why this is not just `computeProjectKey`: short-lived hooks cannot reuse the
- * in-process Map, and forking git per hook was the single largest cost in the per-prompt recall
- * hook and in the per-write validate-note hook — measured 72 ms on 2026-08-17, three times what
- * switching the whole runtime to Bun would have saved. (That 72 ms was a bash fork wrapping a git
- * fork; the bash half went on 2026-08-18, the git half did not, so the cache still earns its keep.)
- *
- * Validated against a stamp taken from the git config that determines the key: `git remote set-url`
- * rewrites that file, so a changed remote is a miss on the next call rather than a stale key
- * forever. See the stamp construction below for why all three fields are needed.
+ * The cache is why this is not just `computeProjectKey`: short-lived hooks can't reuse the
+ * in-process Map, and forking git per hook was the largest cost in the per-prompt recall hook —
+ * 72 ms measured 2026-08-17, most of it a bash fork wrapping a git fork (the bash half is gone
+ * since 2026-08-18; the git half is what this still saves). Validated against a stamp on the git
+ * config that decides the key, so `git remote set-url` is a miss next call, not a stale key forever.
  *
  * @param {string} [dir]
  * @returns {string}
@@ -350,10 +309,9 @@ export function projectKey(dir = process.cwd()) {
   if (cfg === undefined) {
     stamp = '0'; // no repo: key is a pure function of the path
   } else if (typeof cfg === 'string') {
-    // "<whole seconds>:<size>:<inode>" — all three fields load-bearing; seconds alone leave a
-    // permanent hole and inode catches what size misses (same-second, byte-identical rename).
-    // Full derivation: docs/decisions/2026-08-17-shell-vs-node-hooks.md, "Shell hooks share the
-    // Node project-key cache".
+    // "<whole seconds>:<size>:<inode>" — all three load-bearing; see CLAUDE.md's
+    // "project-key cache ... is now Node's alone" note, and the derivation in
+    // docs/decisions/2026-08-17-shell-vs-node-hooks.md.
     try {
       const st = fs.statSync(cfg);
       stamp = `${Math.floor(st.mtimeMs / 1000)}:${st.size}:${st.ino}`;
@@ -377,14 +335,9 @@ export function projectKey(dir = process.cwd()) {
 
 /**
  * Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after.
- *
- * Every character outside `[A-Za-z0-9_-]`, not just `/` — verified against Claude Code's
- * own folder names: a dotted path (e.g. a worktree checked out under a hidden directory
- * like `~/.some-tool/worktrees/...`) has `/.` become `--`, and a version-numbered path
- * (`.../memory-0.6.0`) comes out `.../memory-0-6-0`, while `_` in a macOS tmp path
- * (`.../folders/4c/xyz_50pp8w.../T`) survives untouched. A `/`-only replace left every
- * dotted-path checkout's `memory` symlink pointing at a slug Claude Code never writes
- * transcripts into.
+ * Every character outside `[A-Za-z0-9_-]`, not just `/` — a `/`-only replace left a dotted-path
+ * checkout's `memory` symlink pointing at a slug Claude Code never wrote transcripts into
+ * (CHANGELOG.md, fixed alongside #125).
  *
  * @param {string} [dir]
  * @returns {string}
@@ -394,14 +347,9 @@ export function legacyKey(dir = process.cwd()) {
 }
 
 /**
- * Point transformers.js at $CLAUDE_MEMORY_HOME/models instead of its default cache inside
- * node_modules/@huggingface/transformers/.cache. Without this the ~722 MB of ONNX weights sit
- * in the plugin's version-pinned dir and are re-downloaded on every `/plugin update`.
- *
- * It must be done by mutating the library's own `env`, NOT via HF_HOME/TRANSFORMERS_CACHE:
- * transformers.js v4 ignores both (verified 2026-08-15 — env.cacheDir still resolved to the
- * package dir with them set). Call this with the imported module, before the first pipeline().
- *
+ * Points transformers.js at $CLAUDE_MEMORY_HOME/models rather than its default cache inside the
+ * plugin dir (see CLAUDE.md's "paths.useModelCache() exists because..." note — v4 ignores
+ * HF_HOME/TRANSFORMERS_CACHE, so mutating `env.cacheDir` is the only way). Call before pipeline().
  * @param {{ env: { cacheDir: string|null } }} transformers
  * @returns {string}
  */

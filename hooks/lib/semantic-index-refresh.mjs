@@ -10,9 +10,8 @@ import path from 'node:path';
 import { vault, projectKey, legacyKey, stateDir, scriptsDir, pluginRoot } from './paths.mjs';
 import { detach, logBanner } from './hook-io.mjs';
 
-// The reasons are constants because outcomeOf() below decides on them. Two literals — one here,
-// one there — is a drift that no test written against a literal can see: reword this string and a
-// dead dependency starts reporting as a healthy hook, with the suite green.
+// Constants, not literals — outcomeOf() below decides on them too; see CLAUDE.md's
+// "reason string that an outcome mapper decides on" rule.
 export const REASONS = {
   noVault: 'no vault memory for this project',
   noScript: 'indexer script missing',
@@ -38,11 +37,8 @@ const isDir = (p) => {
 
 /**
  * The slug whose vault memory actually exists on disk, or null.
- *
- * Tolerates a not-yet-migrated vault the same way insights-surface does: vault-memory-sync performs
- * the legacy_key -> project_key rename, but SessionStart hook order is not guaranteed, so fall back
- * for this one session rather than indexing nothing.
- *
+ * Falls back to the legacy slug for this one session: vault-memory-sync's legacy_key ->
+ * project_key rename may not have run yet, since SessionStart hook order is not guaranteed.
  * @param {string} cwd
  * @param {string} [vaultRoot]
  * @returns {string | null}
@@ -62,12 +58,9 @@ export function resolveSlug(cwd, vaultRoot = vault()) {
 
 /**
  * Is the embedding runtime actually installed?
- *
- * `existsSync` DEREFERENCES, which is what this check needs: since 0.3.1 the plugin's node_modules
- * is a symlink into $CLAUDE_MEMORY_HOME (scripts/share-modules.mjs), and a check that stats the
- * link instead of the target is exactly the bug that made /memory:doctor report 0 MB on 2026-08-18.
- * Do not "optimise" this to lstat.
- *
+ * `existsSync` dereferences on purpose: node_modules is a symlink into $CLAUDE_MEMORY_HOME
+ * (scripts/share-modules.mjs), and lstat-ing the link instead of the target is the bug that made
+ * /memory:doctor report 0 MB on 2026-08-18.
  * @param {string} [root]
  * @returns {boolean}
  */
@@ -76,9 +69,8 @@ export function runtimeInstalled(root = pluginRoot) {
 }
 
 /**
- * Decide, without doing anything. Pure enough to test against a temp vault: it reads the
- * filesystem and returns a verdict, but spawns nothing and writes nothing.
- *
+ * Decide without acting — reads the filesystem, spawns and writes nothing, so it's testable
+ * against a temp vault.
  * @param {string} cwd
  * @param {{ vaultRoot?: string }} [options]
  * @returns {RefreshPlan}
@@ -90,9 +82,8 @@ export function plan(cwd, { vaultRoot = vault() } = {}) {
   const script = path.join(scriptsDir, 'memory-semantic.mjs');
   if (!fs.existsSync(script)) return { run: false, reason: REASONS.noScript };
 
-  // The embedding runtime is an npm install, and Claude Code's plugin auto-install skips lifecycle
-  // scripts — so onnxruntime-node's native binary may be missing even when the package dir exists.
-  // Say so once instead of failing silently at query time.
+  // `npm ci` skips lifecycle scripts (docs/architecture.md, Flow 5), so the native binary can be
+  // missing even when the package dir exists. Say so once instead of failing at query time.
   if (!runtimeInstalled())
     return {
       run: false,
@@ -111,16 +102,8 @@ export function plan(cwd, { vaultRoot = vault() } = {}) {
 
 /**
  * The environment the detached indexer runs under.
- *
- * TWO variables, not one. The session id alone would be INHERITED by any indexer further down the
- * tree — the distiller runs one of its own at the end of every distillation — and that run would
- * then be logged as THIS hook's worker, filing a SessionEnd re-index under SessionStart. Observed
- * 2026-08-21, in the end-to-end check for this change. The marker says "this indexer is this hook's
- * worker"; the session id only says which run it belongs to.
- *
- * `MEMORY_INDEX_HOOK` is read by scripts/memory-semantic.mjs and nowhere else; a test pins the two
- * spellings together, since a rename on one side would silently stop the worker line being written.
- *
+ * Two variables, not one — the session id alone is inherited by the distiller's own re-index too;
+ * see CLAUDE.md's "indexer's line is guarded by MEMORY_INDEX_HOOK" note.
  * @param {string} [session]
  * @returns {Record<string, string | undefined>}
  */
@@ -130,19 +113,14 @@ export function workerEnv(session) {
 
 /**
  * Plan, then act.
- *
- * No lock here. The indexer takes its own cross-process, per-model lock (`db/.index-<model>.lock`),
- * which is the one that guards the corruption it was born from — a table holding 384-dim and
- * 1024-dim vectors at once. The second lock this hook used to take guarded the same file at a
- * coarser scope, and its only observable effect was a SILENT skip: on contention it exited 0 with
- * no output, so a session that indexed nothing looked identical to one that had nothing to index.
- *
+ * No lock here — the indexer takes its own cross-process, per-model lock (db/.index-<model>.lock).
+ * This hook used to take a second, coarser one on the same file; its only effect was a silent
+ * skip on contention (exit 0, no output), so a session that indexed nothing looked like one with
+ * nothing to index.
  * @param {string} cwd
- * `session` is forwarded to the detached indexer through the environment, so the line IT writes
- * when the re-index finishes and the gate line written here read as one background run.
- *
  * @param {Date} [now]
- * @param {string} [session]
+ * @param {string} [session] forwarded to the detached indexer so its own log line and this hook's
+ *   gate line read as one background run
  * @returns {RefreshPlan}
  */
 export function refresh(cwd, now = new Date(), session) {
@@ -152,8 +130,8 @@ export function refresh(cwd, now = new Date(), session) {
     return p;
   }
   logBanner(p.logFile, p.slug, now.toISOString().replace(/\.\d+Z$/, 'Z'));
-  // A null pid is the only signal that the spawn failed — it fails asynchronously — and reporting
-  // `spawned` for a re-index that never started is the healthy-looking lie this log exists to end.
+  // Null pid is the only signal the spawn failed (it fails async) — see CLAUDE.md's
+  // "gate that detaches decides its outcome on detach()'s pid" note.
   const pid = detach(process.execPath, p.args, {
     cwd,
     logFile: p.logFile,
@@ -162,9 +140,8 @@ export function refresh(cwd, now = new Date(), session) {
   return { ...p, spawned: pid != null };
 }
 
-// A hook that is permanently dead because its runtime was never installed must not read as a hook
-// that ran and found nothing to do — that is the whole point of logging an outcome rather than a
-// duration. These are the same objects plan() returns, not copies of their text.
+// Same objects plan() returns, not copies of their text — a permanently-dead hook must not read
+// as one that ran and found nothing to do.
 const MISSING_DEP = new Set([REASONS.noRuntime, REASONS.noScript]);
 
 /**
