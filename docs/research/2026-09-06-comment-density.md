@@ -196,8 +196,10 @@ the measured open-source average (2.6x under the paper's literal "of total lines
 is not strict by outside standards; it is simply not a number anybody published.
 
 **Ratchet or wall — a wall.** At error 0.75, **17 of 53 files (32%) fail the next time they are
-touched** and 34 (64%) sit in the warn band, the median file at 0.66 among them. A band holding
-two-thirds of the tree is background, not a signal, against its stated job in
+touched**. 34 (64%) reach or exceed the 0.50 warn threshold, 17 of those being the same files that
+also clear the error line — so the exclusive warn band, `0.50 <= ratio < 0.75`, is the other 17
+(32%), with the median file at 0.66 inside it. Two-thirds of the tree at or above the warn line is
+background, not a signal, against its stated job in
 [2026-09-05-prose-ceiling.md](../decisions/2026-09-05-prose-ceiling.md) — *"a file arrives at the
 ceiling announced rather than by surprise"*. And that record's own premise is *"a ratchet that fails
 on code nobody touched is a ratchet everybody disables"*: failing a third of files on the next
@@ -211,6 +213,14 @@ comment volume was not the top complaint — correctness was, at 27%, with "comm
 code" third at 10.5% — and the prose ceiling shipping in #127 did not move the comment-stale rate
 (12% before, 13% after). Consistent with §4: the measured harm is inconsistency, and a volume
 threshold is not aimed at it.
+
+> Method, 2026-09-06, PRs #1-#133: `gh api repos/spike1292/claude-memory/pulls/<n>/comments` and
+> `.../reviews` over every PR, 624 records. The 152 are the top-level inline comments, all from
+> `claude[bot]`, spread over 34 PRs; maintainer replies, empty review wrappers and the 172 summary
+> comments are excluded. Each was hand-classified into one bucket, so the boundary between
+> "comment contradicts the code" and "doc contradicts code" is a judgement call, not a rule. The
+> before/after split is by PR number against #127's merge, 105 findings before and 23 after — small
+> enough that the 12%/13% pair shows the absence of a large effect, not the presence of a small one.
 
 ## 7. The folk figures
 
