@@ -412,15 +412,24 @@ per-hook outcome table with the reason string attached. `scripts/doctor.sh`'s va
 and names what will now fail — but the after-the-fact record of an actual aborted run is the
 `--hooks` report, same as a missing-transcript or a failed spawn.
 
-`distill()`'s worker is the only place in the plugin that writes into the vault from ambient
-resolution — the audit this required: `paths.vault()`/`hookCwd()`'s other callers
-(`graph-staleness-check`, `insights-surface`, `memory-link-lint`, `semantic-index-refresh`,
-`validate-note`, `env-shell`) only read the vault to report or warn, never write to it, so the
-lenient resolvers stay correct there. `scripts/memory-mark.mjs`, `memory-eval.mjs`,
-`memory-audit-checks.mjs` and `memory-semantic.mjs` also call `paths.vault()` and do write (marks,
-generated case sets, the index), but a human typed the command that invoked them and sees a
-resolution mistake on the terminal immediately — the silent-fallback risk this exception closes is
-specific to a hook firing unattended from a payload, which none of those are.
+`distill()`'s worker is the only Node hook that writes into the vault from ambient resolution — the
+audit this required: `paths.vault()`/`hookCwd()`'s other Node callers (`graph-staleness-check`,
+`insights-surface`, `memory-link-lint`, `semantic-index-refresh`, `validate-note`, `env-shell`) only
+read the vault to report or warn, never write to it, so the lenient resolvers stay correct there.
+`scripts/memory-mark.mjs`, `memory-eval.mjs`, `memory-audit-checks.mjs` and `memory-semantic.mjs`
+also call `paths.vault()` and do write (marks, generated case sets, the index), but a human typed
+the command that invoked them and sees a resolution mistake on the terminal immediately — the
+silent-fallback risk this exception closes is specific to a hook firing unattended from a payload,
+which none of those are.
+
+**`hooks/vault-memory-sync.sh` is the one known exception this audit does NOT close.** It fires
+unattended on every SessionStart, resolves the vault through the same lenient pair (`vault()`/
+`vaultSource()`, via `scripts/env.mjs`), and then writes: `mkdir -p`s per-project folders, `mv`s
+them during the legacy-key migration, and creates or repoints the `~/.claude/projects/*/memory`
+symlink — the exact shape of the 2026-08-15 incident this exception exists to close. It stays
+lenient because it is shell, not Node (see "Fork count decides" below), already flagged there as
+deliberately unported and high-risk, and out of scope for this change — a `require*`-style abort
+there needs its own review of what "abort" means for a script that also migrates existing folders.
 
 ## Conventions
 
