@@ -218,9 +218,14 @@ threshold is not aimed at it.
 > `.../reviews` over every PR, 624 records. The 152 are the top-level inline comments, all from
 > `claude[bot]`, spread over 34 PRs; maintainer replies, empty review wrappers and the 172 summary
 > comments are excluded. Each was hand-classified into one bucket, so the boundary between
-> "comment contradicts the code" and "doc contradicts code" is a judgement call, not a rule. The
-> before/after split is by PR number against #127's merge, 105 findings before and 23 after — small
-> enough that the 12%/13% pair shows the absence of a large effect, not the presence of a small one.
+> "comment contradicts the code" and "doc contradicts code" is a judgement call, not a rule.
+>
+> The 12%/13% pair is not a two-way split of the 152. It is the first and last of three windows cut
+> by PR number: #1-#103, before the comment policy (13 comment-stale of 105, 12%); #104-#126, after
+> the policy and the sweep (0 of 24); #127-#133, after the CI ceiling (3 of 23, 13%). The middle
+> window is the one the pair skips, and its zero is 24 findings over 8 PRs — too few to read as a
+> win, and it reverted in the very next window. All three sum to the 152. Sample sizes this small
+> show the absence of a large effect, not the presence of a small one.
 
 ## 7. The folk figures
 
