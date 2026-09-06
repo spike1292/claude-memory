@@ -394,6 +394,44 @@ missing, `validate-note.mjs` warns rather than blocking a write, and the heavy h
 against recursing into themselves via a `*_CHILD` env var — they spawn headless `claude`, which
 fires SessionStart again.
 
+**One deliberate, scoped exception: the actual write onto disk aborts rather than guessing.**
+`distill-session`'s gate half (fired by Claude Code, zero-arg, reads a hook payload) still never
+blocks — a payload with no `cwd` is treated exactly like a missing transcript, a `noop-missing-dep`
+that exits 0. But its worker half (invoked with argv, the process that actually writes notes into
+the vault) calls `paths.requireVault()` and validates its own `cwd` argument, and **throws — a
+non-zero exit — rather than falling back to the built-in default vault or an inferred cwd**. That
+is what closed the 2026-08-15 incident where a silent fallback scaffolded an empty vault and
+repointed the memory symlink at it. Read paths (`paths.vault()`, `hookCwd()`) keep the old
+degrade-to-default behaviour; only a caller that is about to write calls the `require*` sibling.
+
+The thrown error reaches a human the same way every other worker failure already does, not through
+a new channel: it lands as `outcome: 'error'` on the worker's own `hooks-<date>.jsonl` line (the
+default outcome, never overwritten to `ran`), which `/memory:doctor --hooks` surfaces in its
+per-hook outcome table with the reason string attached. `scripts/doctor.sh`'s vault section adds a
+*preventive* warning on top — when the resolved vault came from the built-in default, it says so
+and names what will now fail — but the after-the-fact record of an actual aborted run is the
+`--hooks` report, same as a missing-transcript or a failed spawn.
+
+`distill()`'s worker is the only Node hook that writes into the vault from ambient resolution — the
+audit this required: `paths.vault()`/`hookCwd()`'s other Node callers (`graph-staleness-check`,
+`insights-surface`, `memory-link-lint`, `semantic-index-refresh`, `validate-note`, `env-shell`) only
+read the vault to report or warn, never write to it, so the lenient resolvers stay correct there.
+`scripts/memory-mark.mjs`, `memory-eval.mjs`, `memory-audit-checks.mjs`, `memory-semantic.mjs` and
+`memory-adopt.mjs` (the only path that writes `permanent/`) also call `paths.vault()` and do write
+(marks, generated case sets, the index, promoted notes), but a human typed the command that invoked
+them and sees a resolution mistake on the terminal immediately — the
+silent-fallback risk this exception closes is specific to a hook firing unattended from a payload,
+which none of those are.
+
+**`hooks/vault-memory-sync.sh` is the one known exception this audit does NOT close.** It fires
+unattended on every SessionStart, resolves the vault through the same lenient pair (`vault()`/
+`vaultSource()`, via `scripts/env.mjs`), and then writes: `mkdir -p`s per-project folders, `mv`s
+them during the legacy-key migration, and creates or repoints the `~/.claude/projects/*/memory`
+symlink — the exact shape of the 2026-08-15 incident this exception exists to close. It stays
+lenient because it is shell, not Node (see "Fork count decides" below), already flagged there as
+deliberately unported and high-risk, and out of scope for this change — a `require*`-style abort
+there needs its own review of what "abort" means for a script that also migrates existing folders.
+
 ## Conventions
 
 - **No retrieval number ships without a case-set run behind it.** Rewriting the questions per run
