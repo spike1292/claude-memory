@@ -1,6 +1,6 @@
 // onnxruntime-node ships every platform's native runtime in one tarball: 210 MB under
 // bin/napi-v6/{darwin,linux,win32}/{arm64,x64}, of which exactly one directory can ever load.
-// Measured 2026-08-18 — 175 MB is unloadable on any given machine. npm cannot skip it (the
+// Measured 2026-08-18 — 176 MB is unloadable on any given machine. npm cannot skip it (the
 // binaries are inside the package, not optionalDependencies), so it gets deleted after install.
 import fs from 'node:fs';
 import path from 'node:path';

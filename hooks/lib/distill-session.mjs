@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Distill a Claude Code session transcript into Obsidian Insight notes.
 //
-// Logic half; the CLI entry is hooks/distill-session.mjs. Called detached by distill-session.sh. Reads the JSONL transcript, asks a cheap model
-// (haiku, headless `claude -p`) to extract patterns/mistakes/decisions, and writes deduped
-// markdown notes into the vault. Best-effort: any failure just logs.
+// Logic half; the CLI entry is hooks/distill-session.mjs, which hooks.json invokes directly.
+// Reads the JSONL transcript, asks a cheap model (haiku, headless `claude -p`) to extract
+// patterns/mistakes/decisions, and writes deduped markdown notes into the vault. Best-effort: any
+// failure just logs.
 //
 // Tests:       node --test hooks/lib/distill-session.test.mjs
 // Dry run (no LLM call, canned insights):
