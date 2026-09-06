@@ -40,6 +40,8 @@ import {
   sweepDupes,
   socketIsLive,
   stripFrontmatter,
+  consolidationGaps,
+  crossFolderPairs,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
 
@@ -140,6 +142,62 @@ test('the dedup predicate is one predicate', () => {
     for (const pair of fromWriter)
       assert.ok(fromAudit.has(pair), `writer would merge ${pair} at ${bar}, audit does not see it`);
   }
+});
+
+test('consolidationGaps: --clusters and --propose (#96) share one computation', () => {
+  const c1 = new Float32Array([1, 0]),
+    c2 = new Float32Array([0.99, 0.141]),
+    c3 = new Float32Array([0.97, 0.24]);
+  const topic = [
+    { note: 'a', layer: 'Patterns', vec: c1 },
+    { note: 'b', layer: 'Mistakes', vec: c2 },
+    { note: 'c', layer: 'Decisions', vec: c3 },
+    { note: 'd', layer: 'Patterns', vec: c1 },
+  ];
+  // no permanent/ note anywhere near this topic — a real gap
+  const farPermanent = [{ note: 'unrelated', layer: 'permanent', vec: new Float32Array([0, 1]) }];
+  const gaps = consolidationGaps(topic, farPermanent, 0.95, 4);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].members.length, 4);
+  assert.equal(gaps[0].best.note, 'unrelated');
+  assert.ok(gaps[0].best.s < gaps[0].typical, 'the permanent/ note sits outside the topic spread');
+  assert.equal(gaps[0].borderline, false);
+
+  // a permanent/ note that sits INSIDE the cluster's own spread closes the gap
+  const coveringPermanent = [{ note: 'already-covered', layer: 'permanent', vec: c1 }];
+  assert.equal(consolidationGaps(topic, coveringPermanent, 0.95, 4).length, 0);
+
+  // below minSize, a real cluster is not reported as a gap at all
+  assert.equal(consolidationGaps(topic, farPermanent, 0.95, 5).length, 0);
+});
+
+test('crossFolderPairs: same lesson, different folder — a different question from dupeScore', () => {
+  const near = new Float32Array([0.6, 0.8]);
+  const mid = new Float32Array([0.66, 0.75]); // ~0.996 with `near`, cross-layer
+  const cluster = [
+    { note: 'pattern-a', layer: 'Patterns', vec: near },
+    { note: 'mistake-b', layer: 'Mistakes', vec: mid }, // near-duplicate of a, different folder
+    { note: 'pattern-c', layer: 'Patterns', vec: near }, // same-folder near-duplicate of a
+  ];
+  // dupeScore would score the same-folder pair, never the cross-folder one
+  assert.equal(dupeScore(cluster[0], cluster[1]), 0);
+  assert.ok(dupeScore(cluster[0], cluster[2]) > 0.99);
+
+  const pairs = crossFolderPairs(cluster, 0.9);
+  // mistake-b is near BOTH Patterns notes, so it pairs with each cross-folder — never with itself,
+  // never same-folder (pattern-a/pattern-c, dupeScore's job, is excluded).
+  assert.equal(pairs.length, 2, 'every cross-folder pair over the bar, no same-folder pair');
+  for (const p of pairs) {
+    assert.notEqual(p.a.layer, p.b.layer);
+    assert.ok([p.a.note, p.b.note].includes('mistake-b'));
+    assert.ok(p.s > 0.99);
+  }
+
+  assert.equal(
+    crossFolderPairs(cluster, 0.999).length,
+    0,
+    'a floor above every score fires on nothing',
+  );
 });
 
 test('scoring, chunking and fusion', () => {

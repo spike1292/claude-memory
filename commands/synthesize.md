@@ -1,5 +1,5 @@
 ---
-description: Consolidate a cluster of related notes into one permanent/ note — every claim cited, and the result graded against the cluster it came from
+description: Draft a consolidated note for a cluster of related notes — every claim cited — into Staging/, for /memory:adopt to promote after the held-out gate
 ---
 
 > **Paths.** Every shell snippet below assumes these two, set first:
@@ -23,7 +23,10 @@ find "$V/permanent"   -name '*.md' | wc -l   # promoted
 ```
 
 Whatever the two numbers are, the gap between them is the argument for running this at all.
-`--clusters` finds where a consolidated note is missing; this writes one.
+`--clusters` finds where a consolidated note is missing; this drafts one. **This command never
+writes to `permanent/`.** It writes into `<vault>/Staging/<slug>/`, sibling to `permanent/`, and
+`/memory:adopt` is the only thing that promotes a staged draft — gated on a held-out case set so a
+promotion cannot ship a number fitted to the cluster it came from (#87/#96).
 
 **The risk this command is shaped around.** A synthesis note asserts a claim that *no single note
 makes* — strictly more room to invent than distillation, and the distiller has already confabulated
@@ -31,7 +34,9 @@ twice (an invented CLAUDE.md rule; an unrelated `httpOnly` lesson welded onto a 
 So the rule below is not advice, it is the format: **a claim without a source is deleted, not
 softened.**
 
-1. **Pick the target.** Either the user names a topic, or:
+1. **Pick the target.** Either the user names a topic, an existing staged candidate is named
+   (`<vault>/Staging/<slug>/candidate-*.md` — check for one first, it already carries the cluster's
+   evidence in its frontmatter), or find one fresh:
 
    ```
    node "$MEM/scripts/memory-semantic.mjs" --clusters --top 8
@@ -39,7 +44,8 @@ softened.**
 
    Prefer a cluster that has *cost something* — one whose members include Mistakes, or that a prune
    or audit has already tripped over. Size alone is not value; most uncovered clusters do not need a
-   note.
+   note. `--propose --top 8` writes the same clusters as staged skeletons instead of only printing
+   them, if you want the evidence captured before you start reading.
 
 2. **Read every member note in full.** Not the card, not the search snippet — the note. A synthesis
    built from snippets is how contradictions get smoothed into a false consensus. If the cluster is
@@ -56,29 +62,50 @@ softened.**
    - Note which members are *superseded* rather than merged in (`(superseded YYYY-MM-DD by [[…]])`).
    - Frontmatter: `type: permanent`, `confidence:`, `created`/`updated`, and a trailing
      `_Also asked as: …_` line in **outsider vocabulary** — the words someone uses before they know
-     this note exists.
+     this note exists. Replace the `--propose` skeleton's `type: promotion-candidate` and `status:`
+     lines with this shape — `/memory:adopt` reads `type: permanent` as its "this is drafted" signal
+     and refuses anything still shaped like the skeleton. **Keep the skeleton's `members:` list
+     byte-for-byte, alongside the new fields — do not remove it.** It carries no reader-facing
+     information; it is how a later `--propose`/`/memory:prune` run still recognises this proposal
+     after step 5's rename, by member set rather than by filename. Dropping it reopens the exact bug
+     the rename step exists to work around: a routine re-propose would no longer find this file and
+     would mint a duplicate skeleton for a topic that is already drafted.
 
 4. **Report coverage before writing.** List which members contributed a claim and which contributed
    nothing. A member that contributed nothing is a signal: either the cluster is too loose, or that
    note says something the synthesis missed. Say which.
 
-5. **Show the draft and ask.** Never write into `permanent/` without confirmation. Do not delete or
-   rewrite the member notes — they are the evidence the synthesis rests on, and the lifecycle keeps
-   them as staging. At most, add a pointer line to the two or three that are most load-bearing.
+5. **Show the draft and ask, then write it into Staging/, never into `permanent/`.** If a staged
+   skeleton already exists for this cluster, write the draft there — replacing everything from its
+   frontmatter through the `<!-- @generated:end -->` marker, and leaving whatever a human already
+   wrote below that marker untouched (the same sentinel convention `GRAPH_REPORT.md` uses). **A
+   re-run of `--propose`/`/memory:prune` will never touch this file once it does this** — it reads
+   `type: permanent` in the frontmatter as "already drafted" and skips it outright, rather than
+   regenerating the region the draft now occupies. If none exists yet, create
+   `<vault>/Staging/<slug>/<topic-slug>.md` directly. Do not delete or rewrite the member notes —
+   they are the evidence the synthesis rests on, and the lifecycle keeps them as staging. At most,
+   add a pointer line to the two or three that are most load-bearing.
 
-6. **Grade the result — the tool checks its own output.** After writing, re-run:
+   **Rename the file to its real topic slug** (`mv candidate-*.md <topic-slug>.md`, same directory)
+   — the auto-generated `candidate-<first-member>` name is a placeholder for an unread cluster, not
+   the name a promoted note should carry forever. `/memory:adopt` takes the name to adopt as its
+   argument, so this is what the next step actually names. **This command's job ends here.**
+   Promoting the draft into `permanent/` is `/memory:adopt`'s job, and it runs a held-out eval gate
+   that this command does not — a synthesis that reads well is not evidence it helps retrieval.
+
+6. **Tell the user to adopt it:**
 
    ```
-   node "$MEM/scripts/memory-semantic.mjs" --index && node "$MEM/scripts/memory-semantic.mjs" --clusters
+   node "$MEM/scripts/memory-adopt.mjs" <topic-slug> --min-rank1 <percent>
    ```
 
-   The cluster should **stop being reported**: coverage is judged by whether a `permanent/` note sits
-   as close to the cluster centroid as a typical member does. If the gap is still reported, the note
-   did not actually capture the topic — it is too abstract, too narrow, or about something else. Fix
-   it or say so; do not claim the topic is consolidated because a file exists.
+   `--clusters` will keep reporting this topic as a gap until that command runs and the gate passes
+   — that is correct, since nothing has been promoted yet. Do not claim the topic is consolidated
+   because a Staging file exists.
 
-7. **Link it in, both ways** (the standing rule): add the pointer to `MEMORY.md` if it is
-   project-scoped, and `[[wikilink]]` it from at least one sibling — a `permanent/` note reachable
+7. **Link it in, both ways** (the standing rule, once adopted): add the pointer to `MEMORY.md` if it
+   is project-scoped, and `[[wikilink]]` it from at least one sibling — a `permanent/` note reachable
    only by search is invisible to the note graph.
 
-**Output:** the coverage report, the draft, and after writing, the re-run result — gap closed or not.
+**Output:** the coverage report, the draft, the Staging path it was written to, and the
+`/memory:adopt` command to run next.
