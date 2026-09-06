@@ -170,8 +170,9 @@ only comments inside a method body, excluding Javadoc-style headers** — much o
 
 ## 6. The proposal: warn 0.50 / error 0.75
 
-Measured 2026-09-06 with the guard's own `commentRatio()` over the 53 tracked non-test `.mjs` files.
-Median non-test file **0.66**, repo-wide 0.59 (4,089 comment / 6,916 code), tests (exempt) 0.19.
+Measured 2026-09-06 at `c9013e0` with the guard's own `commentRatio()` over the 53 tracked non-test
+`.mjs` files.
+Median non-test file **0.66**, repo-wide 0.59 (4,123 comment / 6,939 code), tests (exempt) 0.19.
 
 | ratio ≥ | files | share |
 | ---: | ---: | ---: |
