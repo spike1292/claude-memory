@@ -46,9 +46,11 @@ export function renderProposal(gap, slug) {
     .map((m) => `  - "[[${m.note}]] (${m.layer})"`)
     .join('\n');
   // Age is the third quantity the candidate rule can read off the cluster scan, alongside size and
-  // the permanent/ gap — the oldest member's last content change, so a topic that has sat unstaged
-  // for a while is visible without inventing an age THRESHOLD nobody has calibrated. Omitted, not
-  // zero, when the caller has no mtime to give (e.g. a unit test fixture).
+  // the permanent/ gap, without inventing an age THRESHOLD nobody has calibrated. NOT a content-edit
+  // date: the indexer's `mtime` column is the OS mtime at last index run, bumped on the "touched"
+  // fast path even when the hash proves content is byte-identical (a git clone/checkout/vault-sync
+  // resets it for every file at once) — labelled "touched", not "changed", so it isn't read as one.
+  // Omitted, not zero, when the caller has no mtime to give (e.g. a unit test fixture).
   const oldestMtime = gap.members.reduce(
     (min, m) => (m.mtime != null && (min == null || m.mtime < min) ? m.mtime : min),
     /** @type {number | null} */ (null),
@@ -64,7 +66,7 @@ export function renderProposal(gap, slug) {
     `typical_member_score: ${gap.typical.toFixed(3)}`,
     ...(oldestMtime == null
       ? []
-      : [`oldest_member_changed: ${new Date(oldestMtime).toISOString().slice(0, 10)}`]),
+      : [`oldest_member_touched: ${new Date(oldestMtime).toISOString().slice(0, 10)}`]),
     'members:',
     memberLines,
     '---',

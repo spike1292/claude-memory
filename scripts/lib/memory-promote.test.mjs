@@ -52,7 +52,7 @@ test('renderProposal with no permanent/ match at all writes best_permanent_match
 });
 
 test('renderProposal reports the oldest member as evidence, omitted when no member carries an mtime', () => {
-  assert.doesNotMatch(renderProposal(gap(), 'candidate-x'), /oldest_member_changed/);
+  assert.doesNotMatch(renderProposal(gap(), 'candidate-x'), /oldest_member_touched/);
 
   const dated = {
     ...gap(),
@@ -62,7 +62,7 @@ test('renderProposal reports the oldest member as evidence, omitted when no memb
     ],
   };
   const raw = renderProposal(dated, 'candidate-x');
-  assert.match(raw, /oldest_member_changed: 2026-01-15/);
+  assert.match(raw, /oldest_member_touched: 2026-01-15/);
 });
 
 test('mergeProposal preserves hand-written text after @generated:end', () => {

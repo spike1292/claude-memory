@@ -41,7 +41,9 @@ command ever touches `permanent/`. `/memory:adopt` is the only thing that does.
    node "$MEM/scripts/memory-adopt.mjs" <staged-note-name> --dry-run
    ```
 
-   Prints the source and target paths. Writes nothing, runs no gate.
+   Prints the source and target paths. Writes nothing, runs no gate. If the target already exists
+   and `--force` was not passed, it reports that refusal instead — an accurate preview of what a
+   real run would do, not a path echo that implies success it would not have.
 
 4. **`--force` overwrites an existing `permanent/` note of the same name.** It does not skip the
    gate — a forced overwrite is still scored and still rolls back on failure. Use it when

@@ -206,3 +206,44 @@ test('adopt rolls back permanent/ and reindexes again on a failing gate, and nam
     'the staged proposal is left in place to retry',
   );
 });
+
+test('adopt rolls back when reindex throws after the draft is copied, instead of crashing with permanent/ unvalidated', () => {
+  let reindexCalls = 0;
+  const { io, calls } = fakeIo({
+    reindex: () => {
+      reindexCalls++;
+      if (reindexCalls === 1) throw new Error('embedding server down');
+    },
+  });
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: false,
+  });
+  assert.equal(r.status, 'rejected');
+  assert.match(r.reasons?.[0] ?? '', /reindex failed: embedding server down/);
+  assert.equal(calls.gate, 0, 'the gate never ran on an unindexed copy');
+  assert.deepEqual(calls.removed, ['/permanent/x.md'], 'the unvalidated copy is removed');
+  assert.equal(reindexCalls, 2, 'the rollback retries reindex to restore a clean state');
+});
+
+test('adopt still reports the original rejection when the rollback reindex ALSO throws', () => {
+  const { io, calls } = fakeIo({
+    reindex: () => {
+      throw new Error('still down');
+    },
+    runGate: () => {
+      calls.gate++;
+      return { failures: ['recall@1 dropped'] };
+    },
+  });
+  const r = adopt(io, {
+    stagedPath: '/staged.md',
+    targetPath: '/permanent/x.md',
+    dryRun: false,
+    force: false,
+  });
+  assert.equal(r.status, 'rejected');
+  assert.match(r.reasons?.[0] ?? '', /reindex failed: still down/);
+});

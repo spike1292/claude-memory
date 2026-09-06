@@ -41,15 +41,29 @@ export function adopt(io, opts) {
   // it, or a failed re-draft of an already-adopted topic loses the note that was there before.
   const previous = targetExisted ? io.readFile(opts.targetPath) : null;
 
-  io.writeFile(opts.targetPath, raw);
-  io.reindex();
-  const gate = io.runGate();
-  if (gate.failures.length) {
+  /** @param {string[]} reasons @returns {AdoptResult} */
+  const reject = (reasons) => {
     if (previous == null) io.removeFile(opts.targetPath);
     else io.writeFile(opts.targetPath, previous);
+    try {
+      io.reindex(); // best-effort: a second failure here must not mask the real reason below
+    } catch {
+      /* the rejection stands either way */
+    }
+    return { status: 'rejected', reasons };
+  };
+
+  io.writeFile(opts.targetPath, raw);
+  try {
     io.reindex();
-    return { status: 'rejected', reasons: gate.failures };
+  } catch (e) {
+    // Reached with permanent/ already holding the unvalidated copy — a bare throw here would crash
+    // uncaught and leave it there with neither a gate run nor a rollback.
+    return reject([`reindex failed: ${/** @type {Error} */ (e).message}`]);
   }
+  const gate = io.runGate();
+  if (gate.failures.length) return reject(gate.failures);
+
   io.removeFile(opts.stagedPath);
   return { status: 'adopted', recall1: gate.recall1 ?? null, frozen: gate.frozen ?? null };
 }

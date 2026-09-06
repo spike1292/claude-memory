@@ -15,7 +15,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as paths from '../hooks/lib/paths.mjs';
-import { resolveNote } from './lib/memory-mark.mjs';
 import { adopt } from './lib/memory-adopt.mjs';
 
 const argv = process.argv.slice(2);
@@ -47,9 +46,13 @@ if (!dryRun && !minRank1) {
   process.exit(1);
 }
 
+// Not memory-mark.mjs's resolveNote(): it treats a `.md`-suffixed name that exists relative to
+// CWD as already-resolved, which would let a name coinciding with an unrelated relative path
+// escape Staging/<slug>/ entirely. `--propose` writes flat files directly under this directory —
+// path.basename strips any traversal, so the lookup can only ever land inside it.
 const stagingDir = path.join(VAULT, 'Staging', SLUG);
-const staged = resolveNote(stagingDir, name);
-if (!staged) {
+const staged = path.join(stagingDir, path.basename(name.endsWith('.md') ? name : `${name}.md`));
+if (!fs.existsSync(staged)) {
   console.error(`not found in Staging/${SLUG}: ${name}`);
   process.exit(1);
 }
