@@ -3,10 +3,9 @@
 // Nothing here reads argv, stdin or prints: it takes a cwd and returns the text to show, so it is
 // importable and testable without a subprocess. Tests: hooks/lib/insights-surface.test.mjs
 //
-// Ported from insights-surface.sh on 2026-08-17: 160 ms → 48 ms. It forked `grep` + `sed` once per
-// note, up to 45 subprocesses to print 15 lines. Pinning the vault to local disk bought it 9 ms of
-// its 174 ms, which is what identified it as fork-bound rather than I/O-bound — see
-// docs/decisions/2026-08-17-shell-vs-node-hooks.md.
+// Ported from shell on 2026-08-17, 124 ms → 52 ms: it forked `grep` + `sed` once per note, up to 45
+// subprocesses to print 15 lines. Pinning the vault to local disk moved it 174.0 → 165.2 ms, which
+// is what identified it as fork-bound — docs/decisions/2026-08-17-shell-vs-node-hooks.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { vault, projectKey, legacyKey } from './paths.mjs';

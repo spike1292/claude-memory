@@ -93,6 +93,16 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **Three file-header comments stated a fact that was wrong, and all three were the same shape** —
+  a "ported from `<name>.sh`" header carrying numbers copied out of
+  `docs/decisions/2026-08-17-shell-vs-node-hooks.md`. `distill-session.mjs` named
+  `distill-session.sh` as its caller, which was deleted in #20 (`hooks.json` invokes the `.mjs`
+  directly); `insights-surface.mjs` gave 160 ms → 48 ms where the record measures 124 ms → 52 ms,
+  and quoted 174 ms without saying it was the cloud-backed figure; `slim-install.mjs` said 175 MB
+  where `CLAUDE.md`, `CHANGELOG.md` and `docs/architecture.md` all say 176 MB. Comments only, no
+  behaviour change. The class these belong to — one fact copied into a second place, then only one
+  copy edited — is 26% of this repo's review findings and is tracked in #134.
+
 - **`memory-recall.mjs`'s server-arm branch wrote the brief to stdout then called `process.exit(0)`
   without draining the pipe** — Node's stdout to a pipe is asynchronous, so `process.exit()` can
   truncate a write in flight (#124). Latent today because the brief is capped near 1 KB
