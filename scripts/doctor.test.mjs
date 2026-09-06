@@ -63,7 +63,7 @@ test('doctor reports an oversize MEMORY.md through capReport', () => {
     );
 
     const out = run(world);
-    const section = out.slice(out.indexOf('auto memory'), out.indexOf('\nindex'));
+    const section = out.slice(out.indexOf('auto memory'), out.indexOf('\ncowork auto memory'));
     assert.match(section, /FAIL this project's MEMORY\.md is over the load cap/, section);
     assert.match(section, /26,624 bytes \/ 1 lines — 104%/, 'the measured size reaches the report');
     assert.match(section, /1 other MEMORY\.md all fit the cap — 0%/);
@@ -77,8 +77,31 @@ test('doctor reports an oversize MEMORY.md through capReport', () => {
     fs.writeFileSync(path.join(mem, 'MEMORY.md'), 'x'.repeat(Math.round(25 * 1024 * 0.9)));
     const nearOut = run(world);
     assert.match(
-      nearOut.slice(nearOut.indexOf('auto memory'), nearOut.indexOf('\nindex')),
+      nearOut.slice(nearOut.indexOf('auto memory'), nearOut.indexOf('\ncowork auto memory')),
       /WARN this project's MEMORY\.md is near the load cap: 23,040 bytes \/ 1 lines — 90%/,
+    );
+  } finally {
+    fs.rmSync(world.tmp, { recursive: true, force: true });
+  }
+});
+
+test('doctor warns on CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, a third memory system', () => {
+  const world = scratch();
+  try {
+    const out = run(world);
+    const section = out.slice(out.indexOf('cowork auto memory'), out.indexOf('\nindex'));
+    assert.match(section, /ok\s+CLAUDE_COWORK_MEMORY_PATH_OVERRIDE not set/, section);
+
+    const env = { ...world.env, CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: '/tmp/somewhere-else' };
+    const withOverride = run({ ...world, env });
+    const warnSection = withOverride.slice(
+      withOverride.indexOf('cowork auto memory'),
+      withOverride.indexOf('\nindex'),
+    );
+    assert.match(
+      warnSection,
+      /WARN\s+CLAUDE_COWORK_MEMORY_PATH_OVERRIDE is set: \/tmp\/somewhere-else/,
+      warnSection,
     );
   } finally {
     fs.rmSync(world.tmp, { recursive: true, force: true });
