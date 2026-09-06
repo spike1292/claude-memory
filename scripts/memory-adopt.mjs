@@ -23,7 +23,18 @@ const val = (/** @type {string} */ n) => {
   const i = argv.indexOf(n);
   return i >= 0 ? argv[i + 1] : null;
 };
-const name = argv.find((a) => !a.startsWith('--'));
+// Skip both a flag and, for the value-taking ones, the token right after it — otherwise
+// `--min-rank1 60 my-note` picks up "60" as the name instead of skipping past its flag.
+const VALUE_FLAGS = new Set(['--min-rank1', '--cases', '--vault', '--slug']);
+let name;
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i].startsWith('--')) {
+    if (VALUE_FLAGS.has(argv[i])) i++;
+    continue;
+  }
+  name = argv[i];
+  break;
+}
 if (!name) {
   console.error(
     'usage: memory-adopt.mjs <staged-note-name> --min-rank1 <percent> [--dry-run] [--force]\n' +
@@ -104,7 +115,10 @@ const result = adopt(
         try {
           return { failures: JSON.parse(String(stdout)).gate ?? ['held-out eval run failed'] };
         } catch {
-          return { failures: [`held-out eval run failed: ${/** @type {Error} */ (e).message}`] };
+          // Not JSON — e.g. memory-eval.mjs exited before printing an envelope at all (no case
+          // set yet). stdout still carries the real reason; e.message is just "exit code 1".
+          const reason = stdout?.trim() || /** @type {Error} */ (e).message;
+          return { failures: [`held-out eval run failed: ${reason}`] };
         }
       }
     },
