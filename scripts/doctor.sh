@@ -222,9 +222,13 @@ echo
 echo "vault"
 vs=$(vault_source)
 echo "  resolved from: $vs"
-if [ "$vs" = "built-in default" ]; then
+case "$vs" in
+# Prefix match, not `=`: vault-env.sh's degraded (no-node) path reports
+# "built-in default (node unavailable)", a second built-in-default source this must also catch.
+built-in\ default*)
   warn "vault has no explicit source" "distillation (SessionEnd/Stop) now aborts and writes nothing instead of using this default — set \$CLAUDE_VAULT or \"vault\" in $(config_file)"
-fi
+  ;;
+esac
 if [ -d "$VAULT" ]; then
   ok "vault exists"
   # #83: informational only — reports "any depth" (nested inside an ambient repo counts), unlike

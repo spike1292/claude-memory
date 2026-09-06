@@ -416,9 +416,10 @@ and names what will now fail — but the after-the-fact record of an actual abor
 audit this required: `paths.vault()`/`hookCwd()`'s other Node callers (`graph-staleness-check`,
 `insights-surface`, `memory-link-lint`, `semantic-index-refresh`, `validate-note`, `env-shell`) only
 read the vault to report or warn, never write to it, so the lenient resolvers stay correct there.
-`scripts/memory-mark.mjs`, `memory-eval.mjs`, `memory-audit-checks.mjs` and `memory-semantic.mjs`
-also call `paths.vault()` and do write (marks, generated case sets, the index), but a human typed
-the command that invoked them and sees a resolution mistake on the terminal immediately — the
+`scripts/memory-mark.mjs`, `memory-eval.mjs`, `memory-audit-checks.mjs`, `memory-semantic.mjs` and
+`memory-adopt.mjs` (the only path that writes `permanent/`) also call `paths.vault()` and do write
+(marks, generated case sets, the index, promoted notes), but a human typed the command that invoked
+them and sees a resolution mistake on the terminal immediately — the
 silent-fallback risk this exception closes is specific to a hook firing unattended from a payload,
 which none of those are.
 
