@@ -885,14 +885,14 @@ function reindex(cwd, slug) {
         "disk. The plugin's own index is unaffected and is being refreshed instead. " +
         'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).',
     );
-    refreshOwnIndex(cwd);
+    refreshOwnIndex(cwd, slug);
     return;
   }
   // INVARIANT: label and indexed directory must derive from the same `slug` (label == indexed
   // directory, NOT label == projectKey(cwd)) — `slug` falls back to `legacyKey` when the vault has
   // not been migrated yet, and legacyKey is a raw cwd slug that can carry uppercase. Regressed
   // once when the label used path.basename(cwd) instead: docs/architecture.md Known hacks H7.
-  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph']) {
+  for (const layer of paths.VAULT_LAYERS) {
     const label = `vault-${layer.toLowerCase()}-${slug}`;
     const d = path.join(VAULT, layer, slug);
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
@@ -935,13 +935,17 @@ function reindex(cwd, slug) {
  * so racing the SessionStart refresh is safe.
  *
  * @param {string} cwd
+ * @param {string} slug
  * @returns {void}
  */
-function refreshOwnIndex(cwd) {
+function refreshOwnIndex(cwd, slug) {
   const script = path.join(paths.scriptsDir, 'memory-semantic.mjs');
   if (!fs.existsSync(script)) return;
   try {
-    execFileSync(process.execPath, [script, '--index', cwd], {
+    // --slug, not just the directory: the indexer would otherwise re-derive the key from `cwd`,
+    // which is the very resolution this run stopped trusting. Notes under one key and an index
+    // under another is a project that indexes itself into silence.
+    execFileSync(process.execPath, [script, '--index', cwd, '--slug', slug], {
       encoding: 'utf8',
       timeout: 600_000,
       stdio: 'pipe',
@@ -963,14 +967,21 @@ function refreshOwnIndex(cwd) {
  *
  * @param {string} transcript
  * @param {string} cwd
+ * @param {string} [key] project key resolved by the gate, while the cwd still existed. Optional so
+ *   a worker spawned by an older gate still runs — that path re-resolves and is guarded instead.
  * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
  */
-export async function distill(transcript, cwd) {
+export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
   // write nothing, not a partial note under a guessed vault or project.
   if (!cwd) throw new Error('distill: missing cwd — refusing to infer scope for a write');
   VAULT = process.env.DISTILL_VAULT || paths.requireVault();
-  let slug = projectKey(cwd);
+  if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
+  const convo = transcriptToText(transcript);
+  if (convo.length < 200) return null;
+  // Resolved only once there is something to write. Ahead of these returns, a trivial session in a
+  // vanished directory would be an `error` row for a run that was never going to write a note.
+  let slug = key || paths.requireProjectKey(projectKey(cwd), VAULT);
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
   const legacy = paths.legacyKey(cwd);
@@ -981,9 +992,6 @@ export async function distill(transcript, cwd) {
   ) {
     slug = legacy;
   }
-  if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
-  const convo = transcriptToText(transcript);
-  if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd);
   const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
   autoCommit(notes, merged, slug);
@@ -1092,9 +1100,11 @@ export function gate(p) {
   writeMarker(plan.marker, plan.now);
   // gatePlan already refused to run without a cwd, so this never throws in practice.
   const cwd = requireHookCwd(p);
+  // Resolved HERE, not in the worker: the gate runs while the session's directory still exists, and
+  // the worker is detached — by the time it asks git, a torn-down worktree is already gone.
   const pid = detach(
     process.execPath,
-    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd],
+    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd, projectKey(cwd)],
     {
       cwd,
       logFile: path.join(paths.stateDir('logs'), 'distill.log'),

@@ -401,7 +401,11 @@ that exits 0. But its worker half (invoked with argv, the process that actually 
 the vault) calls `paths.requireVault()` and validates its own `cwd` argument, and **throws — a
 non-zero exit — rather than falling back to the built-in default vault or an inferred cwd**. That
 is what closed the 2026-08-15 incident where a silent fallback scaffolded an empty vault and
-repointed the memory symlink at it. Read paths (`paths.vault()`, `hookCwd()`) keep the old
+repointed the memory symlink at it. The **project key** is guarded the same way and for the same
+reason (#138): the gate resolves it while the session's directory still exists and passes it to the
+worker in argv, and a worker given none refuses a path-shaped key the vault holds no folder for —
+not merely one starting with `-`, since a non-git project and the pre-migration legacy slug both
+produce those legitimately. Read paths (`paths.vault()`, `hookCwd()`) keep the old
 degrade-to-default behaviour; only a caller that is about to write calls the `require*` sibling.
 
 The thrown error reaches a human the same way every other worker failure already does, not through

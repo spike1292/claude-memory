@@ -9,6 +9,22 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The distiller no longer files notes under a raw path slug when the working directory is gone.**
+  `computeProjectKey()` falls back to a cwd slug when git answers neither `remote get-url` nor
+  `rev-parse`, and a worktree torn down mid-session (paseo, or any tool that cleans up on task end)
+  makes both fail — so a detached worker wrote its notes under a key nothing ever searches, logged
+  `outcome: ran`, and `/memory:doctor --hooks` called it healthy. The gate now resolves the key
+  while the directory still exists and passes it to the worker as an optional third argument, so an
+  in-flight worker spawned by an older gate still runs. A worker given no key aborts — non-zero
+  exit, `outcome: error`, the key in the reason — rather than writing where nothing will look. The
+  guard is not "the key starts with a dash": a non-git project and the pre-migration legacy slug
+  both produce one legitimately, so it refuses a path-shaped key only when the vault holds no folder
+  for it. `/memory:doctor` names path-shaped project folders already in the vault, with a count; it
+  moves nothing. The index refresh is handed the same key rather than re-deriving it from the
+  cwd, so notes and index can no longer end up under two different slugs. (#138)
+
 ## [0.8.0] - 2026-09-06
 
 ### Added

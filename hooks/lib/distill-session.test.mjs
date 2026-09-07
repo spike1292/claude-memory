@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
+  gate,
   gatePlan,
   gateOutcome,
   GATE_REASONS,
@@ -762,8 +763,11 @@ test('the WORKER writes nothing and exits non-zero when the vault cannot be reso
       .readdirSync(dir, { withFileTypes: true })
       .flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 
+  // The key travels in argv, as the gate sends it: this test is about the VAULT not resolving, and
+  // without it the run would abort on the unresolvable project key of a non-git scratch dir first.
+  const key = 'example.com-vault-probe';
   assert.throws(
-    () => execFileSync(process.execPath, [entry, transcript, cwd], { stdio: 'pipe', env }),
+    () => execFileSync(process.execPath, [entry, transcript, cwd, key], { stdio: 'pipe', env }),
     /Command failed/,
   );
   // A recursive scan, not a check of one known path: the built-in default vault lives under HOME,
@@ -780,7 +784,7 @@ test('the WORKER writes nothing and exits non-zero when the vault cannot be reso
   // Positive control, the SAME walk(home) technique: point the vault inside home and confirm the
   // scan that found nothing above finds something once a write actually happens. Without this, a
   // scan of the wrong directory in the failing case would also find nothing and pass by mistake.
-  execFileSync(process.execPath, [entry, transcript, cwd], {
+  execFileSync(process.execPath, [entry, transcript, cwd, key], {
     stdio: 'pipe',
     env: { ...env, DISTILL_VAULT: path.join(home, 'configured-vault') },
   });
@@ -1207,4 +1211,162 @@ test('auto-commit unstages notes when commit fails after add succeeded (e.g. no 
     !/^[AM]/m.test(status),
     'add must be rolled back when commit fails — nothing left staged across future sessions',
   );
+});
+
+// ---------------------------------------------------------------- #138: project key on the write path
+
+/**
+ * A scratch world for the worker: a vault, a long-enough transcript, and a stub `context-mode` so
+ * reindex() never reaches the real indexer (which would load the embedding model).
+ *
+ * @param {string} root
+ * @returns {{ vault: string, transcript: string, env: Record<string, string|undefined> }}
+ */
+function workerWorld(root) {
+  const vault = path.join(root, 'vault');
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(vault, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'context-mode'), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i} of talk` } }),
+    ).join('\n') + '\n',
+  );
+  return {
+    vault,
+    transcript,
+    env: {
+      ...GIT_ENV,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: vault,
+      DISTILL_DRYRUN: '1',
+    },
+  };
+}
+
+/** @param {string} dir @returns {string[]} */
+function notesUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) =>
+      e.isDirectory() ? notesUnder(path.join(dir, e.name)) : e.name.endsWith('.md') ? [e.name] : [],
+    );
+}
+
+test('the WORKER writes under the key it was given, without asking git about a cwd that is gone', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'key-given-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { vault, transcript, env } = workerWorld(root);
+  // Deleted before the worker starts, which is what a torn-down worktree looks like to it.
+  const cwd = path.join(root, 'gone');
+  fs.mkdirSync(cwd);
+  fs.rmSync(cwd, { recursive: true });
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  execFileSync(process.execPath, [entry, transcript, cwd, 'example.com-someone-repo'], {
+    stdio: 'pipe',
+    env,
+  });
+
+  assert.ok(
+    notesUnder(path.join(vault, 'Insights', 'example.com-someone-repo')).length > 0,
+    'notes land under the key the gate resolved while the directory still existed',
+  );
+  assert.deepStrictEqual(
+    notesUnder(path.join(vault, 'Insights', cwd.replace(/[^A-Za-z0-9_-]/g, '-'))),
+    [],
+    'and never under the cwd slug',
+  );
+});
+
+test('the WORKER given no key refuses to write under a slug nothing will search', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'key-missing-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { vault, transcript, env } = workerWorld(root);
+  const cwd = path.join(root, 'gone');
+  fs.mkdirSync(cwd);
+  fs.rmSync(cwd, { recursive: true });
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  assert.throws(
+    () => execFileSync(process.execPath, [entry, transcript, cwd], { stdio: 'pipe', env }),
+    /Command failed/,
+    'the two-argument form still runs, and this one aborts on the key rather than on the argv',
+  );
+  assert.deepStrictEqual(notesUnder(vault), [], 'nothing at all was written into the vault');
+
+  // The abort reaches a human exactly the way every other worker failure does — no new channel.
+  const logDir = path.join(root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim().split('\n')[0]);
+  assert.strictEqual(rec.event, 'worker');
+  assert.strictEqual(rec.outcome, 'error', '/memory:doctor --hooks must not call this run healthy');
+  assert.match(String(rec.reason), /unresolvable project key/);
+});
+
+test('a non-git project the vault already knows still distils with no key at all', (t) => {
+  // The guard's other half, end to end: a path-shaped key is legitimate when a folder for it
+  // exists, and the pre-migration legacy slug is the same case. A "starts with a dash" test would
+  // have refused both, so this runs the real worker on one, in the two-argument form.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nongit-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { vault, transcript, env } = workerWorld(root);
+  const cwd = path.join(root, 'plain-project');
+  fs.mkdirSync(cwd);
+  const legacy = paths.legacyKey(cwd);
+  fs.mkdirSync(path.join(vault, 'Insights', legacy), { recursive: true });
+
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  execFileSync(process.execPath, [entry, transcript, cwd], { stdio: 'pipe', env });
+
+  assert.ok(
+    notesUnder(path.join(vault, 'Insights', legacy)).length > 0,
+    'the folder already in the vault is the evidence the key is real',
+  );
+});
+
+test('the gate hands the worker the key it resolved, and the worker uses it', async (t) => {
+  // The round trip, not the two halves. The gate resolves the key while the directory is still
+  // there; the worker is deleted out from under a moment later. Only a key that travelled in argv
+  // can produce a note under the remote-derived slug.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-key-'));
+  const { vault, transcript, env } = workerWorld(root);
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'pipe', env: GIT_ENV });
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@example.com:a/b.git'], {
+    stdio: 'pipe',
+    env: GIT_ENV,
+  });
+
+  // detach() inherits this process's environment, so the child's vault and dry-run flag have to be
+  // set here. Restored after; the suite runs at concurrency 1.
+  const saved = { ...process.env };
+  t.after(() => {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  Object.assign(process.env, env);
+
+  const plan = gate({
+    hook_event_name: 'SessionEnd',
+    session_id: 'gate-key',
+    cwd: repo,
+    transcript_path: transcript,
+  });
+  assert.strictEqual(plan.run && plan.spawned, true, 'the worker was actually spawned');
+  fs.rmSync(repo, { recursive: true, force: true });
+
+  const want = path.join(vault, 'Insights', 'example.com-a-b');
+  for (let i = 0; i < 200 && notesUnder(want).length === 0; i++)
+    await new Promise((r) => setTimeout(r, 100));
+  assert.ok(notesUnder(want).length > 0, 'the note is filed under the key the gate resolved');
 });

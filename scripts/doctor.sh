@@ -268,6 +268,18 @@ if [ -d "$VAULT" ]; then
       warn "vault is empty" "expected on a first install; notes appear as you work."
     fi
   fi
+
+  # Notes filed under a path-shaped project key. project_key falls back to a raw cwd slug when git
+  # answers nothing, which is what a worktree torn down mid-distillation looks like, and nothing
+  # ever searches that key afterwards (#138). The write path refuses now; these are what earlier
+  # runs left behind. Reported only — refiling them is a vault migration, and doctor moves nothing.
+  stray=$(for d in "$VAULT"/Insights/-* "$VAULT"/Memory/-* "$VAULT"/Logs/-* "$VAULT"/Graph/-*; do
+    [ -d "$d" ] && basename "$d"
+  done | sort -u)
+  if [ -n "$stray" ]; then
+    warn "$(printf '%s\n' "$stray" | wc -l | tr -d ' ') path-shaped project folder(s): $(printf '%s' "$stray" | tr '\n' ' ')" \
+         "notes filed under a cwd slug instead of a project key — recall for those projects never looks there. A non-git project legitimately has one; the rest are fallbacks from a directory that vanished. Refile by hand or leave them; nothing here moves them."
+  fi
 else
   fail "vault does not exist: $VAULT" "create it, or set \"vault\" in $(config_file)"
 fi

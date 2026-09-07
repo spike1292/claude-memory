@@ -3,6 +3,8 @@
 //
 //   no argv  -> GATE. Reads the hook payload on stdin, decides, and detaches the worker below.
 //   argv     -> WORKER. Distils one transcript into Obsidian Insight notes.
+//              <transcript> <cwd> [project-key]; the key is optional so an in-flight worker
+//              spawned by an older gate still runs.
 //
 // The gate re-invokes this same path, so the argv form is a contract — keep it.
 import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
@@ -30,7 +32,7 @@ if (argv.length >= 2) {
   );
   let r;
   try {
-    r = await distill(argv[0], argv[1]);
+    r = await distill(argv[0], argv[1], argv[2]);
   } catch (e) {
     // Caught only to RECORD it, then rethrown: the exit code and the stack in distill.log are
     // unchanged. Without this an `error` row printed no reason at all, in the same report round

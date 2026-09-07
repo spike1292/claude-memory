@@ -350,6 +350,28 @@ export function legacyKey(dir = process.cwd()) {
   return dir.replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
+/** Vault layers a project owns a folder in. */
+export const VAULT_LAYERS = ['Insights', 'Memory', 'Logs', 'Graph'];
+
+/**
+ * The write-path sibling of projectKey(), beside requireVault(): a path-shaped key is legacyKey(),
+ * which computeProjectKey() returns when git answers nothing — normally a directory that is gone.
+ * NOT "starts with a dash": a non-git project and the pre-migration legacy slug both produce one
+ * legitimately, and what tells them apart is that a folder for the key already exists.
+ *
+ * @param {string} key
+ * @param {string} vaultDir
+ * @returns {string}
+ */
+export function requireProjectKey(key, vaultDir) {
+  if (!key.startsWith('-')) return key;
+  if (VAULT_LAYERS.some((l) => fs.existsSync(path.join(vaultDir, l, key)))) return key;
+  throw new Error(
+    `unresolvable project key ${key} — git answered nothing for this cwd and the vault has no ` +
+      'folder under that key; refusing to write notes where nothing will look for them',
+  );
+}
+
 /**
  * Points transformers.js at $CLAUDE_MEMORY_HOME/models rather than its default cache inside the
  * plugin dir (see CLAUDE.md's "paths.useModelCache() exists because..." note — v4 ignores

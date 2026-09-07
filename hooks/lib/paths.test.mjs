@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync as run } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { normaliseRemote, legacyKey } from './paths.mjs';
+import { normaliseRemote, legacyKey, requireProjectKey } from './paths.mjs';
 
 const MODULE = fileURLToPath(new URL('./paths.mjs', import.meta.url));
 
@@ -304,4 +304,25 @@ test('requireVault: env or config.json only, throws rather than defaulting', () 
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ vault: '/tmp/config-vault' }));
   const fromConfig = requireVaultIn(withHome({}));
   assert.deepEqual(fromConfig, { ok: true, v: '/tmp/config-vault' });
+});
+
+test('requireProjectKey refuses only a path-shaped key the vault has never seen', (t) => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'reqkey-'));
+  t.after(() => fs.rmSync(vault, { recursive: true, force: true }));
+
+  assert.strictEqual(
+    requireProjectKey('github.com-spike1292-claude-memory', vault),
+    'github.com-spike1292-claude-memory',
+    'a real project key is never questioned',
+  );
+  // The two legitimate path-shaped keys — a non-git project, and the pre-migration legacy slug —
+  // are exactly the ones a "starts with a dash" test would have broken. What tells them from a
+  // vanished directory is that a folder for them already exists.
+  fs.mkdirSync(path.join(vault, 'Memory', '-Users-me-notes'), { recursive: true });
+  assert.strictEqual(requireProjectKey('-Users-me-notes', vault), '-Users-me-notes');
+  assert.throws(
+    () => requireProjectKey('-tmp-worktree-gone', vault),
+    /unresolvable project key/,
+    'a brand-new path-shaped key means git could not answer — refuse the write',
+  );
 });
