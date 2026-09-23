@@ -491,6 +491,65 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', slug));
   });
 
+  await t.test('a fallback key never repoints a symlink at a remote-keyed folder (#140)', () => {
+    const w = scratch('fallback');
+    const dir = path.join(w.tmp, 'worktree');
+    fs.mkdirSync(dir);
+    const slug = slugOf(dir);
+    const real = path.join(w.vault, 'Memory', 'github.com-example-iota');
+    write(path.join(real, 'a.md'), 'A\n');
+    write(path.join(real, 'b.md'), 'B\n');
+    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.dirname(mem), { recursive: true });
+    fs.symlinkSync(real, mem);
+
+    const stdout = runSync(w, dir);
+
+    assert.strictEqual(fs.readlinkSync(mem), real);
+    for (const layer of ['Memory', 'Logs', 'Insights', 'Graph']) {
+      assert.ok(!fs.existsSync(path.join(w.vault, layer, slug)), `no ${layer}/<slug> folder`);
+    }
+    assert.deepStrictEqual(fs.readdirSync(real).sort(), ['a.md', 'b.md']);
+    assert.match(stdout, /Memory\/github\.com-example-iota\//, 'the context names the real key');
+  });
+
+  await t.test('a fallback key adopted from ANOTHER vault copies across, never moves', () => {
+    const w = scratch('fallback-xvault');
+    const dir = path.join(w.tmp, 'worktree');
+    fs.mkdirSync(dir);
+    const slug = slugOf(dir);
+    const key = 'github.com-example-kappa';
+    const old = path.join(w.tmp, 'other-vault', 'Memory', key);
+    write(path.join(old, 'keep.md'), 'KEEP\n');
+    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.dirname(mem), { recursive: true });
+    fs.symlinkSync(old, mem);
+
+    runSync(w, dir);
+
+    assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', key));
+    assert.strictEqual(fs.readFileSync(path.join(mem, 'keep.md'), 'utf8'), 'KEEP\n');
+    assert.deepStrictEqual(fs.readdirSync(old), ['keep.md'], 'the old target is intact');
+    assert.ok(!fs.existsSync(path.join(w.vault, 'Memory', slug)), 'no Memory/<slug> folder');
+  });
+
+  await t.test('a fallback key with a link outside any Memory/ folder repoints as before', () => {
+    const w = scratch('fallback-odd');
+    const dir = path.join(w.tmp, 'plain');
+    fs.mkdirSync(dir);
+    const slug = slugOf(dir);
+    const odd = path.join(w.tmp, 'somewhere', 'notes');
+    write(path.join(odd, 'x.md'), 'X\n');
+    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.dirname(mem), { recursive: true });
+    fs.symlinkSync(odd, mem);
+
+    runSync(w, dir);
+
+    assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', slug));
+    assert.strictEqual(fs.readFileSync(path.join(mem, 'x.md'), 'utf8'), 'X\n');
+  });
+
   await t.test(
     'the 0.1.1/0.1.2 marker files migrate into config.json and nothing else moves',
     () => {
