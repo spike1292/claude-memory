@@ -491,6 +491,28 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', slug));
   });
 
+  await t.test('a fallback key never repoints a symlink at a remote-keyed folder (#140)', () => {
+    const w = scratch('fallback');
+    const dir = path.join(w.tmp, 'worktree');
+    fs.mkdirSync(dir);
+    const slug = slugOf(dir);
+    const real = path.join(w.vault, 'Memory', 'github.com-example-iota');
+    write(path.join(real, 'a.md'), 'A\n');
+    write(path.join(real, 'b.md'), 'B\n');
+    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.dirname(mem), { recursive: true });
+    fs.symlinkSync(real, mem);
+
+    const stdout = runSync(w, dir);
+
+    assert.strictEqual(fs.readlinkSync(mem), real);
+    for (const layer of ['Memory', 'Logs', 'Insights', 'Graph']) {
+      assert.ok(!fs.existsSync(path.join(w.vault, layer, slug)), `no ${layer}/<slug> folder`);
+    }
+    assert.deepStrictEqual(fs.readdirSync(real).sort(), ['a.md', 'b.md']);
+    assert.match(stdout, /# Memory \(plugin: /, 'the rest of the hook still runs');
+  });
+
   await t.test(
     'the 0.1.1/0.1.2 marker files migrate into config.json and nothing else moves',
     () => {

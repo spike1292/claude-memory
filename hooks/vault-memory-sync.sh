@@ -44,6 +44,11 @@ key=$(project_key "$cwd")
 mem="$HOME/.claude/projects/$slug/memory"
 dest="$VAULT/Memory/$key"
 
+keep_link=false
+if [ "$key" = "$slug" ] && [ -L "$mem" ] && [ "$(basename "$(readlink "$mem")")" != "$key" ]; then
+  keep_link=true
+fi
+
 # One-time migration off the old cwd-slug vault naming (pre-2026-08-08). Only moves
 # when the destination is free — never merges two folders behind your back.
 if [ "$slug" != "$key" ]; then
@@ -58,7 +63,7 @@ if [ "$slug" != "$key" ]; then
 fi
 
 # Per-project vault subfolders for every memory layer (idempotent).
-mkdir -p "$dest" \
+$keep_link || mkdir -p "$dest" \
   "$VAULT/Logs/$key" \
   "$VAULT/Insights/$key/Patterns" \
   "$VAULT/Insights/$key/Mistakes" \
@@ -66,7 +71,9 @@ mkdir -p "$dest" \
   "$VAULT/Graph/$key" \
   "$VAULT/permanent"
 
-if [ -L "$mem" ]; then
+if $keep_link; then
+  :
+elif [ -L "$mem" ]; then
   # already a symlink — repoint if it targets the wrong place.
   cur=$(readlink "$mem")
   if [ "$cur" != "$dest" ]; then
