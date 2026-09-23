@@ -269,12 +269,12 @@ if [ -d "$VAULT" ]; then
     fi
   fi
   # #138/#140: a leading `-` is legacyKey(), a path slug. Right for a non-git project, and where a
-  # deleted worktree's key fell back to. Named here, never moved.
+  # deleted worktree's key fell back to. Counted, never named (a slug is a local path) or moved.
   ps=$(find "$VAULT/Memory" "$VAULT/Insights" "$VAULT/Logs" "$VAULT/Graph" -mindepth 1 -maxdepth 1 \
          -type d -name '-*' 2>/dev/null | sed 's|.*/||' | LC_ALL=C sort -u)
   if [ -n "$ps" ]; then
-    warn "$(printf '%s\n' "$ps" | wc -l | tr -d ' ') path-shaped project folder(s): $(printf '%s' "$ps" | tr '\n' ' ')" \
-         "fine for a non-git project; otherwise its notes fell back from a deleted directory and nothing searches them — refile them by hand under the project's real key."
+    warn "$(printf '%s\n' "$ps" | wc -l | tr -d ' ') path-shaped project folder(s)" \
+         "fine for a non-git project; otherwise its notes fell back from a deleted directory and nothing searches them — refile by hand under the real key. List: find <vault>/{Memory,Insights,Logs,Graph} -mindepth 1 -maxdepth 1 -name '-*'"
   else
     ok "no path-shaped project folders"
   fi
