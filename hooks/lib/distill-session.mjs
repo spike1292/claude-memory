@@ -946,6 +946,8 @@ function refreshOwnIndex(cwd, slug) {
       encoding: 'utf8',
       timeout: 600_000,
       stdio: 'pipe',
+      // Same reason as the extractor: an inherited, deleted cwd kills the child at process.cwd().
+      cwd: os.tmpdir(),
     });
     console.error('distill: refreshed the plugin semantic index');
   } catch (e) {
