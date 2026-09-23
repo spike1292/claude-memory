@@ -93,6 +93,24 @@ export function requireVault() {
   return vault();
 }
 
+/**
+ * `requireVault()`'s sibling for the project key. A path-shaped key (`legacyKey()`, always a
+ * leading `-`) is accepted only when the vault already has a folder for it: a non-git project or a
+ * pre-migration folder has one, a directory that vanished before the write does not (#138).
+ *
+ * @param {string} key
+ * @param {string} vaultDir
+ * @returns {string}
+ */
+export function requireProjectKey(key, vaultDir) {
+  if (!key.startsWith('-')) return key;
+  if (['Memory', 'Insights', 'Logs'].some((l) => fs.existsSync(path.join(vaultDir, l, key))))
+    return key;
+  throw new Error(
+    `project key "${key}" is a path slug with no vault folder — the directory is likely gone, refusing to write under it`,
+  );
+}
+
 /** Per-prompt recall is off unless explicitly armed. */
 export function recallEnabled() {
   return process.env.MEMORY_RECALL_ENABLED === '1' || config().recall === true;

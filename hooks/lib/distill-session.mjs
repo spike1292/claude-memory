@@ -8,7 +8,7 @@
 //
 // Tests:       node --test hooks/lib/distill-session.test.mjs
 // Dry run (no LLM call, canned insights):
-//   DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd>
+//   DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd> [project-key]
 //
 // Ported from distill-session.py on 2026-08-16: macOS ships Python 3.9, which could not parse
 // this file's `str | None` annotations, so distillation was silently dead on a stock Mac. Why
@@ -963,14 +963,15 @@ function refreshOwnIndex(cwd) {
  *
  * @param {string} transcript
  * @param {string} cwd
+ * @param {string} [key] resolved by the gate while `cwd` still existed; absent from an older gate
  * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
  */
-export async function distill(transcript, cwd) {
+export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
   // write nothing, not a partial note under a guessed vault or project.
   if (!cwd) throw new Error('distill: missing cwd — refusing to infer scope for a write');
   VAULT = process.env.DISTILL_VAULT || paths.requireVault();
-  let slug = projectKey(cwd);
+  let slug = key || projectKey(cwd);
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
   const legacy = paths.legacyKey(cwd);
@@ -981,6 +982,7 @@ export async function distill(transcript, cwd) {
   ) {
     slug = legacy;
   }
+  slug = paths.requireProjectKey(slug, VAULT);
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
@@ -1077,6 +1079,18 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
 }
 
 /**
+ * The worker's argv. The key is resolved HERE because the gate runs while `cwd` still exists; a
+ * worktree tool may delete it before the detached worker gets to git (#138).
+ *
+ * @param {string} transcript
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+export function workerArgs(transcript, cwd) {
+  return [path.join(paths.hooksDir, 'distill-session.mjs'), transcript, cwd, projectKey(cwd)];
+}
+
+/**
  * Gate, then detach the worker.
  *
  * The worker is this module's own entry, re-invoked with argv — one file, two modes, because the
@@ -1092,15 +1106,11 @@ export function gate(p) {
   writeMarker(plan.marker, plan.now);
   // gatePlan already refused to run without a cwd, so this never throws in practice.
   const cwd = requireHookCwd(p);
-  const pid = detach(
-    process.execPath,
-    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd],
-    {
-      cwd,
-      logFile: path.join(paths.stateDir('logs'), 'distill.log'),
-      env: { MEMORY_HOOK_SESSION: p?.session_id },
-    },
-  );
+  const pid = detach(process.execPath, workerArgs(plan.transcript, cwd), {
+    cwd,
+    logFile: path.join(paths.stateDir('logs'), 'distill.log'),
+    env: { MEMORY_HOOK_SESSION: p?.session_id },
+  });
   // The spawn is the only part of this gate that can fail, and it fails ASYNCHRONOUSLY: a null pid
   // is the one signal there is. Ignoring it meant logging `spawned` for a run that never started —
   // a healthy-looking column with nothing anywhere to contradict it, which is the exact failure the

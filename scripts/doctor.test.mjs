@@ -107,3 +107,21 @@ test('doctor warns on CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, a third memory system'
     fs.rmSync(world.tmp, { recursive: true, force: true });
   }
 });
+
+test('doctor names path-shaped project folders in the vault, and moves nothing', () => {
+  const world = scratch();
+  try {
+    const section = (/** @type {string} */ out) =>
+      out.slice(out.indexOf('\nvault\n'), out.indexOf('\n', out.indexOf('plugin-root')));
+    fs.mkdirSync(path.join(world.vault, 'Memory', 'github.com-x-y'), { recursive: true });
+    assert.match(section(run(world)), /ok\s+no path-shaped project folders/);
+
+    for (const d of ['Memory/-private-tmp', 'Insights/-private-tmp', 'Logs/-Users-me'])
+      fs.mkdirSync(path.join(world.vault, d), { recursive: true });
+    const out = section(run(world));
+    assert.match(out, /WARN\s+2 path-shaped project folder\(s\): -Users-me -private-tmp/, out);
+    assert.ok(fs.existsSync(path.join(world.vault, 'Memory', '-private-tmp')), 'nothing moved');
+  } finally {
+    fs.rmSync(world.tmp, { recursive: true, force: true });
+  }
+});

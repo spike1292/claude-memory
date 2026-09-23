@@ -268,6 +268,16 @@ if [ -d "$VAULT" ]; then
       warn "vault is empty" "expected on a first install; notes appear as you work."
     fi
   fi
+  # #138/#140: a leading `-` is legacyKey(), a path slug. Right for a non-git project, and where a
+  # deleted worktree's key fell back to. Named here, never moved.
+  ps=$(find "$VAULT/Memory" "$VAULT/Insights" "$VAULT/Logs" "$VAULT/Graph" -mindepth 1 -maxdepth 1 \
+         -type d -name '-*' 2>/dev/null | sed 's|.*/||' | LC_ALL=C sort -u)
+  if [ -n "$ps" ]; then
+    warn "$(printf '%s\n' "$ps" | wc -l | tr -d ' ') path-shaped project folder(s): $(printf '%s' "$ps" | tr '\n' ' ')" \
+         "fine for a non-git project; otherwise its notes fell back from a deleted directory and nothing searches them — refile them by hand under the project's real key."
+  else
+    ok "no path-shaped project folders"
+  fi
 else
   fail "vault does not exist: $VAULT" "create it, or set \"vault\" in $(config_file)"
 fi
