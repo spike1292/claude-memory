@@ -974,7 +974,8 @@ export async function distill(transcript, cwd, key) {
   // write nothing, not a partial note under a guessed vault or project.
   if (!cwd) throw new Error('distill: missing cwd — refusing to infer scope for a write');
   VAULT = process.env.DISTILL_VAULT || paths.requireVault();
-  let slug = key || projectKey(cwd);
+  const resolved = key || projectKey(cwd);
+  let slug = resolved;
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
   const legacy = paths.legacyKey(cwd);
@@ -989,7 +990,7 @@ export async function distill(transcript, cwd, key) {
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
-  const insights = runExtractor(convo, cwd, slug);
+  const insights = runExtractor(convo, cwd, resolved);
   const { written, merged, declined, notes } = await writeNotes(insights, slug);
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual

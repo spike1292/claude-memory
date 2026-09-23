@@ -1166,29 +1166,45 @@ test("the extract cost row is filed under the gate's key when the worktree is go
   );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
-  execFileSync(
-    process.execPath,
-    [entry, path.join(root, 't.jsonl'), path.join(root, 'deleted-worktree'), 'github.com-x-y'],
-    {
+  const repo = path.join(root, 'checkout');
+  fs.mkdirSync(repo);
+  for (const a of [
+    ['init', '-q'],
+    ['remote', 'add', 'origin', 'git@github.com:x/y.git'],
+  ])
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  const legacyVault = path.join(root, 'vault-legacy');
+  fs.mkdirSync(path.join(legacyVault, 'Insights', paths.legacyKey(repo)), { recursive: true });
+
+  // Gone worktree with the gate's key; and the pre-migration case, where notes go to the legacy
+  // folder but the row must still carry the key the gate and worker rows are filed under.
+  /** @type {[string, string[], string][]} */
+  const cases = [
+    ['gone', [path.join(root, 'deleted-worktree'), 'github.com-x-y'], path.join(root, 'vault')],
+    ['legacy', [repo], legacyVault],
+  ];
+  for (const [name, args, vault] of cases) {
+    const state = path.join(root, `state-${name}`);
+    execFileSync(process.execPath, [entry, path.join(root, 't.jsonl'), ...args], {
       stdio: 'pipe',
       env: {
         ...GIT_ENV,
         PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
         HOME: root,
-        CLAUDE_MEMORY_HOME: path.join(root, 'state'),
-        DISTILL_VAULT: path.join(root, 'vault'),
+        CLAUDE_MEMORY_HOME: state,
+        DISTILL_VAULT: vault,
         DISTILL_DRYRUN: '',
       },
-    },
-  );
-  const logDir = path.join(root, 'state', 'logs');
-  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
-  const lines = fs
-    .readFileSync(path.join(logDir, file), 'utf8')
-    .trim()
-    .split('\n')
-    .map((l) => JSON.parse(l));
-  assert.strictEqual(lines.find((l) => l.event === 'extract')?.slug, 'github.com-x-y');
+    });
+    const logDir = path.join(state, 'logs');
+    const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+    const lines = fs
+      .readFileSync(path.join(logDir, file), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    assert.strictEqual(lines.find((l) => l.event === 'extract')?.slug, 'github.com-x-y', name);
+  }
 });
 
 test('a failure that already cost money is never retried, whatever shape it printed', (t) => {
