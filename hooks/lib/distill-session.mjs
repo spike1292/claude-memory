@@ -8,7 +8,7 @@
 //
 // Tests:       node --test hooks/lib/distill-session.test.mjs
 // Dry run (no LLM call, canned insights):
-//   DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd>
+//   DISTILL_DRYRUN=1 node hooks/distill-session.mjs <transcript> <cwd> [project-key]
 //
 // Ported from distill-session.py on 2026-08-16: macOS ships Python 3.9, which could not parse
 // this file's `str | None` annotations, so distillation was silently dead on a stock Mac. Why
@@ -422,11 +422,12 @@ export function projectKey(cwd) {
  *
  * @param {string} convo
  * @param {string} [cwd]
+ * @param {string} [slug] the resolved key; `cwd` may be gone, so the log must not re-derive it
  * @param {string} [session] defaults to MEMORY_HOOK_SESSION, which the gate exports, so this line
  *   and the worker line around it read as one background run
  * @returns {Insights}
  */
-function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
+function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSION) {
   if (process.env.DISTILL_DRYRUN) {
     return {
       patterns: [{ title: 'Dry run pattern', description: 'canned' }],
@@ -465,7 +466,7 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
         // says `is_error`, or an attempt that threw, is not a run that produced insights, and
         // `ran` beside a cost would fold it into the average of the ones that did.
         outcome: failed || envelope.isError ? 'error' : 'ran',
-        extra: envelope.usage,
+        extra: { ...envelope.usage, ...(slug && { slug }) },
       });
     return extractJson(envelope ? envelope.text : out);
   };
@@ -583,11 +584,10 @@ function dupeRequest(sockPath, req) {
  * active model is never evicted and a new distiller meets one after every update. Without the
  * marker that reply would be read as a verdict.
  *
- * @param {string} cwd
  * @param {string} slug
  * @returns {(req: object) => Promise<any>}
  */
-export function dupeClient(cwd, slug) {
+export function dupeClient(slug) {
   /** @type {string | null} */
   let sockPath = null;
   let spawned = false;
@@ -631,7 +631,8 @@ export function dupeClient(cwd, slug) {
       if (!spawned) {
         spawned = true;
         detach(process.execPath, [path.join(paths.scriptsDir, 'memory-semantic.mjs'), '--serve'], {
-          cwd,
+          // Never the worker's cwd: a deleted worktree makes the spawn fail and the wait run out.
+          cwd: os.tmpdir(),
         });
       }
       if (Date.now() >= deadline) {
@@ -649,17 +650,16 @@ export function dupeClient(cwd, slug) {
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @param {string} cwd
  * @returns {Promise<{ written: number, merged: number, declined: number, notes: WrittenNote[] }>}
  */
-async function writeNotes(insights, slug, cwd) {
+async function writeNotes(insights, slug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let declined = 0;
   /** @type {WrittenNote[]} */
   const notes = [];
 
-  const ask = dupeClient(cwd, slug);
+  const ask = dupeClient(slug);
   // Notes written earlier in THIS run are invisible to the (stale) index — closes the same-run
   // dupe gap; see docs/decisions/2026-08-23-embedding-reconcile.md "Same-run comparison".
   /** @type {{ note: string, layer: string, vec: number[], file: string }[]} */
@@ -885,7 +885,7 @@ function reindex(cwd, slug) {
         "disk. The plugin's own index is unaffected and is being refreshed instead. " +
         'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).',
     );
-    refreshOwnIndex(cwd);
+    refreshOwnIndex(cwd, slug);
     return;
   }
   // INVARIANT: label and indexed directory must derive from the same `slug` (label == indexed
@@ -935,16 +935,19 @@ function reindex(cwd, slug) {
  * so racing the SessionStart refresh is safe.
  *
  * @param {string} cwd
+ * @param {string} slug
  * @returns {void}
  */
-function refreshOwnIndex(cwd) {
+function refreshOwnIndex(cwd, slug) {
   const script = path.join(paths.scriptsDir, 'memory-semantic.mjs');
   if (!fs.existsSync(script)) return;
   try {
-    execFileSync(process.execPath, [script, '--index', cwd], {
+    execFileSync(process.execPath, [script, '--index', cwd, '--slug', slug], {
       encoding: 'utf8',
       timeout: 600_000,
       stdio: 'pipe',
+      // Same reason as the extractor: an inherited, deleted cwd kills the child at process.cwd().
+      cwd: os.tmpdir(),
     });
     console.error('distill: refreshed the plugin semantic index');
   } catch (e) {
@@ -963,14 +966,16 @@ function refreshOwnIndex(cwd) {
  *
  * @param {string} transcript
  * @param {string} cwd
+ * @param {string} [key] resolved by the gate while `cwd` still existed; absent from an older gate
  * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
  */
-export async function distill(transcript, cwd) {
+export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
   // write nothing, not a partial note under a guessed vault or project.
   if (!cwd) throw new Error('distill: missing cwd — refusing to infer scope for a write');
   VAULT = process.env.DISTILL_VAULT || paths.requireVault();
-  let slug = projectKey(cwd);
+  const resolved = key || projectKey(cwd);
+  let slug = resolved;
   // Pre-migration fallback: vault-memory-sync.sh renames the folders at SessionStart, but this
   // runs at SessionEnd of a session that may have started before the rename.
   const legacy = paths.legacyKey(cwd);
@@ -981,11 +986,12 @@ export async function distill(transcript, cwd) {
   ) {
     slug = legacy;
   }
+  slug = paths.requireProjectKey(slug, VAULT);
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
-  const insights = runExtractor(convo, cwd);
-  const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
+  const insights = runExtractor(convo, cwd, resolved);
+  const { written, merged, declined, notes } = await writeNotes(insights, slug);
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
@@ -1077,6 +1083,18 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
 }
 
 /**
+ * The worker's argv. The key is resolved HERE because the gate runs while `cwd` still exists; a
+ * worktree tool may delete it before the detached worker gets to git (#138).
+ *
+ * @param {string} transcript
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+export function workerArgs(transcript, cwd) {
+  return [path.join(paths.hooksDir, 'distill-session.mjs'), transcript, cwd, projectKey(cwd)];
+}
+
+/**
  * Gate, then detach the worker.
  *
  * The worker is this module's own entry, re-invoked with argv — one file, two modes, because the
@@ -1092,15 +1110,11 @@ export function gate(p) {
   writeMarker(plan.marker, plan.now);
   // gatePlan already refused to run without a cwd, so this never throws in practice.
   const cwd = requireHookCwd(p);
-  const pid = detach(
-    process.execPath,
-    [path.join(paths.hooksDir, 'distill-session.mjs'), plan.transcript, cwd],
-    {
-      cwd,
-      logFile: path.join(paths.stateDir('logs'), 'distill.log'),
-      env: { MEMORY_HOOK_SESSION: p?.session_id },
-    },
-  );
+  const pid = detach(process.execPath, workerArgs(plan.transcript, cwd), {
+    cwd,
+    logFile: path.join(paths.stateDir('logs'), 'distill.log'),
+    env: { MEMORY_HOOK_SESSION: p?.session_id },
+  });
   // The spawn is the only part of this gate that can fail, and it fails ASYNCHRONOUSLY: a null pid
   // is the one signal there is. Ignoring it meant logging `spawned` for a run that never started —
   // a healthy-looking column with nothing anywhere to contradict it, which is the exact failure the

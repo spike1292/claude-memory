@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
@@ -24,6 +24,7 @@ import {
   transcriptToText,
   parseEnvelope,
   distill,
+  workerArgs,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -780,9 +781,12 @@ test('the WORKER writes nothing and exits non-zero when the vault cannot be reso
   // Positive control, the SAME walk(home) technique: point the vault inside home and confirm the
   // scan that found nothing above finds something once a write actually happens. Without this, a
   // scan of the wrong directory in the failing case would also find nothing and pass by mistake.
+  // cwd is not a git repo, so its key is path-shaped and needs an existing folder (#138).
+  const configured = path.join(home, 'configured-vault');
+  fs.mkdirSync(path.join(configured, 'Memory', paths.legacyKey(cwd)), { recursive: true });
   execFileSync(process.execPath, [entry, transcript, cwd], {
     stdio: 'pipe',
-    env: { ...env, DISTILL_VAULT: path.join(home, 'configured-vault') },
+    env: { ...env, DISTILL_VAULT: configured },
   });
   assert.ok(walk(home).length > 0, 'the same scan does find files once a vault is configured');
 });
@@ -813,6 +817,113 @@ test('the WORKER writes nothing and exits non-zero when invoked with no cwd', (t
     /Command failed/,
   );
   assert.ok(!fs.existsSync(vault), 'a missing cwd must not fall back to writing under any vault');
+});
+
+/** @param {import('node:test').TestContext} t @param {string} prefix */
+const keyWorld = (t, prefix) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `line ${i}` } }),
+    ).join('\n') + '\n',
+  );
+  const vault = path.join(root, 'vault');
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  /** @param {string[]} args */
+  const run = (args) =>
+    spawnSync(process.execPath, [entry, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...GIT_ENV,
+        HOME: root,
+        CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+        DISTILL_VAULT: vault,
+        DISTILL_DRYRUN: '1',
+        CONTEXT_MODE_DIR: undefined,
+      },
+    });
+  /** @param {string} slug */
+  const notesUnder = (slug) => {
+    const d = path.join(vault, 'Insights', slug);
+    return fs.existsSync(d)
+      ? fs.readdirSync(d, { recursive: true }).filter((f) => String(f).endsWith('.md'))
+      : [];
+  };
+  /** @param {string} dir */
+  const gitRepo = (dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const a of [
+      ['init', '-q'],
+      ['remote', 'add', 'origin', 'git@github.com:x/y.git'],
+    ])
+      execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe', env: GIT_ENV });
+  };
+  return { root, transcript, vault, run, notesUnder, gitRepo };
+};
+
+test('the gate hands the worker its project key, so a deleted worktree still files correctly', (t) => {
+  const w = keyWorld(t, 'distill-key-roundtrip-');
+  const repo = path.join(w.root, 'worktree');
+  w.gitRepo(repo);
+  const args = workerArgs(w.transcript, repo);
+  fs.rmSync(repo, { recursive: true, force: true });
+
+  const r = w.run(args.slice(1));
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(w.notesUnder('github.com-x-y').length > 0, 'notes land under the remote key');
+  assert.deepStrictEqual(
+    fs.readdirSync(path.join(w.vault, 'Insights')),
+    ['github.com-x-y'],
+    'no path-shaped folder beside it',
+  );
+  // `/memory:doctor --hooks` filters on this slug, so the worker row must carry the key too.
+  const logDir = path.join(w.root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim());
+  assert.strictEqual(rec.event, 'worker');
+  assert.strictEqual(rec.slug, 'github.com-x-y');
+});
+
+test('a WORKER whose cwd is gone and was given no key writes nothing and logs an error', (t) => {
+  const w = keyWorld(t, 'distill-key-gone-');
+  const r = w.run([w.transcript, path.join(w.root, 'deleted-worktree')]);
+  assert.notStrictEqual(r.status, 0);
+  assert.ok(!fs.existsSync(path.join(w.vault, 'Insights')), 'no note under a fallback slug');
+
+  const logDir = path.join(w.root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim());
+  assert.strictEqual(rec.event, 'worker');
+  assert.strictEqual(rec.outcome, 'error');
+  assert.match(String(rec.reason), /project key/);
+});
+
+test('the project-key guard does not fire for a non-git project that already has a folder', (t) => {
+  const w = keyWorld(t, 'distill-key-plain-');
+  const plain = path.join(w.root, 'plain');
+  fs.mkdirSync(plain);
+  const slug = paths.legacyKey(plain);
+  fs.mkdirSync(path.join(w.vault, 'Memory', slug), { recursive: true });
+
+  const r = w.run([w.transcript, plain]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(w.notesUnder(slug).length > 0);
+});
+
+test('the pre-migration fallback still picks the legacy folder when only that one exists', (t) => {
+  const w = keyWorld(t, 'distill-key-legacy-');
+  const repo = path.join(w.root, 'checkout');
+  w.gitRepo(repo);
+  const legacy = paths.legacyKey(repo);
+  fs.mkdirSync(path.join(w.vault, 'Insights', legacy), { recursive: true });
+
+  const r = w.run([w.transcript, repo]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(w.notesUnder(legacy).length > 0);
+  assert.deepStrictEqual(w.notesUnder('github.com-x-y'), []);
 });
 
 test('every reason gatePlan can return is one gateOutcome actually recognises', () => {
@@ -1046,6 +1157,54 @@ test('a run that was billed and then failed records the money, marked error', (t
   // And it is NOT `ran`: folding a failed run into the average of successful ones flatters both.
   assert.strictEqual(extract.outcome, 'error');
   assert.strictEqual(notes.length, 0, 'an error envelope yields no insights');
+});
+
+test("the extract cost row is filed under the gate's key when the worktree is gone", (t) => {
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"type":"result","is_error":false,"result":"{}","total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1}}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  const repo = path.join(root, 'checkout');
+  fs.mkdirSync(repo);
+  for (const a of [
+    ['init', '-q'],
+    ['remote', 'add', 'origin', 'git@github.com:x/y.git'],
+  ])
+    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
+  const legacyVault = path.join(root, 'vault-legacy');
+  fs.mkdirSync(path.join(legacyVault, 'Insights', paths.legacyKey(repo)), { recursive: true });
+
+  // Gone worktree with the gate's key; and the pre-migration case, where notes go to the legacy
+  // folder but the row must still carry the key the gate and worker rows are filed under.
+  /** @type {[string, string[], string][]} */
+  const cases = [
+    ['gone', [path.join(root, 'deleted-worktree'), 'github.com-x-y'], path.join(root, 'vault')],
+    ['legacy', [repo], legacyVault],
+  ];
+  for (const [name, args, vault] of cases) {
+    const state = path.join(root, `state-${name}`);
+    execFileSync(process.execPath, [entry, path.join(root, 't.jsonl'), ...args], {
+      stdio: 'pipe',
+      env: {
+        ...GIT_ENV,
+        PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+        HOME: root,
+        CLAUDE_MEMORY_HOME: state,
+        DISTILL_VAULT: vault,
+        DISTILL_DRYRUN: '',
+      },
+    });
+    const logDir = path.join(state, 'logs');
+    const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+    const lines = fs
+      .readFileSync(path.join(logDir, file), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    assert.strictEqual(lines.find((l) => l.event === 'extract')?.slug, 'github.com-x-y', name);
+  }
 });
 
 test('a failure that already cost money is never retried, whatever shape it printed', (t) => {

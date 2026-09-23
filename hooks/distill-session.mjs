@@ -26,11 +26,13 @@ if (argv.length >= 2) {
       session: process.env.MEMORY_HOOK_SESSION,
       outcome,
       reason,
+      // appendJsonl() would re-derive the slug from argv[1], which may be gone (#138).
+      extra: argv[2] ? { slug: argv[2] } : undefined,
     }),
   );
   let r;
   try {
-    r = await distill(argv[0], argv[1]);
+    r = await distill(argv[0], argv[1], argv[2]);
   } catch (e) {
     // Caught only to RECORD it, then rethrown: the exit code and the stack in distill.log are
     // unchanged. Without this an `error` row printed no reason at all, in the same report round
@@ -51,7 +53,9 @@ if (argv.length >= 2) {
         `, for ${r.slug}`,
     );
 } else if (argv.length === 1) {
-  console.error('usage: distill-session.mjs <transcript> <cwd>   (or no args to gate on stdin)');
+  console.error(
+    'usage: distill-session.mjs <transcript> <cwd> [project-key]   (or no args to gate on stdin)',
+  );
   process.exit(1);
 } else {
   // GATE only. The worker half above writes the second line itself — same session id, carried in

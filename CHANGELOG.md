@@ -11,6 +11,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The distiller no longer files notes under a path slug when the worktree is gone (#138).** The
+  gate now resolves the project key while the directory still exists and passes it to the worker as
+  an optional third argument. A worker that has no key and cannot resolve one now aborts with
+  `outcome: error` and writes nothing. Before, it wrote under a slug like `-private-tmp` and logged
+  `ran`. A path-shaped key is still accepted when the vault already has a folder for it, so non-git
+  projects and pre-migration folders keep working.
+- **`/memory:doctor` counts path-shaped project folders in the vault** (leading `-`). It prints no
+  names, because such a slug is a local path, and it moves nothing. Such a folder is correct for a
+  non-git project. Anywhere else it holds notes that nothing searches.
 - **SessionStart no longer forks a project's memory into a path-shaped folder (#140).** When git
   could not resolve a worktree, `project_key` fell back to the cwd slug and `vault-memory-sync.sh`
   created `Memory/<slug>/`, copied every note into it, and repointed the memory symlink there. A
