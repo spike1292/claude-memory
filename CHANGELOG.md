@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-23
+
 ### Fixed
 
 - **The distiller no longer files notes under a path slug when the worktree is gone (#138).** The
@@ -1405,7 +1407,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/spike1292/claude-memory/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spike1292/claude-memory/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/spike1292/claude-memory/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/spike1292/claude-memory/compare/v0.5.0...v0.6.0
