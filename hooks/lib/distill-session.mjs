@@ -885,7 +885,7 @@ function reindex(cwd, slug) {
         "disk. The plugin's own index is unaffected and is being refreshed instead. " +
         'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).',
     );
-    refreshOwnIndex(cwd);
+    refreshOwnIndex(cwd, slug);
     return;
   }
   // INVARIANT: label and indexed directory must derive from the same `slug` (label == indexed
@@ -935,13 +935,14 @@ function reindex(cwd, slug) {
  * so racing the SessionStart refresh is safe.
  *
  * @param {string} cwd
+ * @param {string} slug
  * @returns {void}
  */
-function refreshOwnIndex(cwd) {
+function refreshOwnIndex(cwd, slug) {
   const script = path.join(paths.scriptsDir, 'memory-semantic.mjs');
   if (!fs.existsSync(script)) return;
   try {
-    execFileSync(process.execPath, [script, '--index', cwd], {
+    execFileSync(process.execPath, [script, '--index', cwd, '--slug', slug], {
       encoding: 'utf8',
       timeout: 600_000,
       stdio: 'pipe',

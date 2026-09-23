@@ -104,7 +104,9 @@ export function requireVault() {
  */
 export function requireProjectKey(key, vaultDir) {
   if (!key.startsWith('-')) return key;
-  if (['Memory', 'Insights', 'Logs'].some((l) => fs.existsSync(path.join(vaultDir, l, key))))
+  if (
+    ['Memory', 'Insights', 'Logs', 'Graph'].some((l) => fs.existsSync(path.join(vaultDir, l, key)))
+  )
     return key;
   throw new Error(
     `project key "${key}" is a path slug with no vault folder — the directory is likely gone, refusing to write under it`,

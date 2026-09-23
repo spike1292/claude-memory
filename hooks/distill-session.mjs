@@ -26,6 +26,8 @@ if (argv.length >= 2) {
       session: process.env.MEMORY_HOOK_SESSION,
       outcome,
       reason,
+      // appendJsonl() would re-derive the slug from argv[1], which may be gone (#138).
+      extra: argv[2] ? { slug: argv[2] } : undefined,
     }),
   );
   let r;

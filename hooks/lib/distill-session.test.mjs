@@ -879,6 +879,12 @@ test('the gate hands the worker its project key, so a deleted worktree still fil
     ['github.com-x-y'],
     'no path-shaped folder beside it',
   );
+  // `/memory:doctor --hooks` filters on this slug, so the worker row must carry the key too.
+  const logDir = path.join(w.root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const rec = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8').trim());
+  assert.strictEqual(rec.event, 'worker');
+  assert.strictEqual(rec.slug, 'github.com-x-y');
 });
 
 test('a WORKER whose cwd is gone and was given no key writes nothing and logs an error', (t) => {
