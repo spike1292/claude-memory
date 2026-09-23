@@ -108,8 +108,9 @@ export function requireProjectKey(key, vaultDir) {
     ['Memory', 'Insights', 'Logs', 'Graph'].some((l) => fs.existsSync(path.join(vaultDir, l, key)))
   )
     return key;
+  // No key in the message: it lands in --hooks, whose redact() misses a slash-free path.
   throw new Error(
-    `project key "${key}" is a path slug with no vault folder — the directory is likely gone, refusing to write under it`,
+    'project key is a path slug with no vault folder — the directory is likely gone, refusing to write under it',
   );
 }
 

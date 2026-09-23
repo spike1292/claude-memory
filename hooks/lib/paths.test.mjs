@@ -310,7 +310,12 @@ test('requireProjectKey: a path-shaped key needs a folder in any layer', (t) => 
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'require-key-'));
   t.after(() => fs.rmSync(vault, { recursive: true, force: true }));
   assert.strictEqual(requireProjectKey('github.com-x-y', vault), 'github.com-x-y');
-  assert.throws(() => requireProjectKey('-private-tmp', vault), /no vault folder/);
+  assert.throws(
+    () => requireProjectKey('-Users-me-client', vault),
+    (/** @type {Error} */ e) =>
+      /no vault folder/.test(e.message) && !e.message.includes('-Users-me'),
+    'the message reaches --hooks, so it must not carry the path slug',
+  );
   for (const layer of ['Memory', 'Insights', 'Logs', 'Graph']) {
     const key = `-gone-${layer}`;
     assert.throws(() => requireProjectKey(key, vault), /no vault folder/, layer);
