@@ -510,7 +510,24 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
       assert.ok(!fs.existsSync(path.join(w.vault, layer, slug)), `no ${layer}/<slug> folder`);
     }
     assert.deepStrictEqual(fs.readdirSync(real).sort(), ['a.md', 'b.md']);
-    assert.match(stdout, /# Memory \(plugin: /, 'the rest of the hook still runs');
+    assert.match(stdout, /Memory\/github\.com-example-iota\//, 'the context names the real key');
+  });
+
+  await t.test('a fallback key with a link outside any Memory/ folder repoints as before', () => {
+    const w = scratch('fallback-odd');
+    const dir = path.join(w.tmp, 'plain');
+    fs.mkdirSync(dir);
+    const slug = slugOf(dir);
+    const odd = path.join(w.tmp, 'somewhere', 'notes');
+    write(path.join(odd, 'x.md'), 'X\n');
+    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.dirname(mem), { recursive: true });
+    fs.symlinkSync(odd, mem);
+
+    runSync(w, dir);
+
+    assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', slug));
+    assert.strictEqual(fs.readFileSync(path.join(mem, 'x.md'), 'utf8'), 'X\n');
   });
 
   await t.test(

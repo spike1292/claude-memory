@@ -142,7 +142,9 @@ Claude Code fires SessionStart
    │
    ├─▶ hooks/vault-memory-sync.sh          15s   resolve vault, migrate legacy_key ->
    │      (bash; DO NOT PORT — see H4)           project_key folders, repoint
-   │                                             ~/.claude/projects/<slug>/memory,
+   │                                             ~/.claude/projects/<slug>/memory
+   │                                             (a cwd-slug fallback key keeps the
+   │                                             Memory/<key> the link names; #140),
    │                                             rewrite $STATE/plugin-root
    │
    ├─▶ hooks/insights-surface.mjs          10s   print <=15 newest L3 Mistakes

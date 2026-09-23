@@ -14,8 +14,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **SessionStart no longer forks a project's memory into a path-shaped folder (#140).** When git
   could not resolve a worktree, `project_key` fell back to the cwd slug and `vault-memory-sync.sh`
   created `Memory/<slug>/`, copied every note into it, and repointed the memory symlink there. A
-  fallback key now leaves an existing symlink to another folder alone and creates no layer folders.
-  A non-git project with no symlink yet is unchanged.
+  fallback key now takes the key from the folder the symlink already names under `Memory/`, so the
+  link, the layer folders and the session context all stay on the real project. A non-git project
+  with no symlink yet is unchanged.
 
 ## [0.8.0] - 2026-09-06
 
