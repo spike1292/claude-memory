@@ -422,11 +422,12 @@ export function projectKey(cwd) {
  *
  * @param {string} convo
  * @param {string} [cwd]
+ * @param {string} [slug] the resolved key; `cwd` may be gone, so the log must not re-derive it
  * @param {string} [session] defaults to MEMORY_HOOK_SESSION, which the gate exports, so this line
  *   and the worker line around it read as one background run
  * @returns {Insights}
  */
-function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
+function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSION) {
   if (process.env.DISTILL_DRYRUN) {
     return {
       patterns: [{ title: 'Dry run pattern', description: 'canned' }],
@@ -465,7 +466,7 @@ function runExtractor(convo, cwd, session = process.env.MEMORY_HOOK_SESSION) {
         // says `is_error`, or an attempt that threw, is not a run that produced insights, and
         // `ran` beside a cost would fold it into the average of the ones that did.
         outcome: failed || envelope.isError ? 'error' : 'ran',
-        extra: envelope.usage,
+        extra: { ...envelope.usage, ...(slug && { slug }) },
       });
     return extractJson(envelope ? envelope.text : out);
   };
@@ -583,11 +584,10 @@ function dupeRequest(sockPath, req) {
  * active model is never evicted and a new distiller meets one after every update. Without the
  * marker that reply would be read as a verdict.
  *
- * @param {string} cwd
  * @param {string} slug
  * @returns {(req: object) => Promise<any>}
  */
-export function dupeClient(cwd, slug) {
+export function dupeClient(slug) {
   /** @type {string | null} */
   let sockPath = null;
   let spawned = false;
@@ -631,7 +631,8 @@ export function dupeClient(cwd, slug) {
       if (!spawned) {
         spawned = true;
         detach(process.execPath, [path.join(paths.scriptsDir, 'memory-semantic.mjs'), '--serve'], {
-          cwd,
+          // Never the worker's cwd: a deleted worktree makes the spawn fail and the wait run out.
+          cwd: os.tmpdir(),
         });
       }
       if (Date.now() >= deadline) {
@@ -649,17 +650,16 @@ export function dupeClient(cwd, slug) {
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @param {string} cwd
  * @returns {Promise<{ written: number, merged: number, declined: number, notes: WrittenNote[] }>}
  */
-async function writeNotes(insights, slug, cwd) {
+async function writeNotes(insights, slug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let declined = 0;
   /** @type {WrittenNote[]} */
   const notes = [];
 
-  const ask = dupeClient(cwd, slug);
+  const ask = dupeClient(slug);
   // Notes written earlier in THIS run are invisible to the (stale) index — closes the same-run
   // dupe gap; see docs/decisions/2026-08-23-embedding-reconcile.md "Same-run comparison".
   /** @type {{ note: string, layer: string, vec: number[], file: string }[]} */
@@ -989,8 +989,8 @@ export async function distill(transcript, cwd, key) {
   if (!fs.existsSync(transcript) || !fs.statSync(transcript).isFile()) return null;
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
-  const insights = runExtractor(convo, cwd);
-  const { written, merged, declined, notes } = await writeNotes(insights, slug, cwd);
+  const insights = runExtractor(convo, cwd, slug);
+  const { written, merged, declined, notes } = await writeNotes(insights, slug);
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.

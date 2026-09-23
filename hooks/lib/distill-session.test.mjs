@@ -1159,6 +1159,38 @@ test('a run that was billed and then failed records the money, marked error', (t
   assert.strictEqual(notes.length, 0, 'an error envelope yields no insights');
 });
 
+test("the extract cost row is filed under the gate's key when the worktree is gone", (t) => {
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"type":"result","is_error":false,"result":"{}","total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1}}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  execFileSync(
+    process.execPath,
+    [entry, path.join(root, 't.jsonl'), path.join(root, 'deleted-worktree'), 'github.com-x-y'],
+    {
+      stdio: 'pipe',
+      env: {
+        ...GIT_ENV,
+        PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+        HOME: root,
+        CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+        DISTILL_VAULT: path.join(root, 'vault'),
+        DISTILL_DRYRUN: '',
+      },
+    },
+  );
+  const logDir = path.join(root, 'state', 'logs');
+  const [file] = fs.readdirSync(logDir).filter((f) => f.startsWith('hooks-'));
+  const lines = fs
+    .readFileSync(path.join(logDir, file), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l));
+  assert.strictEqual(lines.find((l) => l.event === 'extract')?.slug, 'github.com-x-y');
+});
+
 test('a failure that already cost money is never retried, whatever shape it printed', (t) => {
   // The round-2 guard proved the CLI understood the flag by PARSING the envelope, so any failure
   // that mangled stdout fell through to a second billed call recording nothing. Reproduced with
