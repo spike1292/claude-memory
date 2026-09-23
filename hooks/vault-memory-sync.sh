@@ -42,6 +42,7 @@ slug=$(legacy_key "$cwd")
 key=$(project_key "$cwd")
 
 mem="$HOME/.claude/projects/$slug/memory"
+# key==slug: git gave no answer. Keep the Memory/<key> the link already names rather than fork it (#140).
 if [ "$key" = "$slug" ] && [ -L "$mem" ]; then
   linked=$(readlink "$mem"); linked=${linked%/}
   [ "$(basename "$(dirname "$linked")")" = Memory ] && key=$(basename "$linked")
