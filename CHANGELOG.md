@@ -21,6 +21,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `slugFallback` (the server was silent, so the slug arm decided), or `inRun` (merged into a note
   from the same run). `scores` lists the top same-folder score of each written note, also when it
   is below `dupeMin`. Zero counts and empty lists are omitted.
+- `/memory:install` no longer discards a fresh install when the shared `node_modules` in
+  `$CLAUDE_MEMORY_HOME` is empty. `share-modules.mjs` now replaces an empty shared copy, refuses a
+  non-empty one without `onnxruntime-node`, and exits non-zero when neither side holds an install. The
+  `npm ci` step unlinks an existing `node_modules` symlink first, so npm cannot empty the shared
+  copy through it (#107).
 
 ## [0.8.1] - 2026-09-23
 
