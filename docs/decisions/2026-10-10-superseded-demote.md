@@ -7,6 +7,12 @@
 `searchIn()` multiplies a superseded chunk's score by `SUPERSEDED_DEMOTE` in both arms, for ordering
 only. The returned `s` stays raw cosine, so the recall gate is unaffected by any value here.
 
+## Card and alias chunks inherit
+
+A section carries only its own marker, but the card and `(aliases)` chunks carry any marker in
+their note. Without that the supersede cases stay at 5/8 at every value: they match through the
+alias chunk, which never contains the marker.
+
 ## The sweep
 
 Synthetic vault, seed 7, `--notes 300`, bge-m3, `cases-supersede.jsonl` (`tuning`):

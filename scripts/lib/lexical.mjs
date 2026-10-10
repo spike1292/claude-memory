@@ -15,6 +15,7 @@
 // parameter so a rename cannot go silent again. Full failure mode: R4 in docs/architecture.md.
 export const CARD = '(card)';
 
+// Anywhere in a parenthetical: "(measured 2026-08-12, superseded 2026-08-14 by [[x]])" is a marker.
 export const SUPERSEDED_MARKER = /superseded\s+\d{4}-\d{2}-\d{2}\s+by\s+\[\[[^\]]+\]\]/i;
 export const SUPERSEDED_BY = /^\s*superseded_by:\s*(.+)$/m;
 
