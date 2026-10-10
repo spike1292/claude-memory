@@ -406,6 +406,25 @@ const withRetention = (value, fn) => {
   }
 };
 
+test('pruneDatedLogs sweeps past per-project dupe claims and nothing shaped like one', () => {
+  withState((logs) => {
+    withRetention('30', () => {
+      seed(logs, [
+        '.dupes-2026-08-20-github.com-a-b', // yesterday's claim: goes
+        '.dupes-2026-08-21-github.com-a-b', // today's: stays
+        '.dupes-2026-08-20', // a date and no project: not a claim we write
+        '.dupes-notes.md',
+      ]);
+      assert.deepStrictEqual(pruneDatedLogs(new Date('2026-08-21T12:00:00Z')), []);
+      assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
+        '.dupes-2026-08-20',
+        '.dupes-2026-08-21-github.com-a-b',
+        '.dupes-notes.md',
+      ]);
+    });
+  });
+});
+
 test('pruneDatedLogs deletes past the window and leaves everything else alone', () => {
   withState((logs) => {
     withRetention('30', () => {

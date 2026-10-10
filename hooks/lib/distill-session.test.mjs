@@ -21,7 +21,6 @@ import {
   todayStr,
   projectKey,
   findNearDuplicate,
-  isManual,
   reconcile,
   transcriptToText,
   parseEnvelope,
@@ -104,50 +103,12 @@ test('distill-session', async (t) => {
     );
   });
 
-  // ---- reconcile: manual. The body-overlap arm that used to be tested here is GONE: it caught
-  // 0 of 25 real duplicates and all nine of its firings were false positives, so its tests went
-  // with it rather than being relaxed until they passed. The measurement, including the 2026-08-17
-  // numbers that justified it, is in docs/decisions/2026-08-23-embedding-reconcile.md.
-  //
-  // What replaced it is an embedding query against the resident server, which has no place in a
-  // unit test — the shared predicate is tested in scripts/lib/memory-semantic.test.mjs and the real
-  // catch rate comes from `--dupe-eval`. What IS testable here is the mark, because it is the only
-  // thing standing between a correct cross-link and a wrong merge.
+  // reconcile: manual — the mark itself is tested beside its reader in scripts/lib/memory-mark.test.mjs;
+  // the body-overlap arm that used to be tested here is gone, see
+  // docs/decisions/2026-08-23-embedding-reconcile.md.
+
   const b = path.join(tmpBase, 'bodies');
   fs.mkdirSync(b);
-  const marked = path.join(b, '2026-08-16-adjudicated-keep.md');
-  fs.writeFileSync(
-    marked,
-    '---\ntitle: k\nreconcile: manual\n---\n\n## k\n\nA lesson whose boundary was judged.\n',
-  );
-  const plain = path.join(b, '2026-08-16-ordinary-note.md');
-  fs.writeFileSync(plain, '---\ntitle: o\n---\n\n## o\n\nAn ordinary note.\n');
-
-  await t.test('isManual reads the mark from frontmatter only', () => {
-    assert.strictEqual(isManual(marked), true);
-    assert.strictEqual(isManual(plain), false);
-
-    // The words in a note body must not arm the mark. A note ABOUT the reconcile mark is exactly
-    // the note this vault would contain, and it would silently become unmergeable.
-    const aboutIt = path.join(b, '2026-08-16-a-note-about-the-mark.md');
-    fs.writeFileSync(
-      aboutIt,
-      '---\ntitle: a\n---\n\n## a\n\nSet reconcile: manual on a pair you keep.\n',
-    );
-    assert.strictEqual(isManual(aboutIt), false, 'body prose must not arm the mark');
-    fs.unlinkSync(aboutIt);
-  });
-
-  await t.test('an unreadable note is unmarked, not a throw', () => {
-    // Hooks never block, so one bad file must not take the whole check down. Failing OPEN here is
-    // the right direction: an unreadable note is not evidence of a human judgement.
-    const bad = path.join(b, '2026-08-16-unreadable.md');
-    fs.writeFileSync(bad, 'x');
-    fs.chmodSync(bad, 0o000);
-    assert.strictEqual(isManual(bad), false);
-    fs.chmodSync(bad, 0o644);
-    fs.unlinkSync(bad);
-  });
 
   await t.test('findNearDuplicate is the slug arm and reads no bodies', () => {
     // The fallback arm, used only when the search server cannot answer. It scores FILENAMES, so a

@@ -34,6 +34,7 @@ import {
   singleFlight,
   fuseReserved,
   samefolderPairs,
+  reportPairs,
   bestDupe,
   dupeScore,
   pairKey,
@@ -142,6 +143,19 @@ test('the dedup predicate is one predicate', () => {
     for (const pair of fromWriter)
       assert.ok(fromAudit.has(pair), `writer would merge ${pair} at ${bar}, audit does not see it`);
   }
+});
+
+test('reportPairs: a pair with either end marked reconcile: manual is neither shown nor counted', () => {
+  const near = new Float32Array([0.6, 0.8]);
+  const items = ['a', 'b', 'c', 'd'].map((note) => ({ note, layer: 'Patterns', vec: near }));
+  const asked = /** @type {string[]} */ ([]);
+  const pairs = reportPairs(items, 0.9, (note) => (asked.push(note), note === 'c'));
+  assert.deepEqual(
+    pairs.map((p) => pairKey(p.a, p.b)),
+    [pairKey('a', 'b'), pairKey('a', 'd'), pairKey('b', 'd')],
+  );
+  assert.deepEqual([...asked].sort(), ['a', 'b', 'c', 'd'], 'each note is read once, not per pair');
+  assert.equal(reportPairs(items, 0.9, () => false).length, 6, 'unmarked: every same-folder pair');
 });
 
 test('consolidationGaps: --clusters and --propose (#96) share one computation', () => {
