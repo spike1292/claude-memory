@@ -14,7 +14,6 @@ import {
   MIN_MESSAGES,
   STOP_MIN_MESSAGES,
   STOP_DEBOUNCE_SECONDS,
-  END_DEBOUNCE_SECONDS,
   slugify,
   extractJson,
   todayStr,
@@ -414,7 +413,7 @@ test('SessionEnd stands down after a Stop run that already covered the transcrip
   if (!stop.run) return;
   recordRun(stop);
   try {
-    const end = (/** @type {number} */ lines, after = 22) =>
+    const end = (/** @type {number} */ lines) =>
       gatePlan(
         {
           hook_event_name: 'SessionEnd',
@@ -422,7 +421,7 @@ test('SessionEnd stands down after a Stop run that already covered the transcrip
           transcript_path: transcriptWith(lines),
           session_id: sid,
         },
-        { now: now + after },
+        { now: now + 22 },
       );
     const covered = end(STOP_MIN_MESSAGES + 3);
     assert.strictEqual(covered.run, false);
@@ -433,11 +432,6 @@ test('SessionEnd stands down after a Stop run that already covered the transcrip
       'a real tail of new lines still distils',
     );
     assert.strictEqual(end(MIN_MESSAGES + 5).run, true, 'a shorter transcript is not covered');
-    assert.strictEqual(
-      end(STOP_MIN_MESSAGES + 3, END_DEBOUNCE_SECONDS).run,
-      true,
-      'a session resumed later distils even a short tail',
-    );
   } finally {
     fs.rmSync(stop.marker, { force: true });
     fs.rmSync(stop.linesMarker, { force: true });

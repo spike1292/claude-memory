@@ -270,7 +270,7 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                             │    not SessionEnd and < 400        -> skip
                             │    not SessionEnd and within 2h    -> skip
                             │    SessionEnd and < 15 lines past
-                            │      a run within 10 min           -> skip (#139)
+                            │      the last run's line count     -> skip (#139)
                             │    else: recordRun() (time + lines markers)
                             │          + detach() the worker below
                             │
