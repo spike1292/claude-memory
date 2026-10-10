@@ -766,7 +766,7 @@ export function costReport({ vaultDir, slug, logDir }) {
   /** @type {Map<string, Set<string>>} */
   const starts = new Map();
   for (const l of /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files)))) {
-    if (l.event !== 'SessionStart' || !l.session || !l.slug) continue;
+    if (l.event !== 'SessionStart' || !l.session || !l.slug || l.child) continue;
     if (!starts.has(l.slug)) starts.set(l.slug, new Set());
     /** @type {Set<string>} */ (starts.get(l.slug)).add(l.session);
   }

@@ -16,7 +16,8 @@ So `/memory:doctor` now prints a second figure per MOC, from `costReport()`:
   `--hooks` report uses, labelled ESTIMATED;
 - distinct `session` ids with `event: "SessionStart"` for that slug in `logs/hooks-*.jsonl`, over
   the logged days `logRetentionDays` kept. Distinct sessions, not lines: several hooks log at one
-  start, so lines overcount 3–4×;
+  start, so lines overcount 3–4×. Headless `child: true` runs are excluded, as `--hooks` does: the
+  distiller and graph regen are not a person opening the project, and their cost is measured elsewhere;
 - `no start logged` when hook logs exist but none is a start for the slug — a counted zero;
   `unmeasured` only when there are no hook logs at all. Never `0 starts`, and a rate under
   0.05/day prints `<0.1/day`, never `0/day`.
@@ -26,12 +27,13 @@ is, and the legacy-key caveat `capReport()` states holds for both.
 
 ## The budget: 2,000 estimated tokens per start
 
-Measured on this machine, 2026-10-10, 22 logged days, every MOC in the vault (slugs withheld):
+Measured on this machine, 2026-10-10, 22 logged days, every MOC in the vault, child runs excluded
+(slugs withheld):
 
 | MOC | est. tok/start | starts/day | est. tok/day |
 | --- | --- | --- | --- |
-| work repo | 5,936 | 6.1 | 36,422 |
-| B | 939 | 1.2 | 1,152 |
+| work repo | 5,936 | 5.6 | 33,185 |
+| B | 939 | 1.2 | 1,109 |
 | C | 548 | 0.9 | 473 |
 | D | 252 | 1.0 | 263 |
 | E | 102 | 0.2 | 23 |

@@ -702,3 +702,20 @@ test('costReport never rounds a real start rate down to 0/day', (t) => {
   assert.match(mine, /1 starts in 30 logged day\(s\) \(<0\.1\/day\)/);
   assert.doesNotMatch(mine, /\(0\/day\)/);
 });
+
+test('costReport does not count a headless child run as a session start', (t) => {
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(4000) },
+    {
+      'hooks-2026-10-01.jsonl': [
+        { slug: 'mine', event: 'SessionStart', session: 'person' },
+        { slug: 'mine', event: 'SessionStart', session: 'distiller', child: true },
+      ],
+    },
+  );
+  assert.match(
+    costReport({ vaultDir: vault, slug: 'mine', logDir })[0],
+    /1 starts in 1 logged day/,
+  );
+});
