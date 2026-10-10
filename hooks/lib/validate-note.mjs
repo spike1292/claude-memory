@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { vault } from './paths.mjs';
 import { checkFile } from '../../scripts/lib/memory-audit-checks.mjs';
+import { findOrphans, readCorpus } from './memory-link-lint.mjs';
 
 /**
  * Frontmatter block: the lines between the opening fence on line 1 and the next `---`.
@@ -147,7 +148,14 @@ export function warnings(file, raw, vaultRoot) {
  * @returns {string}
  */
 export function report(file) {
-  const vaultRoot = vault();
+  let vaultRoot;
+  try {
+    // Auto memory writes through ~/.claude/projects/<slug>/memory, a symlink into the vault (#144).
+    vaultRoot = fs.realpathSync(vault());
+    file = fs.realpathSync(file);
+  } catch {
+    return '';
+  }
   if (!isCheckable(file, vaultRoot)) return '';
   let raw;
   try {
@@ -158,6 +166,17 @@ export function report(file) {
   }
 
   const warn = warnings(file, raw, vaultRoot);
+
+  const mem = path.dirname(file);
+  if (path.dirname(mem) === path.join(vaultRoot, 'Memory')) {
+    const name = path.basename(file, '.md');
+    const corpus = readCorpus(mem, path.join(vaultRoot, 'Insights', path.basename(mem)));
+    if (findOrphans(mem, [name], corpus).length) {
+      warn.push(
+        `no sibling note links [[${name}]] — the note graph cannot reach it; link it from a related note`,
+      );
+    }
+  }
 
   // Claim-level checks (CLAIM-1 metric provenance, FRESH-1 staleness, prose-only supersession) run
   // from the tested predicates rather than being re-implemented here. This is the write-time half:

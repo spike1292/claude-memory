@@ -9,7 +9,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The write-time note check now runs on auto-memory notes (#144).** Claude Code writes them
+  through `~/.claude/projects/<slug>/memory/`, a symlink into the vault. The hook compared the
+  unresolved path with the vault path, so it skipped every such note: no `confidence:`, alias or
+  claim check ran. The hook now resolves both paths first.
+
 ### Added
+
+- **The write-time note check warns when no sibling note links an L1 note (#144).** Before, only
+  the SessionStart lint reported this, and 11 such notes built up between two audits. There is no
+  "not in `MEMORY.md`" warning: auto memory writes the note before its MOC line, so that check
+  would warn on nearly every new note.
 
 - **`/memory:doctor` reports what each `MEMORY.md` costs per session start (#109).** Beside the
   load-cap percentage it now prints estimated tokens per start, how often that project started in

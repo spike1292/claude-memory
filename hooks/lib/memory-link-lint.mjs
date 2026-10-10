@@ -246,15 +246,13 @@ export function lint(cwd) {
 }
 
 /**
- * The report for one project's `Memory/` and `Insights/` directories, or '' when there is nothing
- * to say. Split out of `lint()` so the findings are testable against a directory, without a vault
- * and without the resolution that picks one.
+ * [path, text] for every readable note under `mem` and `ins` — the corpus `findOrphans` takes.
  *
  * @param {string} mem
  * @param {string} ins
- * @returns {string}
+ * @returns {[string, string][]}
  */
-export function reportFor(mem, ins) {
+export function readCorpus(mem, ins) {
   /** @type {[string, string][]} */
   const corpus = [];
   for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
@@ -264,6 +262,20 @@ export function reportFor(mem, ins) {
       /* unreadable - skip */
     }
   }
+  return corpus;
+}
+
+/**
+ * The report for one project's `Memory/` and `Insights/` directories, or '' when there is nothing
+ * to say. Split out of `lint()` so the findings are testable against a directory, without a vault
+ * and without the resolution that picks one.
+ *
+ * @param {string} mem
+ * @param {string} ins
+ * @returns {string}
+ */
+export function reportFor(mem, ins) {
+  const corpus = readCorpus(mem, ins);
 
   let names;
   try {
