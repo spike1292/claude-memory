@@ -269,7 +269,10 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                             │    < 15 messages                   -> skip
                             │    not SessionEnd and < 400        -> skip
                             │    not SessionEnd and within 2h    -> skip
-                            │    else: writeMarker + detach() the worker below
+                            │    SessionEnd and < 15 lines past
+                            │      the last run's line count     -> skip (#139)
+                            │    else: recordRun() (time + lines markers)
+                            │          + detach() the worker below
                             │
                             └─ argv ────▶ WORKER: distill(transcript, cwd)
                                    │
