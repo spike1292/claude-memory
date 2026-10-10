@@ -17,7 +17,9 @@ So `/memory:doctor` now prints a second figure per MOC, from `costReport()`:
 - distinct `session` ids with `event: "SessionStart"` for that slug in `logs/hooks-*.jsonl`, over
   the logged days `logRetentionDays` kept. Distinct sessions, not lines: several hooks log at one
   start, so lines overcount 3–4×;
-- `unmeasured` when the log has no start for the slug, never `0 starts`.
+- `no start logged` when hook logs exist but none is a start for the slug — a counted zero;
+  `unmeasured` only when there are no hook logs at all. Never `0 starts`, and a rate under
+  0.05/day prints `<0.1/day`, never `0/day`.
 
 It reads the same `mocs()` walk as `capReport()`, so the two cannot disagree about which file a slug
 is, and the legacy-key caveat `capReport()` states holds for both.

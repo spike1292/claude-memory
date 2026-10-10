@@ -777,7 +777,7 @@ export function costReport({ vaultDir, slug, logDir }) {
   });
   // No log files is unmeasured; log files with no start for this slug are a counted zero.
   const none = files.length ? 'no start logged' : 'unmeasured';
-  const rate = (/** @type {number} */ v) => `${Number(v.toFixed(1))}/day`;
+  const rate = (/** @type {number} */ v) => (v < 0.05 ? '<0.1/day' : `${Number(v.toFixed(1))}/day`);
   const k = (/** @type {number} */ v) => Math.round(v).toLocaleString('en-US');
   const budget = `soft budget ${k(INJECTED_TOKEN_BUDGET)}`;
   const fix =
@@ -789,7 +789,9 @@ export function costReport({ vaultDir, slug, logDir }) {
   if (mine) {
     const freq =
       mine.perDay === null
-        ? `start frequency: ${none} in ${files.length} logged day(s)`
+        ? files.length
+          ? `no start logged in ${files.length} logged day(s)`
+          : 'start frequency unmeasured — no hook logs'
         : `${mine.n} starts in ${files.length} logged day(s) (${rate(mine.perDay)}), ~${k(mine.tok * mine.perDay)} tok/day`;
     const msg = `this project's MEMORY.md: ~${k(mine.tok)} tok per session start (ESTIMATED, bytes / ${BYTES_PER_TOKEN}) — ${freq}; ${budget}`;
     out.push(mine.tok > INJECTED_TOKEN_BUDGET ? `warn\t${msg}\t${fix}` : `ok\t${msg}`);

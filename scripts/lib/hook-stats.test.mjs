@@ -638,7 +638,7 @@ test('costReport says unmeasured, never 0 starts, when there are no hook logs', 
   const { vault, logDir } = costFixture(t, { mine: 'x'.repeat(400) }, {});
   const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
   assert.match(mine, /~100 tok per session start/);
-  assert.match(mine, /start frequency: unmeasured in 0 logged day/);
+  assert.match(mine, /start frequency unmeasured — no hook logs/);
   assert.doesNotMatch(mine, /0 starts|tok\/day/);
 });
 
@@ -686,6 +686,19 @@ test('costReport calls a logged window with no start for this slug a counted zer
     { 'hooks-2026-10-01.jsonl': [{ slug: 'other', event: 'SessionStart', session: 'a' }] },
   );
   const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
-  assert.match(mine, /start frequency: no start logged in 1 logged day\(s\)/);
+  assert.match(mine, /no start logged in 1 logged day\(s\)/);
   assert.doesNotMatch(mine, /unmeasured/);
+});
+
+test('costReport never rounds a real start rate down to 0/day', (t) => {
+  /** @type {Record<string, object[]>} */
+  const logs = {
+    'hooks-2026-10-01.jsonl': [{ slug: 'mine', event: 'SessionStart', session: 'a' }],
+  };
+  for (let d = 2; d <= 30; d++)
+    logs[`hooks-2026-10-${String(d).padStart(2, '0')}.jsonl`] = [{ slug: 'x' }];
+  const { vault, logDir } = costFixture(t, { mine: 'x'.repeat(400) }, logs);
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /1 starts in 30 logged day\(s\) \(<0\.1\/day\)/);
+  assert.doesNotMatch(mine, /\(0\/day\)/);
 });
