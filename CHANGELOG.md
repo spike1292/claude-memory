@@ -9,6 +9,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session is no longer distilled twice when `Stop` and `SessionEnd` fire close together
+  (#139).** `SessionEnd` ignored the marker the `Stop` run had written, so both workers read the same
+  transcript. The second one could not see the first one's notes in the index yet, and wrote
+  duplicates. The gate now also records how many transcript lines a run covered. `SessionEnd` stands
+  down, logged as `debounced`, when fewer than 15 new lines came after that run. A marker from an
+  older version has no line count, so `SessionEnd` still runs then.
+
 ## [0.8.1] - 2026-09-23
 
 ### Fixed

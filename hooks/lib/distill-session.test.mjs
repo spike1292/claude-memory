@@ -25,6 +25,7 @@ import {
   parseEnvelope,
   distill,
   workerArgs,
+  recordRun,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -384,7 +385,7 @@ test('Stop distils a LONG session, then debounces it', () => {
     );
     assert.strictEqual(later.run, true, 'the window is open at exactly the boundary');
 
-    // SessionEnd is never debounced: it is the authoritative pass.
+    // A timestamp-only marker, as written before #139, carries no line count: SessionEnd runs.
     const end = gatePlan(
       { hook_event_name: 'SessionEnd', cwd, transcript_path: long, session_id: sid },
       { now: now + 1 },
@@ -392,6 +393,69 @@ test('Stop distils a LONG session, then debounces it', () => {
     assert.strictEqual(end.run, true);
   } finally {
     fs.rmSync(first.marker, { force: true });
+  }
+});
+
+test('SessionEnd stands down after a Stop run that already covered the transcript (#139)', () => {
+  const sid = `gate-end-test-${process.pid}`;
+  const now = 1_700_000_000;
+  const cwd = '/some/project';
+  const stop = gatePlan(
+    {
+      hook_event_name: 'Stop',
+      cwd,
+      transcript_path: transcriptWith(STOP_MIN_MESSAGES + 1),
+      session_id: sid,
+    },
+    { now },
+  );
+  assert.strictEqual(stop.run, true);
+  if (!stop.run) return;
+  recordRun(stop);
+  try {
+    const end = (/** @type {number} */ lines) =>
+      gatePlan(
+        {
+          hook_event_name: 'SessionEnd',
+          cwd,
+          transcript_path: transcriptWith(lines),
+          session_id: sid,
+        },
+        { now: now + 22 },
+      );
+    const covered = end(STOP_MIN_MESSAGES + 3);
+    assert.strictEqual(covered.run, false);
+    assert.strictEqual(gateOutcome(covered), 'debounced');
+    assert.strictEqual(
+      end(STOP_MIN_MESSAGES + 1 + MIN_MESSAGES).run,
+      true,
+      'a real tail of new lines still distils',
+    );
+    assert.strictEqual(end(MIN_MESSAGES + 5).run, true, 'a shorter transcript is not covered');
+  } finally {
+    fs.rmSync(stop.marker, { force: true });
+    fs.rmSync(stop.linesMarker, { force: true });
+  }
+});
+
+test('SessionEnd without a session id is never stood down by another id-less session', () => {
+  const cwd = '/some/project';
+  const first = gatePlan(
+    { hook_event_name: 'SessionEnd', cwd, transcript_path: transcriptWith(MIN_MESSAGES + 5) },
+    { now: 1_700_000_000 },
+  );
+  assert.strictEqual(first.run, true);
+  if (!first.run) return;
+  recordRun(first);
+  try {
+    const next = gatePlan(
+      { hook_event_name: 'SessionEnd', cwd, transcript_path: transcriptWith(MIN_MESSAGES + 6) },
+      { now: 1_700_000_100 },
+    );
+    assert.strictEqual(next.run, true);
+  } finally {
+    fs.rmSync(first.marker, { force: true });
+    fs.rmSync(first.linesMarker, { force: true });
   }
 });
 
@@ -686,6 +750,7 @@ test('gateOutcome tells a guard from a decision from a debounce', () => {
     run: true,
     transcript: '/t',
     marker: '/m',
+    linesMarker: '/l',
     now: 1,
     lines: 60,
   });
@@ -952,7 +1017,12 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
     assert.fail(`gatePlan returns the literal ${JSON.stringify(m[2])} — use GATE_REASONS`);
 
   // And the stand-downs really do map away from `ran`, which is documented as "did its work".
-  for (const r of [GATE_REASONS.stopShort, GATE_REASONS.trivial, GATE_REASONS.debounced])
+  for (const r of [
+    GATE_REASONS.stopShort,
+    GATE_REASONS.trivial,
+    GATE_REASONS.debounced,
+    GATE_REASONS.endCovered,
+  ])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'debounced', r);
   // A transcript that is absent, unreadable, or not a file at all is the same outage — and so is a
   // payload missing cwd: the gate itself still never blocks, it just declines to spawn.

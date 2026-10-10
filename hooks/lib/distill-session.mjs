@@ -1005,7 +1005,7 @@ export async function distill(transcript, cwd, key) {
 
 /**
  * @typedef {{ run: false, reason: string, lines?: number }} SkipGate
- * @typedef {{ run: true, transcript: string, marker: string, now: number, lines: number }} RunGate
+ * @typedef {{ run: true, transcript: string, marker: string, linesMarker: string, now: number, lines: number }} RunGate
  * @typedef {SkipGate | (RunGate & { spawned?: boolean })} GatePlan
  */
 
@@ -1023,6 +1023,7 @@ export const GATE_REASONS = {
   child: 'child run',
   stopActive: 'stop_hook_active',
   debounced: 'stop: debounced',
+  endCovered: 'session end: already distilled',
   stopShort: 'stop: session too short',
   trivial: 'trivial session',
   notAFile: 'transcript not a file',
@@ -1072,14 +1073,23 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
 
   const sid = p?.session_id || 'nosession';
   const marker = markerPath(`distill-${sid}`);
+  const linesMarker = markerPath(`distill-${sid}-lines`);
 
   if (p?.hook_event_name !== 'SessionEnd') {
     if (lines < STOP_MIN_MESSAGES) return { run: false, reason: GATE_REASONS.stopShort, lines };
     if (withinDebounce(readMarker(marker), STOP_DEBOUNCE_SECONDS, now))
       return { run: false, reason: GATE_REASONS.debounced, lines };
+  } else {
+    // A Stop run that already read all but a trivial tail: a second worker on it only writes
+    // duplicates, since its reconcile cannot see notes the first has not indexed yet (#139).
+    // Unknown coverage runs: no lines marker (a run that predates it), a shorter transcript than
+    // the one marked, or no session id, whose marker every id-less session shares.
+    const covered = p?.session_id ? readMarker(linesMarker) : 0;
+    if (covered > 0 && lines >= covered && lines - covered < MIN_MESSAGES)
+      return { run: false, reason: GATE_REASONS.endCovered, lines };
   }
 
-  return { run: true, transcript, marker, now, lines };
+  return { run: true, transcript, marker, linesMarker, now, lines };
 }
 
 /**
@@ -1092,6 +1102,12 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
  */
 export function workerArgs(transcript, cwd) {
   return [path.join(paths.hooksDir, 'distill-session.mjs'), transcript, cwd, projectKey(cwd)];
+}
+
+/** @param {RunGate} plan */
+export function recordRun(plan) {
+  writeMarker(plan.marker, plan.now);
+  writeMarker(plan.linesMarker, plan.lines);
 }
 
 /**
@@ -1107,7 +1123,7 @@ export function workerArgs(transcript, cwd) {
 export function gate(p) {
   const plan = gatePlan(p);
   if (!plan.run) return plan;
-  writeMarker(plan.marker, plan.now);
+  recordRun(plan);
   // gatePlan already refused to run without a cwd, so this never throws in practice.
   const cwd = requireHookCwd(p);
   const pid = detach(process.execPath, workerArgs(plan.transcript, cwd), {
@@ -1148,6 +1164,7 @@ export function gateOutcome(plan) {
   // productive one while burying the SessionEnd run that does the work.
   if (
     plan.reason === GATE_REASONS.debounced ||
+    plan.reason === GATE_REASONS.endCovered ||
     plan.reason === GATE_REASONS.stopShort ||
     plan.reason === GATE_REASONS.trivial
   )
