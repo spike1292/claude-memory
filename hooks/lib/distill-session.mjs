@@ -1015,6 +1015,8 @@ export const MIN_MESSAGES = 15;
 export const STOP_MIN_MESSAGES = 400;
 /** …and at most this often, so a hard-killed long session loses at most two hours of lessons. */
 export const STOP_DEBOUNCE_SECONDS = 7200;
+/** SessionEnd defers to a run this recent; a session resumed later distils even a short tail. */
+export const END_DEBOUNCE_SECONDS = 600;
 
 // Constants because gateOutcome() decides on them. Two literals — one in the plan, one in the
 // mapper — drift apart silently: reword one and a recursion guard starts reporting as a hook that
@@ -1085,7 +1087,12 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
     // Unknown coverage runs: no lines marker (a run that predates it), a shorter transcript than
     // the one marked, or no session id, whose marker every id-less session shares.
     const covered = p?.session_id ? readMarker(linesMarker) : 0;
-    if (covered > 0 && lines >= covered && lines - covered < MIN_MESSAGES)
+    if (
+      covered > 0 &&
+      lines >= covered &&
+      lines - covered < MIN_MESSAGES &&
+      withinDebounce(readMarker(marker), END_DEBOUNCE_SECONDS, now)
+    )
       return { run: false, reason: GATE_REASONS.endCovered, lines };
   }
 
