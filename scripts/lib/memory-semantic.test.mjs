@@ -975,6 +975,155 @@ test('searchIn: the reserve promotes an L1 note into the window', () => {
   }
 });
 
+test('searchIn: a superseded claim ranks below its replacement but is still returned', () => {
+  const vec = (/** @type {number} */ x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const old = {
+    note: 'old',
+    layer: 'Insights',
+    heading: '(body)',
+    text: 'purge requests carry one hundred paths (superseded 2026-03-02 by [[new]])',
+    vec: vec(0.95),
+  };
+  const fresh = {
+    note: 'new',
+    layer: 'Insights',
+    heading: '(body)',
+    text: 'purge requests carry five thousand paths',
+    vec: vec(0.9),
+  };
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const q = 'purge requests paths';
+  const w = process.env.MEMORY_FUSE_W;
+  try {
+    for (const fw of ['0', undefined]) {
+      if (fw === undefined) delete process.env.MEMORY_FUSE_W;
+      else process.env.MEMORY_FUSE_W = fw;
+      const index = buildBundle('p', '/d', [old, fresh], { lexMode: 'chunk', dim: DIM });
+      assert.deepEqual(
+        searchIn(index, q, qvec, 2).map((x) => [x.r.note, +x.s.toFixed(2)]),
+        [
+          ['new', 0.9],
+          ['old', 0.95],
+        ],
+        `MEMORY_FUSE_W=${fw}: demoted in order, raw cosine kept for the recall gate`,
+      );
+      const alone = buildBundle('p', '/d', [old], { lexMode: 'chunk', dim: DIM });
+      assert.deepEqual(
+        searchIn(alone, q, qvec, 2).map((x) => x.r.note),
+        ['old'],
+      );
+    }
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+  }
+});
+
+test('searchIn: the marker demotes its own chunk, not the rest of a multi-claim note', () => {
+  const vec = (/** @type {number} */ x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const rows = [
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Limits',
+      text: 'one hundred paths (superseded 2026-03-02 by [[new]])',
+      vec: vec(0.95),
+    },
+    { note: 'mixed', layer: 'Memory', heading: 'Owners', text: 'the edge team', vec: vec(0.94) },
+    { note: 'other', layer: 'Memory', heading: '(body)', text: 'unrelated', vec: vec(0.93) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const w = process.env.MEMORY_FUSE_W;
+  process.env.MEMORY_FUSE_W = '0';
+  try {
+    assert.deepEqual(
+      searchIn(index, 'zzz', qvec, 2).map((x) => [x.r.note, +x.s.toFixed(2)]),
+      [
+        ['mixed', 0.95],
+        ['other', 0.93],
+      ],
+    );
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+  }
+});
+
+test('searchIn: a marked note is demoted through its alias chunk too', () => {
+  const vec = (/** @type {number} */ x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const rows = [
+    {
+      note: 'old',
+      layer: 'Insights',
+      heading: 'Detail',
+      text: 'two gigabytes (superseded 2026-03-02 by [[new]])',
+      vec: vec(0.5),
+    },
+    { note: 'old', layer: 'Insights', heading: '(aliases)', text: 'how much heap', vec: vec(0.95) },
+    { note: 'new', layer: 'Insights', heading: '(aliases)', text: 'how much heap', vec: vec(0.9) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const w = process.env.MEMORY_FUSE_W;
+  delete process.env.MEMORY_FUSE_W;
+  try {
+    assert.deepEqual(
+      searchIn(index, 'how much heap', qvec, 2).map((x) => x.r.note),
+      ['new', 'old'],
+    );
+  } finally {
+    if (w !== undefined) process.env.MEMORY_FUSE_W = w;
+  }
+});
+
+test('searchIn: demotion never lowers the score a note reports to the recall gate', () => {
+  const vec = (/** @type {number} */ x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const rows = [
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Limits',
+      text: 'one hundred paths (superseded 2026-03-02 by [[new]])',
+      vec: vec(0.6),
+    },
+    { note: 'mixed', layer: 'Memory', heading: 'Owners', text: 'the edge team', vec: vec(0.545) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const w = process.env.MEMORY_FUSE_W;
+  process.env.MEMORY_FUSE_W = '0';
+  try {
+    assert.deepEqual(
+      searchIn(index, 'zzz', qvec, 1).map((x) => +x.s.toFixed(2)),
+      [0.6],
+    );
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+  }
+});
+
 // assertVectorWidth exits the process, so it is checked from a child. A row arriving with NO vector
 // used to reach `r.vec.byteLength` behind a double cast through `unknown` and die with a TypeError
 // one line before the message that explains what to do about it.

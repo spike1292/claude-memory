@@ -1,5 +1,5 @@
 // The lexical vocabulary shared by the search CLI and the UserPromptSubmit recall hook: the card
-// sentinel, the stopword list, the tokeniser and BM25. Nothing else.
+// sentinel, the stopword list, the tokeniser, BM25 and the supersession marker. Nothing else.
 //
 // Split out from memory-semantic.mjs so hooks/memory-recall.mjs can import it STATICALLY, above its
 // fail-open try — memory-semantic.mjs's module scope does console.log() + process.exit(1) on an
@@ -14,6 +14,8 @@
 // The card chunk's heading (`CARD`) is a WIRE value, not a label — every reader binds it as a SQL
 // parameter so a rename cannot go silent again. Full failure mode: R4 in docs/architecture.md.
 export const CARD = '(card)';
+
+export const SUPERSEDED_MARKER = /superseded\s+\d{4}-\d{2}-\d{2}\s+by\s+\[\[[^\]]+\]\]/i;
 
 export const STOP = new Set(
   'the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about have has had will'.split(
