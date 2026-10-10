@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { table } from './doctor-perf.mjs';
 import { logFiles, readLines, percentile, DEFAULT_DAYS } from './recall-stats.mjs';
+import { mocs } from '../../hooks/lib/memory-link-lint.mjs';
 
 export { DEFAULT_DAYS };
 
@@ -58,8 +59,8 @@ export const UNLOGGED = 'vault-memory-sync (bash, not instrumented)';
 export const BYTES_PER_TOKEN = 4;
 
 // Injected context is spent before the user has typed anything: it is the session's opening cost.
-// The threshold only produces a warning line — nothing here caps a list or changes a budget, which
-// is deliberately somebody else's ticket.
+// The threshold only produces a warning line — here and in costReport(), for one MEMORY.md loaded
+// per start. Nothing caps a list or changes a budget, which is deliberately somebody else's ticket.
 export const INJECTED_TOKEN_BUDGET = 2000;
 
 /**
@@ -746,4 +747,67 @@ export function report({ logDir, manifest, days = DEFAULT_DAYS, slug = null }) {
       ' session that has not run yet, a cleared logs/, a window too narrow, or a directory the' +
       ' hooks cannot write (they swallow exactly that).';
   return `\nhook analytics\n${`${head}\n\n${render(summary, timeouts(manifest), recall)}`.replace(/^(?=.)/gm, '  ')}\n`;
+}
+
+/**
+ * What each `Memory/<slug>/MEMORY.md` costs to load: ESTIMATED tokens per session start, and how
+ * often that slug starts. Same `status\tmessage\tfix` lines and the same naming rule as
+ * capReport() — only this project is named. #109: the cap answers "will it be truncated?", this
+ * answers "what does loading it cost?", and a file can pass the first while failing the second.
+ * Rationale and the 2,000 figure: docs/decisions/2026-10-10-moc-cost-budget.md.
+ *
+ * @param {{ vaultDir: string, slug: string, logDir: string }} options
+ * @returns {string[]}
+ */
+export function costReport({ vaultDir, slug, logDir }) {
+  const all = mocs(vaultDir).filter((m) => !m.empty);
+  if (!all.length) return [];
+  const files = logFiles(logDir, Infinity, 'hooks');
+  /** @type {Map<string, Set<string>>} */
+  const starts = new Map();
+  for (const l of /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files)))) {
+    if (l.event !== 'SessionStart' || !l.session || !l.slug || l.child) continue;
+    if (!starts.has(l.slug)) starts.set(l.slug, new Set());
+    /** @type {Set<string>} */ (starts.get(l.slug)).add(l.session);
+  }
+  const rows = all.map((m) => {
+    const tok = /** @type {number} */ (estTokens(m.bytes));
+    const n = starts.get(m.slug)?.size ?? 0;
+    return { slug: m.slug, tok, n, perDay: n && files.length ? n / files.length : null };
+  });
+  // No log files is unmeasured; log files with no start for this slug are a counted zero.
+  const none = files.length ? 'no start logged' : 'unmeasured';
+  const rate = (/** @type {number} */ v) => (v < 0.05 ? '<0.1/day' : `${Number(v.toFixed(1))}/day`);
+  const k = (/** @type {number} */ v) => Math.round(v).toLocaleString('en-US');
+  const budget = `soft budget ${k(INJECTED_TOKEN_BUDGET)}`;
+  const fix =
+    'loaded in full at every session start. Move detail from the MOC into the notes; nothing trims it automatically.';
+
+  /** @type {string[]} */
+  const out = [];
+  const mine = rows.find((r) => r.slug === slug);
+  if (mine) {
+    const freq =
+      mine.perDay === null
+        ? files.length
+          ? `no start logged in ${files.length} logged day(s)`
+          : 'start frequency unmeasured — no hook logs'
+        : `${mine.n} start${mine.n === 1 ? '' : 's'} in ${files.length} logged day(s) (${rate(mine.perDay)}), ~${k(mine.tok * mine.perDay)} tok/day`;
+    const msg = `this project's MEMORY.md: ~${k(mine.tok)} tok per session start (ESTIMATED, bytes / ${BYTES_PER_TOKEN}) — ${freq}; ${budget}`;
+    out.push(mine.tok > INJECTED_TOKEN_BUDGET ? `warn\t${msg}\t${fix}` : `ok\t${msg}`);
+  }
+  const others = rows.filter((r) => r !== mine).sort((a, b) => b.tok - a.tok);
+  if (others.length) {
+    const figs = others
+      .map((r) => `~${k(r.tok)} tok × ${r.perDay === null ? none : rate(r.perDay)}`)
+      .join(', ');
+    const over = others.filter((r) => r.tok > INJECTED_TOKEN_BUDGET).length;
+    out.push(
+      over
+        ? `warn\t${over} of ${others.length} other MEMORY.md over the soft budget — ${figs}\t` +
+            'other projects are not named — this report gets pasted into issues. Run /memory:doctor from each one.'
+        : `ok\t${others.length} other MEMORY.md under the soft budget — ${figs}`,
+    );
+  }
+  return out;
 }

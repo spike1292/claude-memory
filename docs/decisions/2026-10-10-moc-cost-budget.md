@@ -1,0 +1,53 @@
+# A soft cost budget for `MEMORY.md`, separate from the load cap
+
+2026-10-10 — settles [#109](https://github.com/spike1292/claude-memory/issues/109). Extends
+[2026-08-22-auto-memory.md](2026-08-22-auto-memory.md); does not change it.
+
+## Two questions, two numbers
+
+`AUTO_MEMORY_CAP` (25 KB / 200 lines) answers "will Claude Code truncate it?". It says nothing about
+"what does loading it cost?". A MOC can pass the first and be the most expensive thing the plugin
+does: the work repo was at 78% of the cap on 2026-08-29 (#109) and reported healthy. Its cost per
+start is in the table below.
+
+So `/memory:doctor` now prints a second figure per MOC, from `costReport()`:
+
+- estimated tokens per session start — `bytes / BYTES_PER_TOKEN`, the same single estimator the
+  `--hooks` report uses, labelled ESTIMATED;
+- distinct `session` ids with `event: "SessionStart"` for that slug in `logs/hooks-*.jsonl`, over
+  the logged days `logRetentionDays` kept. Distinct sessions, not lines: several hooks log at one
+  start, so lines overcount 3–4×. Headless `child: true` runs are excluded, as `--hooks` does: the
+  distiller and graph regen are not a person opening the project, and their cost is measured elsewhere;
+- `no start logged` when hook logs exist but none is a start for the slug — a counted zero;
+  `unmeasured` only when there are no hook logs at all. Never `0 starts`, and a rate under
+  0.05/day prints `<0.1/day`, never `0/day`.
+
+It reads the same `mocs()` walk as `capReport()`, so the two cannot disagree about which file a slug
+is, and the legacy-key caveat `capReport()` states holds for both.
+
+## The budget: 2,000 estimated tokens per start
+
+Measured on this machine, 2026-10-10, 22 logged days, every MOC in the vault, child runs excluded
+(slugs withheld):
+
+| MOC | est. tok/start | starts/day | est. tok/day |
+| --- | --- | --- | --- |
+| work repo | 5,936 | 5.6 | 33,185 |
+| B | 939 | 1.2 | 1,109 |
+| C | 548 | 0.9 | 473 |
+| D | 252 | 1.0 | 263 |
+| E | 102 | 0.2 | 23 |
+
+Every healthy MOC is under 1,000; the outlier is 6× that. 2,000 sits in the gap with 2× headroom
+for the largest healthy one, and it is already `INJECTED_TOKEN_BUDGET` — the opening-cost budget
+for hook-injected context — so it is reused rather than becoming a second number. Five files over
+three weeks is a starting value, not a proven one.
+
+## What it does not do
+
+- It **warns, never fails.** `fail` stays reserved for truncation, which loses content; cost does
+  not.
+- It **trims nothing.** "Reporting is the bound" from 2026-08-22 stands.
+- The budget is per start, not per day. The frequency is printed beside it so a human can weigh a
+  MOC opened twice a week against one opened six times a day; a per-day threshold would need its
+  own data.
