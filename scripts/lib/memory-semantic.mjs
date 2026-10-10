@@ -537,14 +537,11 @@ export function samefolderPairs(items, minScore) {
 }
 
 /**
- * `samefolderPairs()` minus every pair a human has settled — what `--dupes` and the SessionStart
- * report show. `--dupe-eval` keeps the unfiltered list: its keeps-proposed column measures the mark.
- *
+ * `samefolderPairs()` minus settled pairs. `--dupe-eval` stays unfiltered: it measures the mark.
  * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
  * @param {readonly T[]} items
  * @param {number} minScore
  * @param {(note: string) => boolean} isManual
- * @returns {{ s: number, layer: string, a: string, b: string }[]}
  */
 export function reportPairs(items, minScore, isManual) {
   /** @type {Map<string, boolean>} */

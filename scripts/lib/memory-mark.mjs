@@ -34,18 +34,8 @@ export function isMarked(raw) {
 }
 
 /**
- * Is this note marked as manually adjudicated — never auto-merge into it?
- *
- * The mark exists because correctly RELATING two notes raises their similarity: cross-linking
- * moved one kept pair 0.754 -> 0.762, over the 0.75 bar, so an audit that does its job creates the
- * merge proposal it just rejected. It is note-scoped rather than pair-scoped so it also holds at
- * write time, where the incoming note is neither end of any previously judged pair.
- *
- * Reads the mark through `isMarked()`, beside the writer. Two regexes for one field is the shape of
- * #93's bug at smaller scale: the writer and the reader drift, and the mark silently stops blocking anything while every test stays green.
- *
- * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement, and hooks do
- * not throw.
+ * Is the note at `file` marked? Why the mark exists: docs/decisions/2026-08-23-embedding-reconcile.md.
+ * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement.
  *
  * @param {string} file
  * @returns {boolean}

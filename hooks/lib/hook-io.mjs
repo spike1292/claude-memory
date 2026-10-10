@@ -105,15 +105,13 @@ export function writeMarker(file, seconds) {
   }
 }
 
-// The day-claim markers `logs/.retention-<day>` (machine-wide) and `logs/.dupes-<day>-<slug>`
-// (per project): written by `claim()`, swept by `pruneDatedLogs()`. Anchored on a DATE —
-// `.startsWith('.retention-')` also matched `.retention-notes.md` and a bare `.retention-`, which
-// are not ours to delete.
+// Day claims `.retention-<day>` and `.dupes-<day>-<slug>`: written by `claim()`, swept by
+// `pruneDatedLogs()`. Anchored on a DATE — `.startsWith('.retention-')` also matched
+// `.retention-notes.md` and a bare `.retention-`, which are not ours to delete.
 const CLAIM = /^\.(?:retention-(\d{4}-\d{2}-\d{2})|dupes-(\d{4}-\d{2}-\d{2})-.+)$/;
 
 /**
- * True for exactly one caller per marker name. `wx` create-if-absent is the whole mechanism; any
- * error (including EEXIST) means don't run.
+ * True once per marker name: `wx` create-if-absent; any error (EEXIST too) means don't run.
  * See CLAUDE.md's retention section and docs/decisions/2026-08-21-log-retention-day-claim.md.
  * @param {string} dir
  * @param {string} name
@@ -129,12 +127,9 @@ function claim(dir, name) {
 }
 
 /**
- * Claim today's (UTC) duplicate scan for one project — true for exactly one session per project
- * per day. Per project, not machine-wide: duplicates belong to a project, and a machine-wide claim
- * would report only for the first project opened each day.
+ * Per project, not machine-wide: a machine-wide claim would report only the first project opened.
  * @param {string} slug
  * @param {Date} [now]
- * @returns {boolean}
  */
 export function claimDupeScan(slug, now = new Date()) {
   return claim(stateDir('logs'), `.dupes-${now.toISOString().slice(0, 10)}-${slug}`);
