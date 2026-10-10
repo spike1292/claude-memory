@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-10
+
 ### Fixed
 
 - **The write-time dupe check can now see notes from an earlier distil run (#145).** With
@@ -1431,7 +1433,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/spike1292/claude-memory/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/spike1292/claude-memory/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spike1292/claude-memory/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/spike1292/claude-memory/compare/v0.6.0...v0.7.0
