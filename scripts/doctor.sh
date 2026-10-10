@@ -328,6 +328,22 @@ if command -v node >/dev/null 2>&1; then
     fail "could not measure MEMORY.md against the load cap" \
          "node could not read hooks/lib/memory-link-lint.mjs from $ROOT. Truncation of MEMORY.md is silent everywhere else, so this check going quiet is the failure. Re-run: node -e 'import(\"$ROOT/hooks/lib/memory-link-lint.mjs\")'"
   fi
+  # #109: what loading it costs per session start, beside whether it fits.
+  if cost_lines=$(node -e '
+    import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) =>
+      process.stdout.write(m.costReport({ vaultDir: process.argv[2], slug: process.argv[3], logDir: process.argv[4] }).join("\n")),
+    );' "$ROOT/scripts/lib/hook-stats.mjs" "$VAULT" "$slug" "$STATE/logs" 2>/dev/null); then
+    [ -n "$cost_lines" ] && while IFS=$'\t' read -r status msg fix; do
+      case "$status" in
+        ok) ok "$msg" ;;
+        warn) warn "$msg" "$fix" ;;
+        *) warn "unrecognised auto-memory cost status: $status" "$msg" ;;
+      esac
+    done <<< "$cost_lines"
+  else
+    warn "could not estimate what MEMORY.md costs per session start" \
+         "node could not read scripts/lib/hook-stats.mjs from $ROOT. Re-run: node -e 'import(\"$ROOT/scripts/lib/hook-stats.mjs\")'"
+  fi
 else
   warn "cannot measure MEMORY.md without node" "install node >= 22.5; nothing else here needs it more."
 fi

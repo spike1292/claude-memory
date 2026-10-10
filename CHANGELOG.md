@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`/memory:doctor` reports what each `MEMORY.md` costs per session start (#109).** Beside the
+  load-cap percentage it now prints estimated tokens per start, how often that project started in
+  the hook logs, and tokens per day. A MOC over 2,000 estimated tokens per start gets a warning.
+  Nothing is trimmed, and the load cap is unchanged.
+
 ## [0.8.2] - 2026-10-10
 
 ### Fixed

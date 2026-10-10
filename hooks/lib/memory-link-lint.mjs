@@ -316,20 +316,13 @@ export function reportFor(mem, ins) {
 }
 
 /**
- * `ok`/`warn`/`fail` lines about every `Memory/<slug>/MEMORY.md` in the vault, against the cap
- * Claude Code loads them under. Tab-separated so `scripts/doctor.sh` can print them with its own
- * helpers without a JSON parser — `jq` is optional there.
- *
- * Only the project the command was run from is named: this report is what people paste into
- * issues, and the other slugs are normalised remotes of private repos. Every other MOC still gets
- * its own percentage, largest first — "each MEMORY.md against the cap" is the point of the report,
- * and a count alone cannot say whether the other one is at 99% or at 9%.
+ * Every non-missing `Memory/<slug>/MEMORY.md` in the vault, sized. The one walk both capReport and
+ * the per-start cost report read, so the two never disagree about which file a slug is.
  *
  * @param {string} vaultDir
- * @param {string} slug
- * @returns {string[]}
+ * @returns {{ slug: string, bytes: number, lines: number, pct: number, empty: boolean }[]}
  */
-export function capReport(vaultDir, slug) {
+export function mocs(vaultDir) {
   const memRoot = path.join(vaultDir, 'Memory');
   /** @type {{ slug: string, bytes: number, lines: number, pct: number, empty: boolean }[]} */
   const all = [];
@@ -357,6 +350,25 @@ export function capReport(vaultDir, slug) {
       pct: Math.max(bytes / AUTO_MEMORY_CAP.bytes, lines / AUTO_MEMORY_CAP.lines),
     });
   }
+  return all;
+}
+
+/**
+ * `ok`/`warn`/`fail` lines about every `Memory/<slug>/MEMORY.md` in the vault, against the cap
+ * Claude Code loads them under. Tab-separated so `scripts/doctor.sh` can print them with its own
+ * helpers without a JSON parser — `jq` is optional there.
+ *
+ * Only the project the command was run from is named: this report is what people paste into
+ * issues, and the other slugs are normalised remotes of private repos. Every other MOC still gets
+ * its own percentage, largest first — "each MEMORY.md against the cap" is the point of the report,
+ * and a count alone cannot say whether the other one is at 99% or at 9%.
+ *
+ * @param {string} vaultDir
+ * @param {string} slug
+ * @returns {string[]}
+ */
+export function capReport(vaultDir, slug) {
+  const all = mocs(vaultDir);
   if (!all.length) return [];
 
   const cap = `${AUTO_MEMORY_CAP.bytes.toLocaleString('en-US')} bytes / ${AUTO_MEMORY_CAP.lines} lines`;
