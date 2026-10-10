@@ -67,6 +67,14 @@ export { CARD };
 export const HEADER =
   'Possibly relevant vault notes (retrieved, not verified — open one before relying on it):';
 
+// Vault text was distilled from transcripts that can hold fetched pages, so it is data and must not
+// carry markup Claude Code would read as its own. `\p{Cf}` goes first so a zero-width char hidden
+// inside a tag name cannot shield the tag from the second pass.
+const HARNESS_TAG =
+  /<(?=\/?(?:system-reminder|command-(?:name|message|args)|local-command-[a-z]+|user-prompt-submit-hook)\b)/gi;
+/** @param {string} s */
+const defuse = (s) => s.replace(/\p{Cf}/gu, '').replace(HARNESS_TAG, '‹');
+
 /** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;
 
@@ -83,8 +91,10 @@ export function renderLines(hits, floor = -Infinity) {
   let used = 0;
   for (const r of hits) {
     if (r.score < floor) break; // trailing weak hits add noise, not context
-    const first = (r.text ?? '').split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
-    const line = `- [[${r.note}]] (${r.layer}): ${first.slice(0, 150)}`;
+    const first = defuse((r.text ?? '').split('\n').slice(1).join(' '))
+      .replace(/\s+/g, ' ')
+      .trim();
+    const line = `- [[${defuse(r.note)}]] (${r.layer}): ${first.slice(0, 150)}`;
     if (used + line.length > MAX_CHARS) break; // strict >: a brief of exactly MAX_CHARS fits
     lines.push(line);
     used += line.length;

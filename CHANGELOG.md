@@ -15,6 +15,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   through `~/.claude/projects/<slug>/memory/`, a symlink into the vault. The hook compared the
   unresolved path with the vault path, so it skipped every such note: no `confidence:`, alias or
   claim check ran. The hook now resolves both paths first.
+- **The recall brief no longer passes on invisible characters or fake harness tags (#157).** The
+  distiller writes notes from transcripts, and transcripts can hold fetched pages. A note could
+  carry zero-width or bidi characters, or a `<system-reminder>` tag that Claude Code reads as its
+  own markup. Recall now removes Unicode format characters and turns the `<` of Claude Code tag
+  names into `‹`. Other angle brackets, wikilinks and code spans do not change.
 
 ### Added
 
