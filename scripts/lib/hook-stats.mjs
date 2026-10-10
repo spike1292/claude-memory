@@ -59,8 +59,8 @@ export const UNLOGGED = 'vault-memory-sync (bash, not instrumented)';
 export const BYTES_PER_TOKEN = 4;
 
 // Injected context is spent before the user has typed anything: it is the session's opening cost.
-// The threshold only produces a warning line — nothing here caps a list or changes a budget, which
-// is deliberately somebody else's ticket.
+// The threshold only produces a warning line — here and in costReport(), for one MEMORY.md loaded
+// per start. Nothing caps a list or changes a budget, which is deliberately somebody else's ticket.
 export const INJECTED_TOKEN_BUDGET = 2000;
 
 /**
@@ -792,7 +792,7 @@ export function costReport({ vaultDir, slug, logDir }) {
         ? files.length
           ? `no start logged in ${files.length} logged day(s)`
           : 'start frequency unmeasured — no hook logs'
-        : `${mine.n} starts in ${files.length} logged day(s) (${rate(mine.perDay)}), ~${k(mine.tok * mine.perDay)} tok/day`;
+        : `${mine.n} start${mine.n === 1 ? '' : 's'} in ${files.length} logged day(s) (${rate(mine.perDay)}), ~${k(mine.tok * mine.perDay)} tok/day`;
     const msg = `this project's MEMORY.md: ~${k(mine.tok)} tok per session start (ESTIMATED, bytes / ${BYTES_PER_TOKEN}) — ${freq}; ${budget}`;
     out.push(mine.tok > INJECTED_TOKEN_BUDGET ? `warn\t${msg}\t${fix}` : `ok\t${msg}`);
   }
