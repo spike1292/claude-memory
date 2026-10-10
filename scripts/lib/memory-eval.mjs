@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { bm25, lexTokens } from './lexical.mjs';
+import { MAX_NOTES, semanticArm } from '../../hooks/lib/memory-recall.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
@@ -206,15 +207,16 @@ export const UNSCORABLE = /** @type {const} */ ({
 /**
  * Can this case yield a number at all? Null means yes — including "yes, and the gold note lost".
  *
- * @param {{ gold?: unknown, owner?: unknown }} c
+ * @param {{ gold?: unknown, owner?: unknown, type?: string }} c
  * @param {readonly { note: string, score?: number }[]} results
  * @param {ReadonlySet<string>} known
  * @returns {string|null}
  */
 export function unscorableReason(c, results, known) {
+  const badScore = results.some((r) => r.score !== undefined && !Number.isFinite(r.score));
+  if (c.type === TYPE.abstain) return badScore ? UNSCORABLE.score : null;
   if (!results.length) return UNSCORABLE.empty;
-  if (results.some((r) => r.score !== undefined && !Number.isFinite(r.score)))
-    return UNSCORABLE.score;
+  if (badScore) return UNSCORABLE.score;
   // A tie end to end is arrival order, not a ranking — `--mode lexical` returns k results all
   // scoring 0 for a question matching nothing, which the two arms above cannot see.
   const scores = results.map((r) => r.score).filter((x) => x !== undefined);
@@ -247,6 +249,24 @@ export function pairwise(c, results) {
   const owner = rankOf(c.owner);
   const named = Math.min(...c.gold.map(rankOf), Infinity);
   return { owner, named, pass: owner < named };
+}
+
+// A case's `type` field; absent is a plain recall or pairwise case. Not `KIND`: that is the set's
+// tuning/held-out label, and either kind of set may carry either type.
+export const TYPE = /** @type {const} */ ({ supersede: 'supersede', abstain: 'abstain' });
+
+/**
+ * Would the recall hook stay silent on these results? Its own gate, imported, because MIN_COS is
+ * cosine-scaled and only the semantic arm's scores are cosine. Sliced to MAX_NOTES because that is
+ * the `k` the hook asks the server for; a deeper hit over the gate is one the hook never sees.
+ * Null from semanticArm() means empty results, i.e. an empty index, where keywordArm() abstains.
+ *
+ * @param {readonly { note: string, score?: number }[]} results
+ * @returns {boolean}
+ */
+export function abstains(results) {
+  const hits = results.slice(0, MAX_NOTES).map((r) => ({ layer: '', ...r }));
+  return semanticArm(hits)?.entry.abstained ?? true;
 }
 
 /**

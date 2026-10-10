@@ -426,6 +426,84 @@ export const FILLER_ASPECTS = [
   ],
 ];
 
+// One knowledge update per domain, in DOMAINS order, on a topic no gold case covers. The older
+// note keeps its claim with the protocol's supersession marker; the newer one must win `ask`.
+export const SUPERSEDED = [
+  {
+    topic: 'purge-request-limit',
+    before:
+      'Purge requests are capped at one hundred paths per call, so large releases split them into batches.',
+    after:
+      'Purge requests now accept up to five thousand paths per call, so a release sends them in one batch.',
+    ask: 'how many paths can one purge request carry',
+  },
+  {
+    topic: 'session-lifetime',
+    before:
+      'A signed-in session lasts eight hours and then the user is sent back to the login page.',
+    after:
+      'A signed-in session now lasts thirty days, renewed silently while the user stays active.',
+    ask: 'how long does a signed-in session last before people must log in again',
+  },
+  {
+    topic: 'metric-retention',
+    before:
+      'Raw metric samples are kept for fourteen days before they are rolled up into hourly averages.',
+    after:
+      'Raw metric samples are now kept for ninety days before they are rolled up into hourly averages.',
+    ask: 'how many days of raw metric samples do we keep',
+  },
+  {
+    topic: 'deploy-window',
+    before:
+      'Production deploys are allowed only on weekday mornings, never after lunch or on Fridays.',
+    after: 'Production deploys are now allowed at any hour on any weekday, Fridays included.',
+    ask: 'when are we allowed to deploy to production',
+  },
+  {
+    topic: 'rate-limit-threshold',
+    before: 'A single client address is blocked after three hundred requests in one minute.',
+    after: 'A single client address is now blocked after twelve hundred requests in one minute.',
+    ask: 'how many requests per minute can one client send before it is blocked',
+  },
+  {
+    topic: 'heap-ceiling',
+    before:
+      'Worker processes run with a heap ceiling of two gigabytes and restart when they reach it.',
+    after:
+      'Worker processes now run with a heap ceiling of six gigabytes and restart when they reach it.',
+    ask: 'how much heap may a worker process use before it restarts',
+  },
+  {
+    topic: 'formatter-choice',
+    before:
+      'Every package is formatted with the old house formatter, run from a shared pre-commit hook.',
+    after:
+      'Every package is now formatted by the editor on save, and the shared pre-commit hook is gone.',
+    ask: 'how is code formatting enforced across the packages',
+  },
+  {
+    topic: 'stale-ticket-policy',
+    before: 'Tickets with no activity for thirty days are closed automatically with a polite note.',
+    after:
+      'Tickets with no activity are never closed automatically; a person reviews them each quarter.',
+    ask: 'what happens to tickets that nobody has touched for a long time',
+  },
+];
+export const SUPERSEDED_ON = '2026-03-02';
+
+// Questions with no answer anywhere in the vault: the recall hook must inject nothing for them.
+export const ABSTAIN = [
+  'how long should sourdough proof overnight in a cold kitchen',
+  'which grass seed grows best in a shady back garden',
+  'what is a good beginner route for climbing in the Alps',
+  'how do I remove a red wine stain from a wool carpet',
+  'when should tomato seedlings be moved outdoors in spring',
+  'what are the rules for castling in a game of chess',
+  'how often should a bicycle chain be cleaned and oiled',
+  'which film won the most awards at the ceremony last year',
+];
+
 // ---------------------------------------------------------------- generation
 
 /**
