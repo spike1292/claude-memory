@@ -247,7 +247,7 @@ export function pathFates(repo, wanted) {
     // ponytail: walks all history, add a --since bound if a large repo makes the audit slow
     log = execFileSync(
       'git',
-      ['log', '-M', '--diff-filter=DR', '--name-status', '--format=%x00%h'],
+      ['log', '-M', '--relative', '--diff-filter=DR', '--name-status', '--format=%x00%h'],
       {
         cwd: repo,
         encoding: 'utf8',

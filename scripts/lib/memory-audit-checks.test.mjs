@@ -203,10 +203,21 @@ test('pathFates names the commit that renamed or deleted a dead path (#151)', ()
   const git = (/** @type {string[]} */ ...a) =>
     execFileSync(
       'git',
-      ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', ...a],
+      [
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        ...a,
+      ],
       {
         cwd: repo,
         encoding: 'utf8',
+        env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
       },
     ).trim();
   try {
@@ -228,6 +239,18 @@ test('pathFates names the commit that renamed or deleted a dead path (#151)', ()
     assert.deepEqual(fates.get('docs/moved.md'), { sha: moved, to: 'scripts/moved.md' });
     assert.deepEqual(fates.get('scripts/gone.sh'), { sha: deleted });
     assert.equal(fates.has('docs/never.md'), false);
+
+    fs.mkdirSync(path.join(repo, 'sub/docs'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'sub/docs/a.md'), 'one\ntwo\nthree\nfour\n');
+    git('add', '.');
+    git('commit', '-qm', 'add sub');
+    fs.mkdirSync(path.join(repo, 'sub/scripts'));
+    git('mv', 'sub/docs/a.md', 'sub/scripts/a.md');
+    git('commit', '-qm', 'move in sub');
+    assert.deepEqual(pathFates(path.join(repo, 'sub'), ['docs/a.md']).get('docs/a.md'), {
+      sha: git('rev-parse', '--short', 'HEAD'),
+      to: 'scripts/a.md',
+    });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
