@@ -25,7 +25,7 @@ import {
   abstains,
   TYPE,
 } from './memory-eval.mjs';
-import { MIN_COS } from '../../hooks/lib/memory-recall.mjs';
+import { MAX_NOTES, MIN_COS } from '../../hooks/lib/memory-recall.mjs';
 
 test('titleTokens drops short tokens', () => {
   // 'cap' is 3 chars and drops out — short tokens are noise, not identity
@@ -1110,6 +1110,14 @@ test("abstains() follows the recall hook's own cosine gate, not a copy of it", (
   assert.equal(abstains([]), true, 'an empty index injects nothing');
 });
 
+test('abstains() sees only the MAX_NOTES results the hook asks the server for', () => {
+  const below = Array.from({ length: MAX_NOTES }, (_, i) => ({
+    note: `n${i}`,
+    score: MIN_COS - 0.1,
+  }));
+  assert.equal(abstains([...below, { note: 'deep', score: MIN_COS + 0.1 }]), true);
+});
+
 test('an abstention case is scorable with no gold and no results — those are its expected shape', () => {
   const c = { q: 'how long do I proof sourdough', gold: [], type: TYPE.abstain };
   const known = new Set(['some-note']);
@@ -1152,11 +1160,24 @@ test('CLI reports supersession and abstention apart from recall, and neither gat
   assert.equal(out.n, 1, 'neither type counts toward recall');
   // BM25 scores are not cosine, so the hook's gate cannot be applied to them.
   assert.deepEqual(out.abstain, { total: 0, passed: 0 });
-  assert.equal(out.unscorable, 1);
+  assert.equal(out.unscorable, 0, 'skipped, not unscorable — that would gate under --min-rank1');
 
   const human = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.match(human.stdout, /^Supersession .*: 1\/2 passed/m);
-  assert.match(human.stdout, /abstention cases score only in semantic mode/);
+  assert.match(human.stdout, /1 abstention case\(s\) skipped: scored in semantic mode only/);
+
+  const gated = run('--run', '--cases', casesPath, '--mode', 'lexical', '--min-rank1', '0');
+  assert.equal(gated.status, 0, `neither type may gate:\n${gated.stdout}`);
+});
+
+test('CLI refuses a supersede case with no owner rather than scoring it as recall', () => {
+  const { run, casesPath } = scratch(
+    ['older-note'],
+    [{ q: 'what replaced the older note', gold: ['older-note'], type: TYPE.supersede }],
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /Refusing to report a number/);
 });
 
 test('CLI does not refuse an all-abstention set as one that names no gold', () => {

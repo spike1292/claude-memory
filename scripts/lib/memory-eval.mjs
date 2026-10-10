@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { bm25, lexTokens } from './lexical.mjs';
-import { semanticArm } from '../../hooks/lib/memory-recall.mjs';
+import { MAX_NOTES, semanticArm } from '../../hooks/lib/memory-recall.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
@@ -202,7 +202,6 @@ export const UNSCORABLE = /** @type {const} */ ({
   score: 'a returned result carries a non-finite score',
   noGold: 'this case names no gold note at all',
   tied: 'every returned result scored the same, so the order is arrival order, not a ranking',
-  abstainMode: 'abstention cases score only in semantic mode — the hook gates on cosine, not BM25',
 });
 
 /**
@@ -258,16 +257,17 @@ export const TYPE = /** @type {const} */ ({ supersede: 'supersede', abstain: 'ab
 
 /**
  * Would the recall hook stay silent on these results? Its own gate, imported, because MIN_COS is
- * cosine-scaled and only the semantic arm's scores are cosine.
+ * cosine-scaled and only the semantic arm's scores are cosine. Sliced to MAX_NOTES because that is
+ * the `k` the hook asks the server for; a deeper hit over the gate is one the hook never sees.
  *
- * semanticArm() returns null only for empty results, where the hook falls through to a keyword arm
- * over the same empty index and abstains.
+ * semanticArm() returns null for empty results — the hook would then run keywordArm() over the
+ * same, empty, index — and for a first line over MAX_CHARS, which it calls effectively dead.
  *
  * @param {readonly { note: string, score?: number }[]} results
  * @returns {boolean}
  */
 export function abstains(results) {
-  const hits = results.map((r) => ({ layer: '', ...r }));
+  const hits = results.slice(0, MAX_NOTES).map((r) => ({ layer: '', ...r }));
   return semanticArm(hits)?.entry.abstained ?? true;
 }
 

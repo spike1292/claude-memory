@@ -329,3 +329,40 @@ test('the CLI writes supersession and abstention case sets, reproducibly, inside
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// Round trip: the eval must accept what the generator writes, or the two halves drift unseen.
+test('memory-eval scores the synthetic supersede set end to end', () => {
+  const synth = fileURLToPath(new URL('../memory-synth-vault.mjs', import.meta.url));
+  const evalEntry = fileURLToPath(new URL('../memory-eval.mjs', import.meta.url));
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'synth-eval-')));
+  const out = path.join(tmp, 'vault');
+  try {
+    spawnSync(process.execPath, [synth, '--out', out, '--notes', '140', '--seed', '7']);
+    const r = spawnSync(
+      process.execPath,
+      [
+        evalEntry,
+        '--vault',
+        out,
+        '--slug',
+        'bench',
+        '--run',
+        '--mode',
+        'lexical',
+        '--json',
+        '--cases',
+        path.join(out, 'cases-supersede.jsonl'),
+      ],
+      {
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, HOME: tmp, CLAUDE_MEMORY_HOME: path.join(tmp, 'state') },
+      },
+    );
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const json = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
+    assert.equal(json.supersede.total, DOMAINS.length);
+    assert.equal(json.unscorable, 0);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

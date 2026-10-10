@@ -19,6 +19,7 @@ import {
   SUPERSEDED_ON,
   ABSTAIN,
 } from './lib/memory-synth-vault.mjs';
+import { TYPE } from './lib/memory-eval.mjs';
 
 /** @typedef {{ q: string, gold: string[], style: string, owner?: string, type?: string }} EvalCase */
 
@@ -178,12 +179,12 @@ for (const [i, u] of SUPERSEDED.entries()) {
     q: u.ask,
     owner: newer,
     gold: [older],
-    type: 'supersede',
+    type: TYPE.supersede,
     style: 'synthetic-supersede',
   });
 }
 for (const q of ABSTAIN)
-  cases.abstain.push({ q, gold: [], type: 'abstain', style: 'synthetic-abstain' });
+  cases.abstain.push({ q, gold: [], type: TYPE.abstain, style: 'synthetic-abstain' });
 
 // filler notes — same subject areas, so they compete rather than pad
 let f = 0;

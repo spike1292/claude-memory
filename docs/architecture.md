@@ -439,6 +439,7 @@ deleted on 2026-08-19, and the `preFiltered` parameter it had become went with i
   hooks/lib/validate-note.mjs ──────────▶ scripts/lib/memory-audit-checks.mjs
   hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
   scripts/lib/recall-stats.mjs ─────────▶ hooks/lib/memory-recall.mjs (MAX_CHARS)
+  scripts/lib/memory-eval.mjs ──────────▶ hooks/lib/memory-recall.mjs (semanticArm, MAX_NOTES)
   scripts/lib/hook-stats.mjs ───────────▶ hooks/hooks.json (the declared timeouts)
   scripts/lib/hook-stats.mjs ───────────▶ hooks/lib/memory-link-lint.mjs (mocs, for costReport)
   scripts/memory-semantic.mjs ──────────▶ hooks/lib/hook-io.mjs (logHook, its own worker line)
