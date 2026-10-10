@@ -27,6 +27,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   the hook logs, and tokens per day. A MOC over 2,000 estimated tokens per start gets a warning.
   Nothing is trimmed, and the load cap is unchanged.
 
+- **The audit says where a dead repo path went (#151).** In "Path not on this branch", a path that
+  was renamed now shows its new path and the commit, and a deleted path shows the deleting commit.
+  Before, each one needed a `git log` by hand. A path git never saw is listed as before.
+
 ### Changed
 
 - **`--dupes` no longer lists pairs where either note is marked `reconcile: manual`.** It now

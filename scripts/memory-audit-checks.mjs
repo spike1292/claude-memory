@@ -24,6 +24,7 @@ import {
   buildSuffixIndex,
   checkFile,
   stripCodeBlocks,
+  pathFates,
 } from './lib/memory-audit-checks.mjs';
 
 if (process.argv.includes('--check-file')) {
@@ -194,7 +195,7 @@ const claimRe = new RegExp(`(?:^|[\\s\`'"(\\[])(${TOP}/[A-Za-z0-9._/-]*[A-Za-z0-
 const abbreviated = [];
 /** @type {string[]} */
 const suffixOnly = [];
-/** @type {string[]} */
+/** @type {[string, string][]} */
 const absent = [];
 for (const n of memNames) {
   const body = /** @type {Note} */ (notes.get(n)).body;
@@ -211,14 +212,28 @@ for (const n of memNames) {
         suffixOnly.push(
           `${n}: \`${c}\` → real path is \`${full[0]}\`${full.length > 1 ? ` (+${full.length - 1} more)` : ''}`,
         );
-      else absent.push(`${n}: ${c}`);
+      else absent.push([n, c]);
     }
   }
 }
 section('Path abbreviated to a suffix — WRITE THE FULL PATH', [...new Set(suffixOnly)]);
+const fates = pathFates(
+  repo,
+  absent.map(([, c]) => c),
+);
 section(
   'Path not on this branch (check whether the note names the branch — many are legitimately branch-only)',
-  [...new Set(absent)],
+  [
+    ...new Set(
+      absent.map(([n, c]) => {
+        const f = fates.get(c);
+        if (!f) return `${n}: ${c}`;
+        return f.to
+          ? `${n}: ${c} → renamed to ${f.to} in ${f.sha}`
+          : `${n}: ${c} → deleted in ${f.sha}`;
+      }),
+    ),
+  ],
 );
 if (abbreviated.length)
   console.log(
