@@ -9,6 +9,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **SessionStart names duplicate pairs once per project per day (#100).** Duplicate detection only
+  ran at write time, so 26 same-folder pairs piled up for five days unseen. The link-lint report now
+  prints the count and the top five pairs from the existing index, using the same predicate as the
+  write-time check. It runs at most once per project per UTC day, never merges or deletes, and is
+  silent when there are none or no index exists.
+
+### Changed
+
+- **`--dupes` no longer lists pairs where either note is marked `reconcile: manual`.** It now
+  agrees with the SessionStart report. `--dupe-eval` still sees every pair.
+
 ## [0.8.2] - 2026-10-10
 
 ### Fixed

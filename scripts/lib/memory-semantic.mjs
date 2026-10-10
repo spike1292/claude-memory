@@ -537,6 +537,26 @@ export function samefolderPairs(items, minScore) {
 }
 
 /**
+ * `samefolderPairs()` minus every pair a human has settled — what `--dupes` and the SessionStart
+ * report show. `--dupe-eval` keeps the unfiltered list: its keeps-proposed column measures the mark.
+ *
+ * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
+ * @param {readonly T[]} items
+ * @param {number} minScore
+ * @param {(note: string) => boolean} isManual
+ * @returns {{ s: number, layer: string, a: string, b: string }[]}
+ */
+export function reportPairs(items, minScore, isManual) {
+  /** @type {Map<string, boolean>} */
+  const seen = new Map();
+  const manual = (/** @type {string} */ n) => {
+    if (!seen.has(n)) seen.set(n, isManual(n));
+    return seen.get(n);
+  };
+  return samefolderPairs(items, minScore).filter((p) => !manual(p.a) && !manual(p.b));
+}
+
+/**
  * The pair key both halves of the dedup eval agree on. Order-independent, because a truth file is
  * hand-written and nobody should have to guess which note the author put first.
  *

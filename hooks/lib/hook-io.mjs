@@ -105,26 +105,39 @@ export function writeMarker(file, seconds) {
   }
 }
 
-// The day-claim marker `logs/.retention-<day>`: written by `claimDay()`, swept by
-// `pruneDatedLogs()`. Anchored on a DATE — `.startsWith('.retention-')` also matched
-// `.retention-notes.md` and a bare `.retention-`, which are not ours to delete.
-const CLAIM = /^\.retention-(\d{4}-\d{2}-\d{2})$/;
+// The day-claim markers `logs/.retention-<day>` (machine-wide) and `logs/.dupes-<day>-<slug>`
+// (per project): written by `claim()`, swept by `pruneDatedLogs()`. Anchored on a DATE —
+// `.startsWith('.retention-')` also matched `.retention-notes.md` and a bare `.retention-`, which
+// are not ours to delete.
+const CLAIM = /^\.(?:retention-(\d{4}-\d{2}-\d{2})|dupes-(\d{4}-\d{2}-\d{2})-.+)$/;
 
 /**
- * Claim today's retention pass, machine-wide. True for exactly one caller per day.
- * `wx` create-if-absent is the whole mechanism; any error (including EEXIST) means don't prune.
+ * True for exactly one caller per marker name. `wx` create-if-absent is the whole mechanism; any
+ * error (including EEXIST) means don't run.
  * See CLAUDE.md's retention section and docs/decisions/2026-08-21-log-retention-day-claim.md.
  * @param {string} dir
- * @param {string} day  `YYYY-MM-DD`
+ * @param {string} name
  * @returns {boolean}
  */
-function claimDay(dir, day) {
+function claim(dir, name) {
   try {
-    fs.closeSync(fs.openSync(path.join(dir, `.retention-${day}`), 'wx'));
+    fs.closeSync(fs.openSync(path.join(dir, name), 'wx'));
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Claim today's (UTC) duplicate scan for one project — true for exactly one session per project
+ * per day. Per project, not machine-wide: duplicates belong to a project, and a machine-wide claim
+ * would report only for the first project opened each day.
+ * @param {string} slug
+ * @param {Date} [now]
+ * @returns {boolean}
+ */
+export function claimDupeScan(slug, now = new Date()) {
+  return claim(stateDir('logs'), `.dupes-${now.toISOString().slice(0, 10)}-${slug}`);
 }
 
 /**
@@ -440,7 +453,7 @@ export function appendJsonl(family, cwd, record) {
     const day = t.slice(0, 10);
     /** @type {number | undefined} */
     let pruned;
-    if (claimDay(dir, day)) {
+    if (claim(dir, `.retention-${day}`)) {
       pruned = pruneDatedLogs(new Date(t)).length;
     }
     // Deleting is work, so it logs itself, AFTER the caller's own fields (CLAUDE.md's "a pass that
@@ -495,9 +508,9 @@ export function pruneDatedLogs(now = new Date()) {
       // `backup-*`/`my-notes-export-*` too (measured 2026-08-21); only what we write is ours.
       // Yesterday's day-claim goes with yesterday's logs, so the dotfile doesn't accumulate in
       // the name of not accumulating the log file.
-      const claim = CLAIM.exec(name);
-      if (claim) {
-        if (claim[1] >= today) continue; // today's own claim, or a future one from a wrong clock
+      const c = CLAIM.exec(name);
+      if (c) {
+        if ((c[1] ?? c[2]) >= today) continue; // today's own claim, or a future one from a wrong clock
         try {
           fs.unlinkSync(path.join(dir, name));
         } catch {

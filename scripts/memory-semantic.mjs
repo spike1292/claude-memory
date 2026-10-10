@@ -36,6 +36,7 @@ import {
   consolidationGaps,
   crossFolderPairs,
   samefolderPairs,
+  reportPairs,
   bestDupe,
   dupeScore,
   pairKey,
@@ -49,6 +50,7 @@ import {
   QUIT,
 } from './lib/memory-semantic.mjs';
 import { proposeStagingNotes } from './lib/memory-promote.mjs';
+import { isManual } from './lib/memory-mark.mjs';
 
 /** @typedef {import('./lib/memory-semantic.mjs').ChunkRow} ChunkRow */
 /** @typedef {{ note: string, layer: string, text: string, vec: Uint8Array }} CardRow */
@@ -683,9 +685,9 @@ if (flag('--dupes')) {
   // One vector per note: the '(card)' chunk carries title + description + the opening body, which
   // for a short Insight note is effectively the whole note. Comparing cards keeps this O(notes²)
   // (~165k pairs, well under a second) instead of O(chunks²).
-  const rawCards = /** @type {CardRow[]} */ (
+  const rawCards = /** @type {(CardRow & { file: string })[]} */ (
     /** @type {DatabaseSync} */ (db)
-      .prepare('SELECT note, layer, text, vec FROM chunks WHERE heading = ?')
+      .prepare('SELECT note, layer, file, text, vec FROM chunks WHERE heading = ?')
       .all(CARD)
   );
   assertVectorWidth(rawCards, DIM, 'dupes');
@@ -699,9 +701,11 @@ if (flag('--dupes')) {
     console.log('empty index — run --index first');
     process.exit(1);
   }
-  const pairs = samefolderPairs(cards, min);
+  const fileOf = new Map(rawCards.map((r) => [r.note, r.file]));
+  const pairs = reportPairs(cards, min, (n) => isManual(fileOf.get(n) ?? ''));
   const byNote = new Map(cards.map((c) => [c.note, c]));
   console.log(`${cards.length} notes · same-folder pairs ≥ ${min}: ${pairs.length}`);
+  console.log('(pairs with either note marked reconcile: manual are not reported)');
   console.log('(cross-folder pairs are complementary by design and are not reported)\n');
   for (const p of pairs.slice(0, Number(val('--top') || 30))) {
     console.log(`${p.s.toFixed(3)} [${p.layer}]`);

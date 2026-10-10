@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// SessionStart entry: name the L1 notes reachable only from the MOC.
+// SessionStart entry: name the L1 notes reachable only from the MOC, and once a day the duplicate pairs.
 //
 // Thin on purpose: stdin, cwd, stdout. Logic and tests live in lib/memory-link-lint.mjs.
 // hooks.json points at this path, so it is a contract — keep it.
 import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
 import { lint } from './lib/memory-link-lint.mjs';
+import { dupeReport } from './lib/dupe-report.mjs';
 
 // readStdin() and not `new Response(process.stdin)` — the web-streams path costs ~18 ms of runtime
 // bootstrap per hook. See docs/decisions/2026-08-20-hook-startup-cost.md.
@@ -19,7 +20,7 @@ let reason;
 /** @type {Record<string, number> | undefined} */
 let extra;
 try {
-  const text = lint(cwd);
+  const text = [lint(cwd), await dupeReport(cwd)].filter(Boolean).join('\n\n');
   if (text) console.log(text);
   reason = text ? 'reported' : 'nothing to report';
   // What this hook COSTS the session, in bytes of context window. Omitted rather than logged as 0

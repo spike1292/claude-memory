@@ -21,7 +21,6 @@ import {
   todayStr,
   projectKey,
   findNearDuplicate,
-  isManual,
   reconcile,
   transcriptToText,
   parseEnvelope,
@@ -29,6 +28,7 @@ import {
   workerArgs,
   recordRun,
 } from './distill-session.mjs';
+import { isManual } from '../../scripts/lib/memory-mark.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
 // different remote than the test expects and fail on a machine setting rather than on the code.
