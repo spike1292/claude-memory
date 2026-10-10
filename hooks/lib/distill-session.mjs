@@ -23,7 +23,7 @@ import * as paths from './paths.mjs';
 // Imports nothing but node:fs and node:path, so it is safe above the entry guard — unlike
 // scripts/lib/memory-semantic.mjs, which process.exit()s at module scope on an unknown model
 // and is therefore reached only through an await import() inside a function.
-import { isMarked } from '../../scripts/lib/memory-mark.mjs';
+import { isManual } from '../../scripts/lib/memory-mark.mjs';
 import {
   countLines,
   detach,
@@ -141,32 +141,6 @@ export function tokens(slug) {
     if (t.length > 2 && !STOP.has(t)) out.add(t.length > 3 && t.endsWith('s') ? t.slice(0, -1) : t);
   }
   return out;
-}
-
-/**
- * Is this note marked as manually adjudicated — never auto-merge into it?
- *
- * The mark exists because correctly RELATING two notes raises their similarity: cross-linking
- * moved one kept pair 0.754 -> 0.762, over the 0.75 bar, so an audit that does its job creates the
- * merge proposal it just rejected. It is note-scoped rather than pair-scoped so it also holds at
- * write time, where the incoming note is neither end of any previously judged pair.
- *
- * Reads the mark through `isMarked()`, the same function `memory-mark.mjs` writes it with. Two
- * regexes for one field is the shape of this whole PR's bug at smaller scale: the writer and the
- * reader drift, and the mark silently stops blocking anything while every test stays green.
- *
- * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement, and hooks do
- * not throw.
- *
- * @param {string} file
- * @returns {boolean}
- */
-export function isManual(file) {
-  try {
-    return isMarked(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return false;
-  }
 }
 
 /**
