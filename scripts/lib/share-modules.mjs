@@ -42,6 +42,9 @@ const stat = (p) => {
 export const isRealDir = (p) => stat(p)?.isDirectory() === true;
 /** @type {(p: string) => boolean} */
 export const isLink = (p) => stat(p)?.isSymbolicLink() === true;
+/** @type {(p: string) => boolean} */
+export const hasInstall = (p) =>
+  isRealDir(p) && fs.existsSync(path.join(p, 'onnxruntime-node', 'package.json'));
 
 /**
  * Other installed versions of the same plugin that still carry their own copy.
