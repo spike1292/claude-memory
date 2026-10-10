@@ -9,6 +9,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The write-time note check now runs on auto-memory notes (#144).** Claude Code writes them
+  through `~/.claude/projects/<slug>/memory/`, a symlink into the vault. The hook compared the
+  unresolved path with the vault path, so it skipped every such note: no `confidence:`, alias or
+  claim check ran. The hook now resolves both paths first. It also warns when no sibling note links
+  to a new L1 note. Before, only the SessionStart lint reported that.
+
 ## [0.8.2] - 2026-10-10
 
 ### Fixed

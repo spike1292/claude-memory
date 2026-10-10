@@ -1,7 +1,10 @@
 // Tests for hooks/lib/validate-note.mjs. Run: node --test hooks/lib/validate-note.test.mjs
 import test from 'node:test';
 import assert from 'node:assert';
-import { frontmatter, noteBody, isCheckable, warnings } from './validate-note.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { frontmatter, noteBody, isCheckable, warnings, report } from './validate-note.mjs';
 
 const V = '/v';
 
@@ -85,4 +88,46 @@ test('regex metacharacters in a filename match literally', () => {
     ).some((w) => w.includes('name: must equal')),
     'metacharacters must match literally',
   );
+});
+
+test('a note written through the memory symlink is checked like one written to the vault (#144)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vn-'));
+  const mem = path.join(tmp, 'vault', 'Memory', 'p');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'proj'));
+  fs.symlinkSync(mem, path.join(tmp, 'proj', 'memory'));
+  fs.writeFileSync(path.join(mem, 'a.md'), '---\nname: a\n---\n\nbody\n');
+  const prev = process.env.CLAUDE_VAULT;
+  process.env.CLAUDE_VAULT = path.join(tmp, 'vault');
+  try {
+    const real = report(path.join(mem, 'a.md'));
+    assert.ok(real.includes('no confidence:'), real);
+    assert.strictEqual(report(path.join(tmp, 'proj', 'memory', 'a.md')), real);
+    assert.strictEqual(report(path.join(tmp, 'proj', 'memory', 'gone.md')), '');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_VAULT;
+    else process.env.CLAUDE_VAULT = prev;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('an L1 note no sibling links to warns until one does (#144)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vn-'));
+  const mem = path.join(tmp, 'Memory', 'p');
+  fs.mkdirSync(mem, { recursive: true });
+  const good = (/** @type {string} */ n, body = '') =>
+    `---\nname: ${n}\nmetadata:\n  type: project\n  confidence: high\n---\n\n${body}\n\n_Also asked as: one, two._\n`;
+  fs.writeFileSync(path.join(mem, 'a.md'), good('a', 'see [[a]]'));
+  fs.writeFileSync(path.join(mem, 'MEMORY.md'), '- [A](a.md) — hook\n- [[a]]\n');
+  const prev = process.env.CLAUDE_VAULT;
+  process.env.CLAUDE_VAULT = tmp;
+  try {
+    assert.match(report(path.join(mem, 'a.md')), /no sibling note links \[\[a\]\]/);
+    fs.writeFileSync(path.join(mem, 'b.md'), good('b', 'related: [[a]]'));
+    assert.strictEqual(report(path.join(mem, 'a.md')), '');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_VAULT;
+    else process.env.CLAUDE_VAULT = prev;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
