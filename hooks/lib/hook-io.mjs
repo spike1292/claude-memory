@@ -132,8 +132,20 @@ function claim(dir, name) {
  * @param {Date} [now]
  */
 export function claimDupeScan(slug, now = new Date()) {
-  return claim(stateDir('logs'), `.dupes-${now.toISOString().slice(0, 10)}-${slug}`);
+  return claim(stateDir('logs'), dupeMarker(slug, now));
 }
+
+/**
+ * A read, not a claim: lets a scan skip its work when today's report is already out.
+ * @param {string} slug
+ * @param {Date} [now]
+ */
+export function dupeScanDone(slug, now = new Date()) {
+  return fs.existsSync(path.join(stateDir('logs'), dupeMarker(slug, now)));
+}
+
+const dupeMarker = (/** @type {string} */ slug, /** @type {Date} */ now) =>
+  `.dupes-${now.toISOString().slice(0, 10)}-${slug}`;
 
 /**
  * Is a run still inside its debounce window? `last === 0` (no marker) must NOT count as recent,

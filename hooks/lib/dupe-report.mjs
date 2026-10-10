@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { projectKey, stateDir } from './paths.mjs';
-import { claimDupeScan } from './hook-io.mjs';
+import { claimDupeScan, dupeScanDone } from './hook-io.mjs';
 import { activeModel } from '../../scripts/lib/model-default.mjs';
 import { MODELS } from '../../scripts/lib/models.mjs';
 import { CARD } from '../../scripts/lib/lexical.mjs';
@@ -29,7 +29,7 @@ export async function dupeReport(cwd, now = new Date()) {
     if (!profile) return '';
     const slug = projectKey(cwd);
     const dbPath = path.join(stateDir('db'), `semantic-${slug}-${key}.db`);
-    if (!fs.existsSync(dbPath)) return '';
+    if (!fs.existsSync(dbPath) || dupeScanDone(slug, now)) return '';
     const db = new DatabaseSync(dbPath, { readOnly: true });
     /** @type {{ note: string, layer: string, file: string, vec: Uint8Array }[]} */
     let rows;
@@ -37,26 +37,27 @@ export async function dupeReport(cwd, now = new Date()) {
       const stored = /** @type {{ value?: string } | undefined} */ (
         db.prepare("SELECT value FROM meta WHERE key = 'model'").get()
       )?.value;
-      // Checked before the claim, so a missing or foreign index does not spend the day.
-      if (stored !== profile.id || !claimDupeScan(slug, now)) return '';
+      if (stored !== profile.id) return '';
       rows = /** @type {any} */ (
         db.prepare('SELECT note, layer, file, vec FROM chunks WHERE heading = ?').all(CARD)
       );
     } finally {
       db.close();
     }
-    const cards = rows
-      .filter((r) => r.vec.byteLength === profile.dim * 4)
-      .map((r) => ({
-        note: r.note,
-        layer: r.layer,
-        vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, profile.dim),
-      }));
+    // A mixed-width index is silent nonsense; a partial list would hide it.
+    if (rows.some((r) => r.vec?.byteLength !== profile.dim * 4)) return '';
+    const cards = rows.map((r) => ({
+      note: r.note,
+      layer: r.layer,
+      vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, profile.dim),
+    }));
     const fileOf = new Map(rows.map((r) => [r.note, r.file]));
     // Imported only once the model key is known-good: this module exits the process on an unknown one.
     const { reportPairs } = await import('../../scripts/lib/memory-semantic.mjs');
     const pairs = reportPairs(cards, profile.dupeMin, (n) => isManual(fileOf.get(n) ?? ''));
-    if (!pairs.length) return '';
+    // Claimed only once the scan has succeeded, so a failed read does not spend the day. Two
+    // sessions racing past dupeScanDone() both scan; `wx` lets one report.
+    if (!claimDupeScan(slug, now) || !pairs.length) return '';
     const s = pairs.length === 1 ? '' : 's';
     return [
       `${pairs.length} same-folder duplicate pair${s} at or above ${profile.dupeMin} (cosine). ` +

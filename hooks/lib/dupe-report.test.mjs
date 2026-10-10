@@ -152,3 +152,39 @@ test(
     );
   }),
 );
+
+/** @param {string} cwd @param {string} sql */
+const tamper = (cwd, sql) => {
+  const db = new DatabaseSync(path.join(stateDir('db'), `semantic-${projectKey(cwd)}-${KEY}.db`));
+  db.exec(sql);
+  db.close();
+};
+
+test(
+  'a scan that fails after the index check spends no claim, so a later session still reports',
+  isolated(async () => {
+    const { cwd } = project([
+      { note: 'a', layer: 'P', axis: 0 },
+      { note: 'b', layer: 'P', axis: 0 },
+    ]);
+    tamper(cwd, 'ALTER TABLE chunks RENAME TO chunks_busy');
+    assert.equal(await dupeReport(cwd, NOW), '');
+    tamper(cwd, 'ALTER TABLE chunks_busy RENAME TO chunks');
+    assert.match(await dupeReport(cwd, NOW), /1 same-folder duplicate pair/);
+  }),
+);
+
+test(
+  'one vector of the wrong width reports nothing rather than a partial list',
+  isolated(async () => {
+    const { cwd } = project([
+      { note: 'a', layer: 'P', axis: 0 },
+      { note: 'b', layer: 'P', axis: 0 },
+    ]);
+    tamper(
+      cwd,
+      `INSERT INTO chunks VALUES ('c', 'P', '/nowhere/c.md', '${CARD}', '', x'00000000')`,
+    );
+    assert.equal(await dupeReport(cwd, NOW), '');
+  }),
+);
