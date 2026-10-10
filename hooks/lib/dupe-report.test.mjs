@@ -122,13 +122,18 @@ test(
 );
 
 test(
-  'zero pairs adds nothing',
+  'zero pairs adds nothing, and the day is still claimed',
   isolated(async () => {
     const { cwd } = project([
       { note: 'a', layer: 'P', axis: 0 },
       { note: 'b', layer: 'P', axis: 5 },
     ]);
     assert.equal(await dupeReport(cwd, NOW), '');
+    assert.equal(
+      fs.readdirSync(stateDir('logs')).filter((f) => f.startsWith('.dupes-')).length,
+      1,
+      'a clean scan still spends the day',
+    );
   }),
 );
 
