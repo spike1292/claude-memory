@@ -28,6 +28,8 @@ import {
   defaultCasesPath,
   unscorableReason,
   pairwise,
+  abstains,
+  TYPE,
   gateFailures,
   casesHash,
   kindOfPath,
@@ -433,7 +435,7 @@ if (fs.existsSync(sidecar)) {
   }
 }
 const cases =
-  /** @type {{ q: string, gold: string[], owner?: string, layer?: string, style?: string }[]} */ (
+  /** @type {{ q: string, gold: string[], owner?: string, layer?: string, style?: string, type?: string }[]} */ (
     parseJsonl(casesText, CASES)
   );
 
@@ -453,6 +455,15 @@ if (malformed) {
   process.exit(1);
 }
 
+// Without its owner a supersede case would score as recall, where its gold is the loser by design.
+const ownerless = cases.filter((c) => c.type === TYPE.supersede && !c.owner).length;
+if (ownerless) {
+  console.log(
+    `${ownerless} supersede case(s) name no owner, the newer note. Refusing to report a number.\n  case set: ${CASES}`,
+  );
+  process.exit(1);
+}
+
 // Refuse a case set that is not about this vault — why, and the measurement, in `goldCoverage`.
 const known = new Set(allNotes().map((n) => n.note));
 // Nothing to score against at all. Diagnosed before coverage, because zero resolvable gold is a
@@ -465,7 +476,9 @@ if (!known.size) {
   process.exit(1);
 }
 const cov = goldCoverage(cases, known);
-if (cov.verdict === GOLD.mismatch) {
+// An abstention case names no gold by design, so a set of nothing else has no coverage to check.
+const allAbstain = cases.length > 0 && cases.every((c) => c.type === TYPE.abstain);
+if (cov.verdict === GOLD.mismatch && !allAbstain) {
   // Both tests, because either alone reintroduces the other's bug. The path says WHETHER an
   // override matters — `--cases <the scoped path>` is not one, and "drop it" hands back the same
   // file. The flag says WHICH to name — `--out` overrides too.
@@ -543,24 +556,37 @@ if (mode === 'semantic') {
   );
 }
 
+// BM25 is not cosine, so the hook's gate cannot judge a lexical run. Skipped, not unscorable:
+// unscorable gates under --min-rank1, and these cases never gate.
+const skipped = mode === 'semantic' ? [] : cases.filter((c) => c.type === TYPE.abstain);
 const scored = cases.map((c, i) => {
   const res = ranked[i]?.results || [];
+  const abstain = c.type === TYPE.abstain;
   return {
     q: c.q,
     gold: c.gold[0],
     layer: c.layer,
+    type: c.type,
     rank: res.findIndex((r) => c.gold.includes(r.note)) + 1,
     // A pairwise case inverts what `gold` means — it names the note that must LOSE — so it is
     // scored by pairwise() and kept out of recall@k, where it would count as a miss by design.
     pair: c.owner ? pairwise(/** @type {{gold: string[], owner: string}} */ (c), res) : null,
+    abstained: abstain ? abstains(res) : null,
     unscorable: unscorableReason(c, res, known),
     top1: res[0]?.note ?? null,
   };
 });
-const perCase = scored.filter((c) => !c.pair);
+const perCase = scored.filter((c) => !c.pair && c.type !== TYPE.abstain);
 // Unscorable pairwise cases leave BOTH sides of the tally, or `gold: []` counts as a pass in the
 // line people paste (`named` is Infinity, so `owner < named` is vacuously true).
-const pairs = scored.filter((c) => c.pair && !c.unscorable);
+const owned = scored.filter((c) => c.pair && !c.unscorable);
+const pairs = owned.filter((c) => c.type !== TYPE.supersede);
+const supersede = owned.filter((c) => c.type === TYPE.supersede);
+const supersedeFails = supersede.filter((c) => !c.pair?.pass);
+const abstain = skipped.length
+  ? []
+  : scored.filter((c) => c.type === TYPE.abstain && !c.unscorable);
+const spoke = abstain.filter((c) => !c.abstained);
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
@@ -608,6 +634,12 @@ if (flag('--json')) {
         // Null when no sidecar exists — deleting one un-freezes a set silently.
         frozen,
         pairwise: { total: pairs.length, failed: pairFails.length },
+        supersede: { total: supersede.length, passed: supersede.length - supersedeFails.length },
+        abstain: {
+          total: abstain.length,
+          passed: abstain.length - spoke.length,
+          ...(skipped.length ? { skipped: skipped.length } : {}),
+        },
         gate: failures,
       },
       null,
@@ -626,7 +658,7 @@ console.log(
 console.log(`  cases: ${CASES}`);
 console.log(frozen ? `  frozen: ${frozen}` : '  frozen: no (this set is not pinned)');
 // metrics() divides by `|| 1`, so an all-pairwise set rendered a bar chart no case contributed to.
-if (!perCase.length) console.log('  no recall cases in this set — pairwise assertions only');
+if (!perCase.length) console.log('  no recall cases in this set — typed or pairwise cases only');
 else {
   for (const k of KS)
     console.log(
@@ -658,6 +690,23 @@ const rankLabel = (/** @type {number} */ r) => (Number.isFinite(r) ? String(r) :
 for (const f of pairFails.slice(0, 8))
   console.log(
     `  owner ${rankLabel(f.pair?.owner ?? Infinity)}  named ${rankLabel(f.pair?.named ?? Infinity)}  Q: ${f.q.slice(0, 70)}`,
+  );
+if (supersede.length)
+  console.log(
+    `\nSupersession (the newer note must outrank the one it replaced): ${supersede.length - supersedeFails.length}/${supersede.length} passed`,
+  );
+for (const f of supersedeFails.slice(0, 8))
+  console.log(
+    `  newer ${rankLabel(f.pair?.owner ?? Infinity)}  older ${rankLabel(f.pair?.named ?? Infinity)}  Q: ${f.q.slice(0, 70)}`,
+  );
+if (abstain.length)
+  console.log(
+    `\nAbstention (the recall hook must inject nothing): ${abstain.length - spoke.length}/${abstain.length} passed`,
+  );
+for (const f of spoke.slice(0, 8)) console.log(`  injected ${f.top1}  Q: ${f.q.slice(0, 70)}`);
+if (skipped.length)
+  console.log(
+    `\n${skipped.length} abstention case(s) skipped: scored in semantic mode only, the hook gates on cosine`,
   );
 // Named, not counted: a tally cannot be gone and looked at.
 if (unscorable.length) {

@@ -15,9 +15,13 @@ import {
   DOMAINS,
   ECHO_CAUSES,
   FILLER_ASPECTS,
+  SUPERSEDED,
+  SUPERSEDED_ON,
+  ABSTAIN,
 } from './lib/memory-synth-vault.mjs';
+import { TYPE } from './lib/memory-eval.mjs';
 
-/** @typedef {{ q: string, gold: string[], style: string }} EvalCase */
+/** @typedef {{ q: string, gold: string[], style: string, owner?: string, type?: string }} EvalCase */
 
 const argv = process.argv.slice(2);
 /**
@@ -87,8 +91,8 @@ for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 const layers = ['Memory', 'Patterns', 'Mistakes', 'Decisions', 'permanent'];
 /** @type {string[]} */
 const allNames = [];
-/** @type {{ paraphrase: EvalCase[], keyword: EvalCase[], dutch: EvalCase[] }} */
-const cases = { paraphrase: [], keyword: [], dutch: [] };
+/** @type {Record<'paraphrase' | 'keyword' | 'dutch' | 'supersede' | 'abstain', EvalCase[]>} */
+const cases = { paraphrase: [], keyword: [], dutch: [], supersede: [], abstain: [] };
 
 // gold notes — spread across layers so layer scoping is exercised, not assumed
 // Truncation is round-robin across domains, then written back in the original order: taking the
@@ -147,6 +151,41 @@ if (goldCount < availableGold)
     `--notes ${TOTAL} fits ${goldCount} of ${availableGold} gold cases (${PER_GOLD} note${PER_GOLD === 1 ? '' : 's'} each)`,
   );
 
+// knowledge updates take their room from filler, so --notes stays the whole vault
+let pairNotes = 0;
+for (const [i, u] of SUPERSEDED.entries()) {
+  if (allNames.length + 2 > TOTAL) break;
+  const d = DOMAINS[i];
+  const newer = `${d.product.toLowerCase()}-${u.topic}`;
+  const older = `${newer}-earlier`;
+  const description = `${d.product}: ${u.topic.replace(/-/g, ' ')}`;
+  fs.writeFileSync(
+    path.join(dirs[layers[i % layers.length]], `${newer}.md`),
+    noteText(newer, description, u.after, [u.ask], []),
+  );
+  fs.writeFileSync(
+    path.join(dirs[layers[(i + 1) % layers.length]], `${older}.md`),
+    noteText(
+      older,
+      description,
+      `${u.before} (superseded ${SUPERSEDED_ON} by [[${newer}]])`,
+      [u.ask],
+      [],
+    ),
+  );
+  allNames.push(newer, older);
+  pairNotes += 2;
+  cases.supersede.push({
+    q: u.ask,
+    owner: newer,
+    gold: [older],
+    type: TYPE.supersede,
+    style: 'synthetic-supersede',
+  });
+}
+for (const q of ABSTAIN)
+  cases.abstain.push({ q, gold: [], type: TYPE.abstain, style: 'synthetic-abstain' });
+
 // filler notes — same subject areas, so they compete rather than pad
 let f = 0;
 while (allNames.length < TOTAL) {
@@ -171,7 +210,7 @@ while (allNames.length < TOTAL) {
 for (const [k, v] of Object.entries(cases))
   fs.writeFileSync(
     path.join(OUT, `cases-${k}.jsonl`),
-    v.map((c) => JSON.stringify(c)).join('\n') + '\n',
+    v.map((c) => JSON.stringify(c)).join('\n') + (v.length ? '\n' : ''),
   );
 
 fs.writeFileSync(
@@ -187,6 +226,9 @@ Query sets, which fail for different reasons:
 - \`cases-paraphrase.jsonl\` — outsider wording, no title words, no product name. The real test.
 - \`cases-keyword.jsonl\` — product name plus title words. Keyword search should win here.
 - \`cases-dutch.jsonl\` — Dutch paraphrase against English notes. Cross-language reach.
+- \`cases-supersede.jsonl\` — a knowledge update: the newer note must outrank the one it superseded.
+- \`cases-abstain.jsonl\` — no answer in the vault. Passes only if the recall hook stays silent;
+  scored in semantic mode only.
 
 What this does NOT measure (borrowed discipline from obsidian-second-brain's BENCHMARK.md):
 - **Single gold answer per query.** Real vaults have several defensible answers; a note ranked above
@@ -199,10 +241,10 @@ What this does NOT measure (borrowed discipline from obsidian-second-brain's BEN
 );
 
 console.log(
-  `${allNames.length} notes (${goldCount} gold, ${goldCount * ECHOES_PER_GOLD} echoes, ${allNames.length - goldCount * (1 + ECHOES_PER_GOLD)} filler) → ${OUT}`,
+  `${allNames.length} notes (${goldCount} gold, ${goldCount * ECHOES_PER_GOLD} echoes, ${pairNotes} in superseded pairs, ${allNames.length - goldCount * (1 + ECHOES_PER_GOLD) - pairNotes} filler) → ${OUT}`,
 );
 console.log(
-  `cases: paraphrase ${cases.paraphrase.length}, keyword ${cases.keyword.length}, dutch ${cases.dutch.length}`,
+  `cases: paraphrase ${cases.paraphrase.length}, keyword ${cases.keyword.length}, dutch ${cases.dutch.length}, supersede ${cases.supersede.length}, abstain ${cases.abstain.length}`,
 );
 console.log(
   `index it:  node "${new URL('./memory-semantic.mjs', import.meta.url).pathname}" --vault ${OUT} --slug ${SLUG} --index --rebuild`,
