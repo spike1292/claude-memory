@@ -22,7 +22,10 @@ import {
   gateFailures,
   casesHash,
   kindOfPath,
+  abstains,
+  TYPE,
 } from './memory-eval.mjs';
+import { MIN_COS } from '../../hooks/lib/memory-recall.mjs';
 
 test('titleTokens drops short tokens', () => {
   // 'cap' is 3 chars and drops out — short tokens are noise, not identity
@@ -174,7 +177,7 @@ test.after(() => {
  * these tests care only about which gold names resolve.
  * @param {readonly string[]} notes
  * Both case fields are optional: several tests feed deliberately malformed lines.
- * @param {readonly {q?: unknown, gold?: unknown, owner?: string}[] | null} cases  null writes no file at all
+ * @param {readonly {q?: unknown, gold?: unknown, owner?: string, type?: string}[] | null} cases  null writes no file at all
  * @param {Record<string, string>} [bodies] per-note prose; the shared default ties every BM25 score,
  *   which is fine for the guards that exit before scoring and useless for one that asserts a RANK
  */
@@ -1097,4 +1100,71 @@ test('CLI --mine refuses a file and survives an unreadable directory', () => {
   const r = run('--mine', file);
   assert.equal(r.status, 1, 'a file is not a transcript directory');
   assert.match(r.stdout, /DIRECTORIES/);
+});
+
+// ---------------------------------------------------------------- case types (#155)
+
+test("abstains() follows the recall hook's own cosine gate, not a copy of it", () => {
+  assert.equal(abstains([{ note: 'a', score: MIN_COS }]), false);
+  assert.equal(abstains([{ note: 'a', score: MIN_COS - 0.001 }]), true);
+  assert.equal(abstains([]), true, 'an empty index injects nothing');
+});
+
+test('an abstention case is scorable with no gold and no results — those are its expected shape', () => {
+  const c = { q: 'how long do I proof sourdough', gold: [], type: TYPE.abstain };
+  const known = new Set(['some-note']);
+  assert.equal(unscorableReason(c, [], known), null);
+  assert.equal(unscorableReason(c, [{ note: 'some-note', score: 0.4 }], known), null);
+  assert.equal(unscorableReason(c, [{ note: 'some-note', score: NaN }], known), UNSCORABLE.score);
+});
+
+test('CLI reports supersession and abstention apart from recall, and neither gates the run', () => {
+  const { run, casesPath } = scratch(
+    ['tokens-now-rotate-hourly', 'tokens-rotated-daily', 'unrelated-runbook'],
+    [
+      { q: 'how often do access tokens rotate', gold: ['unrelated-runbook'] },
+      {
+        q: 'how often do access tokens rotate hourly',
+        owner: 'tokens-now-rotate-hourly',
+        gold: ['tokens-rotated-daily'],
+        type: TYPE.supersede,
+      },
+      {
+        q: 'how often do access tokens rotate daily',
+        owner: 'tokens-now-rotate-hourly',
+        gold: ['tokens-rotated-daily'],
+        type: TYPE.supersede,
+      },
+      { q: 'how long should sourdough proof overnight', gold: [], type: TYPE.abstain },
+    ],
+    {
+      'tokens-now-rotate-hourly': 'Access tokens rotate hourly since the vault migration.',
+      'tokens-rotated-daily':
+        'Access tokens rotate daily. (superseded 2026-01-02 by [[tokens-now-rotate-hourly]])',
+      'unrelated-runbook': 'Restart the queue worker when the backlog alarm fires.',
+    },
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--json');
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.supersede, { total: 2, passed: 1 });
+  assert.deepEqual(out.pairwise, { total: 0, failed: 0 }, 'supersession is not a pairwise gate');
+  assert.equal(out.n, 1, 'neither type counts toward recall');
+  // BM25 scores are not cosine, so the hook's gate cannot be applied to them.
+  assert.deepEqual(out.abstain, { total: 0, passed: 0 });
+  assert.equal(out.unscorable, 1);
+
+  const human = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.match(human.stdout, /^Supersession .*: 1\/2 passed/m);
+  assert.match(human.stdout, /abstention cases score only in semantic mode/);
+});
+
+test('CLI does not refuse an all-abstention set as one that names no gold', () => {
+  const { run, casesPath } = scratch(
+    ['some-note'],
+    [{ q: 'how long should sourdough proof overnight', gold: [], type: TYPE.abstain }],
+  );
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
+  assert.doesNotMatch(r.stdout, /names no gold notes/);
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
 });

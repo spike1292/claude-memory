@@ -18,6 +18,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **The eval scores knowledge updates and abstention (#155).** A `supersede` case passes when
+  the newer note outranks the one it superseded. An `abstain` case passes when the recall hook's
+  own gate injects nothing. Both report apart from recall@k and do not gate the run.
+  `memory-synth-vault.mjs` now writes `cases-supersede.jsonl` (one pair per domain) and
+  `cases-abstain.jsonl`. The pairs take their room from filler, so a seed-7 vault differs from
+  earlier releases. Baseline, seed 7, `--notes 300`, bge-m3, both sets `tuning`: supersede 5/8,
+  abstain 8/8 (off-topic top cosine 0.24–0.42 against the 0.55 gate), paraphrase recall@1
+  unchanged at 100%.
 - **The write-time note check warns when no sibling note links an L1 note (#144).** Before, only
   the SessionStart lint reported this, and 11 such notes built up between two audits. There is no
   "not in `MEMORY.md`" warning: auto memory writes the note before its MOC line, so that check

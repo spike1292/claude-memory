@@ -262,3 +262,70 @@ test('--notes bounds the vault it actually writes', () => {
     fs.rmSync(out, { recursive: true, force: true });
   }
 });
+
+test('the CLI writes supersession and abstention case sets, reproducibly, inside --notes', () => {
+  const entry = fileURLToPath(new URL('../memory-synth-vault.mjs', import.meta.url));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'synthvault-types-'));
+  /** @param {string} out @param {string} notes */
+  const build = (out, notes) =>
+    spawnSync(process.execPath, [entry, '--out', out, '--notes', notes, '--seed', '7'], {
+      encoding: 'utf8',
+    });
+  /** @param {string} dir */
+  const snapshot = (dir) =>
+    Object.fromEntries(
+      fs
+        .readdirSync(dir, { recursive: true })
+        .map(String)
+        .filter((f) => fs.statSync(path.join(dir, f)).isFile())
+        .sort()
+        .map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8').replaceAll(dir, '<out>')]),
+    );
+  /** @param {string} dir @param {string} kind */
+  const casesOf = (dir, kind) =>
+    fs
+      .readFileSync(path.join(dir, `cases-${kind}.jsonl`), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  try {
+    const a = path.join(tmp, 'a'),
+      b = path.join(tmp, 'b');
+    assert.equal(build(a, '300').status, 0);
+    assert.equal(build(b, '300').status, 0);
+    assert.deepEqual(snapshot(a), snapshot(b), 'same seed must give a byte-identical vault');
+
+    const notes = new Map(
+      fs
+        .readdirSync(a, { recursive: true })
+        .map(String)
+        .filter((f) => f.endsWith('.md') && !f.endsWith('MANIFEST.md'))
+        .map((f) => [path.basename(f, '.md'), fs.readFileSync(path.join(a, f), 'utf8')]),
+    );
+    assert.equal(notes.size, 300, '--notes stays exact with the pairs in it');
+
+    const sup = casesOf(a, 'supersede');
+    assert.equal(sup.length, DOMAINS.length, 'one superseded pair per domain');
+    for (const c of sup) {
+      assert.equal(c.type, 'supersede');
+      assert.ok(notes.has(c.owner), `newer note ${c.owner} is in the vault`);
+      assert.equal(c.gold.length, 1);
+      assert.match(
+        /** @type {string} */ (notes.get(c.gold[0])),
+        new RegExp(`\\(superseded \\d{4}-\\d{2}-\\d{2} by \\[\\[${c.owner}\\]\\]\\)`),
+        'the older note carries the protocol marker naming the newer one',
+      );
+    }
+
+    const abs = casesOf(a, 'abstain');
+    assert.ok(abs.length >= DOMAINS.length);
+    for (const c of abs) assert.deepEqual([c.type, c.gold], ['abstain', []]);
+
+    const small = path.join(tmp, 'small');
+    assert.equal(build(small, '3').status, 0);
+    assert.equal(casesOf(small, 'supersede').length, 0, 'no room left, so no pairs');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
