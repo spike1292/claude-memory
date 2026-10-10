@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { vault } from './paths.mjs';
 import { checkFile } from '../../scripts/lib/memory-audit-checks.mjs';
-import { findOrphans, mdFiles } from './memory-link-lint.mjs';
+import { findOrphans, readCorpus } from './memory-link-lint.mjs';
 
 /**
  * Frontmatter block: the lines between the opening fence on line 1 and the next `---`.
@@ -170,18 +170,7 @@ export function report(file) {
   const mem = path.dirname(file);
   if (path.dirname(mem) === path.join(vaultRoot, 'Memory')) {
     const name = path.basename(file, '.md');
-    /** @type {[string, string][]} */
-    const corpus = [];
-    for (const f of [
-      ...mdFiles(mem),
-      ...mdFiles(path.join(vaultRoot, 'Insights', path.basename(mem))),
-    ]) {
-      try {
-        corpus.push([f, fs.readFileSync(f, 'utf8')]);
-      } catch {
-        /* unreadable - skip */
-      }
-    }
+    const corpus = readCorpus(mem, path.join(vaultRoot, 'Insights', path.basename(mem)));
     if (findOrphans(mem, [name], corpus).length) {
       warn.push(
         `no sibling note links [[${name}]] — the note graph cannot reach it; link it from a related note`,

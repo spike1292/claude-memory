@@ -125,6 +125,8 @@ test('an L1 note no sibling links to warns until one does (#144)', () => {
     assert.match(report(path.join(mem, 'a.md')), /no sibling note links \[\[a\]\]/);
     fs.writeFileSync(path.join(mem, 'b.md'), good('b', 'related: [[a]]'));
     assert.strictEqual(report(path.join(mem, 'a.md')), '');
+    fs.symlinkSync(mem, path.join(tmp, 'link'));
+    assert.strictEqual(report(path.join(tmp, 'link', 'a.md')), '');
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_VAULT;
     else process.env.CLAUDE_VAULT = prev;
