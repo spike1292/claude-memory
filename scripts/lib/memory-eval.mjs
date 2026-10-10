@@ -259,9 +259,7 @@ export const TYPE = /** @type {const} */ ({ supersede: 'supersede', abstain: 'ab
  * Would the recall hook stay silent on these results? Its own gate, imported, because MIN_COS is
  * cosine-scaled and only the semantic arm's scores are cosine. Sliced to MAX_NOTES because that is
  * the `k` the hook asks the server for; a deeper hit over the gate is one the hook never sees.
- *
- * semanticArm() returns null for empty results — the hook would then run keywordArm() over the
- * same, empty, index — and for a first line over MAX_CHARS, which it calls effectively dead.
+ * Null from semanticArm() means empty results, i.e. an empty index, where keywordArm() abstains.
  *
  * @param {readonly { note: string, score?: number }[]} results
  * @returns {boolean}
