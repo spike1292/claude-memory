@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { dupeReport } from './lib/dupe-report.mjs';
 import { CARD } from '../scripts/lib/lexical.mjs';
 
+/** @typedef {import('./lib/dupe-report.mjs').CardRow} CardRow */
 /** @type {import('./lib/dupe-report.mjs').ReadIndex} */
 const readIndex = (dbPath) => {
   const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -19,7 +20,7 @@ const readIndex = (dbPath) => {
     const rows = db
       .prepare('SELECT note, layer, file, vec FROM chunks WHERE heading = ?')
       .all(CARD);
-    return { model: meta?.value, rows: /** @type {any} */ (rows) };
+    return { model: meta?.value, rows: /** @type {CardRow[]} */ (/** @type {unknown} */ (rows)) };
   } finally {
     db.close();
   }
