@@ -34,6 +34,21 @@ export function isMarked(raw) {
 }
 
 /**
+ * Is the note at `file` marked? Why the mark exists: docs/decisions/2026-08-23-embedding-reconcile.md.
+ * Unreadable fails OPEN — an unreadable note is not evidence of a human judgement.
+ *
+ * @param {string} file
+ * @returns {boolean}
+ */
+export function isManual(file) {
+  try {
+    return isMarked(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The note's text with the mark added or removed, or null when it already reads that way.
  *
  * Returning null rather than identical text is what lets the caller report "already marked" instead

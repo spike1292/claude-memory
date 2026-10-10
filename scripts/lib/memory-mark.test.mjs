@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyMark, frontmatter, isMarked, markNotes, resolveNote } from './memory-mark.mjs';
+import {
+  applyMark,
+  frontmatter,
+  isManual,
+  isMarked,
+  markNotes,
+  resolveNote,
+} from './memory-mark.mjs';
 
 const NOTE = '---\nname: a-note\ntype: insight\n---\n\n## A note\n\nbody.\n';
 
@@ -64,4 +71,25 @@ test('notes are addressed by name, anywhere under the vault', (t) => {
   assert.equal(markNotes(root, ['2026-08-23-a-note'])[0].status, 'unchanged');
   assert.equal(markNotes(root, ['2026-08-23-a-note'], false)[0].status, 'unmarked');
   assert.equal(fs.readFileSync(path.join(deep, '2026-08-23-a-note.md'), 'utf8'), NOTE);
+});
+
+test('isManual reads the mark from a file, and an unreadable note is unmarked, not a throw', (t) => {
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), 'mark-file-'));
+  t.after(() => fs.rmSync(b, { recursive: true, force: true }));
+  const write = (/** @type {string} */ name, /** @type {string} */ text) => {
+    const f = path.join(b, name);
+    fs.writeFileSync(f, text);
+    return f;
+  };
+  assert.equal(isManual(write('k.md', '---\ntitle: k\nreconcile: manual\n---\n\nkept\n')), true);
+  assert.equal(isManual(write('o.md', '---\ntitle: o\n---\n\nordinary\n')), false);
+  // A note ABOUT the mark is exactly what this vault contains; it must stay mergeable.
+  const about = write('a.md', '---\ntitle: a\n---\n\nSet reconcile: manual on a pair you keep.\n');
+  assert.equal(isManual(about), false, 'body prose must not arm the mark');
+  // Fails OPEN: hooks never block, and an unreadable note is not evidence of a human judgement.
+  const bad = write('bad.md', 'x');
+  fs.chmodSync(bad, 0o000);
+  assert.equal(isManual(bad), false);
+  fs.chmodSync(bad, 0o644);
+  assert.equal(isManual(path.join(b, 'absent.md')), false);
 });
