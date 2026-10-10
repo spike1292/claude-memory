@@ -4,25 +4,27 @@
 // Tests: node --test hooks/lib/dupe-report.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { projectKey, stateDir } from './paths.mjs';
 import { claimDupeScan, dupeScanDone } from './hook-io.mjs';
 import { activeModel } from '../../scripts/lib/model-default.mjs';
 import { MODELS } from '../../scripts/lib/models.mjs';
-import { CARD } from '../../scripts/lib/lexical.mjs';
 import { isManual } from '../../scripts/lib/memory-mark.mjs';
 
 const TOP = 5;
+
+/** @typedef {{ note: string, layer: string, file: string, vec: Uint8Array }} CardRow */
+/** @typedef {(dbPath: string) => { model: string | undefined, rows: CardRow[] }} ReadIndex */
 
 /**
  * The report, or '' when there is nothing to say, the day's scan is already claimed, or anything
  * fails. Needs only the stored vectors — never a model, never an index build.
  *
  * @param {string} cwd
+ * @param {ReadIndex} readIndex  the entry owns the node:sqlite handle; this module takes values
  * @param {Date} [now]
  * @returns {Promise<string>}
  */
-export async function dupeReport(cwd, now = new Date()) {
+export async function dupeReport(cwd, readIndex, now = new Date()) {
   try {
     const key = activeModel();
     const profile = MODELS[key];
@@ -30,20 +32,8 @@ export async function dupeReport(cwd, now = new Date()) {
     const slug = projectKey(cwd);
     const dbPath = path.join(stateDir('db'), `semantic-${slug}-${key}.db`);
     if (!fs.existsSync(dbPath) || dupeScanDone(slug, now)) return '';
-    const db = new DatabaseSync(dbPath, { readOnly: true });
-    /** @type {{ note: string, layer: string, file: string, vec: Uint8Array }[]} */
-    let rows;
-    try {
-      const stored = /** @type {{ value?: string } | undefined} */ (
-        db.prepare("SELECT value FROM meta WHERE key = 'model'").get()
-      )?.value;
-      if (stored !== profile.id) return '';
-      rows = /** @type {any} */ (
-        db.prepare('SELECT note, layer, file, vec FROM chunks WHERE heading = ?').all(CARD)
-      );
-    } finally {
-      db.close();
-    }
+    const { model, rows } = readIndex(dbPath);
+    if (model !== profile.id) return '';
     // A mixed-width index is silent nonsense; a partial list would hide it.
     if (rows.some((r) => r.vec?.byteLength !== profile.dim * 4)) return '';
     const cards = rows.map((r) => ({
