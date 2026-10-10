@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   isPluginInstall,
   isRemovable,
@@ -65,9 +66,9 @@ test('a version dir outside a plugin cache yields no siblings to delete', () => 
 });
 
 const MARKER = path.join('onnxruntime-node', 'package.json');
-const libDir = path.dirname(new URL(import.meta.url).pathname);
+const libDir = path.dirname(fileURLToPath(import.meta.url));
 
-/** @param {{ install: boolean, shared: 'none' | 'empty' | 'full' }} o */
+/** @param {{ install: boolean, shared: 'none' | 'empty' | 'partial' | 'full' }} o */
 function run({ install, shared }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'share-run-'));
   const version = path.join(root, 'plugins', 'cache', 'claude-memory', 'memory', '1.0.0');
@@ -86,6 +87,7 @@ function run({ install, shared }) {
     fs.writeFileSync(path.join(here, MARKER), '{}');
   }
   if (shared !== 'none') fs.mkdirSync(path.join(state, 'node_modules'), { recursive: true });
+  if (shared === 'partial') fs.writeFileSync(path.join(state, 'node_modules', 'keep'), '');
   if (shared === 'full') {
     fs.mkdirSync(path.join(state, 'node_modules', 'onnxruntime-node'));
     fs.writeFileSync(path.join(state, 'node_modules', MARKER), '{}');
@@ -106,9 +108,17 @@ test('an emptied shared node_modules does not swallow a fresh install', () => {
 });
 
 test('with no usable install on either side it fails and links nothing', () => {
-  const { r, here } = run({ install: false, shared: 'empty' });
+  const { r, here, shared } = run({ install: false, shared: 'empty' });
   assert.notEqual(r.status, 0);
   assert.ok(!isLink(here));
+  assert.ok(isRealDir(shared));
+});
+
+test('a non-empty shared dir without an install is refused, not deleted', () => {
+  const { r, here, shared } = run({ install: true, shared: 'partial' });
+  assert.notEqual(r.status, 0);
+  assert.ok(fs.existsSync(path.join(shared, 'keep')));
+  assert.ok(!isLink(here) && fs.existsSync(path.join(here, MARKER)));
 });
 
 test('a usable shared copy still replaces the version dir with a link', () => {

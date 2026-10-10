@@ -12,8 +12,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 ### Fixed
 
 - `/memory:install` no longer discards a fresh install when the shared `node_modules` in
-  `$CLAUDE_MEMORY_HOME` is empty. `share-modules.mjs` now treats a shared copy without
-  `onnxruntime-node` as missing, and exits non-zero when neither side holds an install. The
+  `$CLAUDE_MEMORY_HOME` is empty. `share-modules.mjs` now replaces an empty shared copy, refuses a
+  non-empty one without `onnxruntime-node`, and exits non-zero when neither side holds an install. The
   `npm ci` step unlinks an existing `node_modules` symlink first, so npm cannot empty the shared
   copy through it (#107).
 

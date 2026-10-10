@@ -48,7 +48,12 @@ if (!hasInstall(shared)) {
     );
     process.exit(1);
   }
-  fs.rmSync(shared, { recursive: true, force: true });
+  try {
+    if (isRealDir(shared)) fs.rmdirSync(shared);
+  } catch {
+    console.error(`refusing: ${shared} has files but no install. Remove it by hand, then re-run.`);
+    process.exit(1);
+  }
   fs.mkdirSync(state, { recursive: true });
   try {
     fs.renameSync(here, shared);

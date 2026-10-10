@@ -312,9 +312,9 @@ That is why /memory:install exists at all.
          move node_modules to $CLAUDE_MEMORY_HOME, symlink every version dir at it.
          Claude Code does NOT replace the cache on update: 6 versions x 381 MB = 2.2 GB
          measured 2026-08-18. Refuses to run outside a plugins/cache/ path (it deletes
-         directories); a git checkout keeps its own. A shared dir without
-         onnxruntime-node counts as missing: npm ci through the old symlink empties it,
-         and an empty one once swallowed the fresh install (#107).
+         directories); a git checkout keeps its own. An EMPTY shared dir is
+         replaced, a non-empty one without onnxruntime-node is refused: npm ci through
+         the old symlink empties it, and an empty one once swallowed the fresh install (#107).
 ```
 
 ### Flow 6 — release
