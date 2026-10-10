@@ -11,6 +11,7 @@
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -240,30 +241,31 @@ export function pathFates(repo, wanted) {
   /** @type {Map<string, { sha: string, to?: string }>} */
   const fates = new Map();
   if (!wanted.length) return fates;
-  const want = new Set(wanted);
-  let log;
+  /** @param {string[]} args */
+  const git = (args) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  let prefix, log;
   try {
-    // No pathspec: one limited to the old path hides the new one, and git reports the rename as D.
+    prefix = git(['rev-parse', '--show-prefix']).trim();
+    // No pathspec and no --relative: either hides the rename target, and git reports the rename as D.
     // ponytail: walks all history, add a --since bound if a large repo makes the audit slow
-    log = execFileSync(
-      'git',
-      ['log', '-M', '--relative', '--diff-filter=DR', '--name-status', '--format=%x00%h'],
-      {
-        cwd: repo,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        maxBuffer: 256 * 1024 * 1024,
-      },
-    );
+    log = git(['log', '-M', '--diff-filter=DR', '--name-status', '--format=%x00%h']);
   } catch {
     return fates;
   }
+  const want = new Map(wanted.map((w) => [prefix + w, w]));
   let sha = '';
   for (const line of log.split('\n')) {
     if (line.startsWith('\0')) sha = line.slice(1);
     const [status, from, to] = line.split('\t');
-    if (!from || !want.has(from) || fates.has(from)) continue;
-    fates.set(from, status.startsWith('R') ? { sha, to } : { sha });
+    const w = want.get(from);
+    if (!w || fates.has(w)) continue;
+    fates.set(w, status.startsWith('R') ? { sha, to: path.posix.relative(prefix, to) } : { sha });
   }
   return fates;
 }

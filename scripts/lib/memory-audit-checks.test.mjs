@@ -251,6 +251,14 @@ test('pathFates names the commit that renamed or deleted a dead path (#151)', ()
       sha: git('rev-parse', '--short', 'HEAD'),
       to: 'scripts/a.md',
     });
+
+    fs.mkdirSync(path.join(repo, 'other'));
+    git('mv', 'sub/scripts/a.md', 'other/a.md');
+    git('commit', '-qm', 'move out of sub');
+    assert.deepEqual(pathFates(path.join(repo, 'sub'), ['scripts/a.md']).get('scripts/a.md'), {
+      sha: git('rev-parse', '--short', 'HEAD'),
+      to: '../other/a.md',
+    });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
