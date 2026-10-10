@@ -742,14 +742,13 @@ async function writeNotes(insights, slug) {
     // Server silent: the slug arm is the whole dedup. It is the fallback, not a second opinion —
     // when the embedding arm HAS answered, its verdict stands, because a lexical arm overruling it
     // is exactly the false merge the good arm just declined.
-    // One arm per note: the one whose verdict stands.
-    if (hit?.inRun) arms.inRun++;
-    else if (vec) arms.embedding++;
-    else arms.slugFallback++;
     if (!vec) {
       const dup = findNearDuplicate(d, sl);
       if (dup) hit = { file: dup, s: 1 };
     }
+    if (hit?.inRun) arms.inRun++;
+    else if (vec) arms.embedding++;
+    else arms.slugFallback++;
 
     if (hit) {
       // `reconcile: manual` blocks BOTH arms. A half-blocked mark is indistinguishable from a
