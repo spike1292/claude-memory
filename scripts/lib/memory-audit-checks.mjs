@@ -9,6 +9,7 @@
 // Usage: node ~/.claude/scripts/memory-audit-checks.mjs [repo-dir]   (default: cwd)
 // ponytail: prints findings, never edits. Deleting or rewriting a note needs confirmation anyway.
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
@@ -225,6 +226,46 @@ export function buildSuffixIndex(paths) {
       /** @type {string[]} */ (idx.get(suf)).push(t);
     }
   return idx;
+}
+
+/**
+ * The newest commit that deleted or renamed each path, and the rename target. Paths git never saw
+ * are absent from the map, as is everything when git fails.
+ *
+ * @param {string} repo
+ * @param {string[]} wanted
+ * @returns {Map<string, { sha: string, to?: string }>}
+ */
+export function pathFates(repo, wanted) {
+  /** @type {Map<string, { sha: string, to?: string }>} */
+  const fates = new Map();
+  if (!wanted.length) return fates;
+  const want = new Set(wanted);
+  let log;
+  try {
+    // No pathspec: one limited to the old path hides the new one, and git reports the rename as D.
+    // ponytail: walks all history, add a --since bound if a large repo makes the audit slow
+    log = execFileSync(
+      'git',
+      ['log', '-M', '--diff-filter=DR', '--name-status', '--format=%x00%h'],
+      {
+        cwd: repo,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 256 * 1024 * 1024,
+      },
+    );
+  } catch {
+    return fates;
+  }
+  let sha = '';
+  for (const line of log.split('\n')) {
+    if (line.startsWith('\0')) sha = line.slice(1);
+    const [status, from, to] = line.split('\t');
+    if (!from || !want.has(from) || fates.has(from)) continue;
+    fates.set(from, status.startsWith('R') ? { sha, to } : { sha });
+  }
+  return fates;
 }
 
 /** @param {string} f @returns {string[]} */

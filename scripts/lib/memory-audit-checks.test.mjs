@@ -7,6 +7,10 @@
 // encoded here. If you extend the checks, add an assertion.
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   isStandingNegative,
   hasConfidence,
@@ -18,6 +22,7 @@ import {
   isUnstampedVolatileClaim,
   buildSuffixIndex,
   stripCodeBlocks,
+  pathFates,
 } from './memory-audit-checks.mjs';
 
 test('isStandingNegative separates claims from instructions', () => {
@@ -191,4 +196,48 @@ test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
   assert.equal(out.includes('[[real-note]]'), true);
   assert.equal(stripCodeBlocks('a `[[ -f x ]]` b').includes('[['), false);
   assert.equal(stripCodeBlocks('plain [[link]] here'), 'plain [[link]] here');
+});
+
+test('pathFates names the commit that renamed or deleted a dead path (#151)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'fates-'));
+  const git = (/** @type {string[]} */ ...a) =>
+    execFileSync(
+      'git',
+      ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', ...a],
+      {
+        cwd: repo,
+        encoding: 'utf8',
+      },
+    ).trim();
+  try {
+    git('init', '-q');
+    fs.mkdirSync(path.join(repo, 'docs'));
+    fs.mkdirSync(path.join(repo, 'scripts'));
+    fs.writeFileSync(path.join(repo, 'docs/moved.md'), 'one\ntwo\nthree\nfour\n');
+    fs.writeFileSync(path.join(repo, 'scripts/gone.sh'), 'echo gone\n');
+    git('add', '.');
+    git('commit', '-qm', 'add');
+    git('mv', 'docs/moved.md', 'scripts/moved.md');
+    git('commit', '-qm', 'move across dirs');
+    const moved = git('rev-parse', '--short', 'HEAD');
+    git('rm', '-q', 'scripts/gone.sh');
+    git('commit', '-qm', 'delete');
+    const deleted = git('rev-parse', '--short', 'HEAD');
+
+    const fates = pathFates(repo, ['docs/moved.md', 'scripts/gone.sh', 'docs/never.md']);
+    assert.deepEqual(fates.get('docs/moved.md'), { sha: moved, to: 'scripts/moved.md' });
+    assert.deepEqual(fates.get('scripts/gone.sh'), { sha: deleted });
+    assert.equal(fates.has('docs/never.md'), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('pathFates outside a git repo is empty, not an error', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fates-'));
+  try {
+    assert.equal(pathFates(dir, ['docs/a.md']).size, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
