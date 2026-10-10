@@ -68,12 +68,14 @@ export const HEADER =
   'Possibly relevant vault notes (retrieved, not verified — open one before relying on it):';
 
 // Vault text was distilled from transcripts that can hold fetched pages, so it is data and must not
-// carry markup Claude Code would read as its own. `\p{Cf}` goes first so a zero-width char hidden
+// carry markup Claude Code would read as its own. INVISIBLE goes first so a zero-width char hidden
 // inside a tag name cannot shield the tag from the second pass.
+// ponytail: non-Cf invisibles are a named list; a new lookalike filler must be added by hand.
+const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u2800\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/gu;
 const HARNESS_TAG =
-  /<(?=\/?(?:system-reminder|command-(?:name|message|args)|local-command-[a-z]+|user-prompt-submit-hook)\b)/gi;
+  /<(?=\/?(?:system-reminder|command-(?:name|message|args)|(?:local-command|bash)-[a-z]+|task-notification|user-prompt-submit-hook)\b)/gi;
 /** @param {string} s */
-const defuse = (s) => s.replace(/\p{Cf}/gu, '').replace(HARNESS_TAG, '‹');
+const defuse = (s) => s.replace(INVISIBLE, '').replace(HARNESS_TAG, '‹');
 
 /** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;
