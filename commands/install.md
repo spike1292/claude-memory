@@ -46,9 +46,10 @@ MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
    done; du -sh "$STATE/models" 2>/dev/null
    ```
 
-4. **Install dependencies.**
+4. **Install dependencies.** On a re-run `node_modules` is the symlink step 6 made. Unlink it
+   first: npm removes it by recursing through the link, which empties the shared copy.
    ```bash
-   cd "$MEM" && npm ci --no-audit --no-fund
+   cd "$MEM" && { [ -L node_modules ] && rm node_modules; npm ci --no-audit --no-fund; }
    ```
    If `npm ci` fails because the lockfile is out of sync, use `npm install` and report that the
    lockfile needs regenerating.
