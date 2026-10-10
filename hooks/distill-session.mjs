@@ -18,6 +18,8 @@ if (argv.length >= 2) {
   let outcome = 'error';
   /** @type {string | undefined} */
   let reason;
+  /** @type {Awaited<ReturnType<typeof distill>> | undefined} */
+  let r;
   process.on('exit', () =>
     logHook({
       hook: 'distill-session',
@@ -30,8 +32,6 @@ if (argv.length >= 2) {
       extra: { ...(argv[2] ? { slug: argv[2] } : {}), ...(r ? reconcileFields(r) : {}) },
     }),
   );
-  /** @type {Awaited<ReturnType<typeof distill>> | undefined} */
-  let r;
   try {
     r = await distill(argv[0], argv[1], argv[2]);
   } catch (e) {

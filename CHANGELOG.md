@@ -16,11 +16,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
   which the dupe check queries, waited for the next SessionStart. A second run in the same session
   therefore wrote restatements of the first run's notes as new notes. The distiller now refreshes
   the plugin index after every run.
-- **The distiller's `worker` log line now records how each note was reconciled.** `arms` counts the
-  notes the embedding arm answered (`embedding`), the notes the slug arm decided because the search
-  server was silent (`slug`), and the merges into a note from the same run (`inRun`). `best` lists
-  the top same-folder score of each written note, also when it is below `dupeMin`. Zero counts and
-  empty lists are omitted.
+- **The distiller's `worker` log line now records how each note was reconciled.** `arms` counts
+  each note once, under the arm whose verdict stood: `embedding` (the search server answered),
+  `slugFallback` (the server was silent, so the slug arm decided), or `inRun` (merged into a note
+  from the same run). `scores` lists the top same-folder score of each written note, also when it
+  is below `dupeMin`. Zero counts and empty lists are omitted.
 
 ## [0.8.1] - 2026-09-23
 
