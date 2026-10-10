@@ -4,7 +4,9 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import net from 'node:net';
+import { promisify } from 'node:util';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
@@ -735,6 +737,12 @@ test('the distill WORKER really writes its own line, outcome and reason and all'
   assert.strictEqual(rec.outcome, 'ran');
   assert.strictEqual(rec.session, 'sess-worker', 'correlated to its gate through the environment');
   assert.match(String(rec.reason), /^wrote \d+, merged \d+$/);
+  assert.deepStrictEqual(
+    rec.arms,
+    { slugFallback: 3 },
+    'no index, so the slug arm decided all three',
+  );
+  assert.strictEqual(rec.scores, undefined, 'no embedding answer, no score');
   // The duration has to be the WORK. A gate decides in ~40 ms; this process did the distillation.
   assert.ok(rec.ms > 0);
 });
@@ -1366,4 +1374,152 @@ test('auto-commit unstages notes when commit fails after add succeeded (e.g. no 
     !/^[AM]/m.test(status),
     'add must be rolled back when commit fails — nothing left staged across future sessions',
   );
+});
+
+// #145: with context-mode installed, the plugin's own index was refreshed only at SessionStart, so a
+// second distil run before then could not see the first run's notes. The refresh fails fast here
+// (no embedding runtime in a checkout), and either stderr line proves it was attempted.
+for (const [what, code] of [
+  ['succeeds', 0],
+  ['fails', 1],
+])
+  test(`the plugin index is refreshed when context-mode is installed and ${what}`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-own-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const bin = path.join(root, 'bin');
+    const log = path.join(root, 'ctx.log');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(
+      path.join(bin, 'context-mode'),
+      `#!/bin/sh\necho x >> ${log}\nexit ${code}\n`,
+      {
+        mode: 0o755,
+      },
+    );
+    const transcript = path.join(root, 't.jsonl');
+    fs.writeFileSync(
+      transcript,
+      JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+    );
+    const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, [entry, transcript, process.cwd()], {
+      encoding: 'utf8',
+      env: {
+        ...GIT_ENV,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        HOME: root,
+        CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+        DISTILL_VAULT: path.join(root, 'vault'),
+        DISTILL_DRYRUN: '1',
+      },
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.ok(fs.existsSync(log), 'context-mode was the branch taken');
+    assert.match(r.stderr, /refreshed the plugin semantic index|semantic index refresh failed/);
+  });
+
+/**
+ * A stand-in search server on the socket dupeClient() dials. `answer` gets each dupe request.
+ *
+ * @param {import('node:test').TestContext} t
+ * @param {string} root
+ * @param {(req: any) => { best: { note: string, s: number } | null, vec: number[] }} answer
+ */
+const fakeDupeServer = async (t, root, answer) => {
+  const { MODEL_KEY } = await import('../../scripts/lib/memory-semantic.mjs');
+  const slug = projectKey(process.cwd());
+  // dupeClient() never dials without an index file for the slug.
+  const db = path.join(root, 'state', 'db', `semantic-${slug}-${MODEL_KEY}.db`);
+  fs.mkdirSync(path.dirname(db), { recursive: true });
+  fs.writeFileSync(db, '');
+  fs.mkdirSync(path.join(root, 'state', 'run'), { recursive: true });
+  const server = net.createServer((sock) => {
+    let buf = '';
+    sock.on('data', (d) => {
+      buf += d;
+      if (!buf.includes('\n')) return;
+      const req = JSON.parse(buf);
+      const r = answer(req);
+      // Honours `min` the way bestDupe does, so a request at dupeMin would hide a low score.
+      const best = r.best && r.best.s >= req.min ? r.best : null;
+      sock.end(JSON.stringify({ mode: 'dupe', slug: req.slug, best, vec: r.vec }) + '\n');
+    });
+  });
+  await new Promise((resolve) =>
+    server.listen(path.join(root, 'state', 'run', `search-${MODEL_KEY}.sock`), () => resolve(null)),
+  );
+  t.after(() => server.close());
+  return slug;
+};
+
+/** runWorker(), but without blocking the event loop the fake server answers on. @param {string} root */
+const runWorkerAsync = async (root) => {
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  await promisify(execFile)(process.execPath, [entry, path.join(root, 't.jsonl'), process.cwd()], {
+    env: {
+      ...process.env,
+      ...GIT_ENV,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-arms',
+      DISTILL_DRYRUN: '',
+    },
+  });
+  const logDir = path.join(root, 'state', 'logs');
+  return fs
+    .readdirSync(logDir)
+    .filter((f) => f.startsWith('hooks-'))
+    .flatMap((f) => fs.readFileSync(path.join(logDir, f), 'utf8').trim().split('\n'))
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.event === 'worker');
+};
+
+test('the worker line records which arm decided each note, and the best score of each written one', async (t) => {
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"patterns":[{"title":"Arm pattern one","description":"d"},{"title":"Arm pattern two","description":"d"}],"mistakes":[{"title":"Arm mistake","error":"e","fix":"f"}],"decisions":[{"title":"Arm decision","decision":"d","why":"w"}]}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Both patterns get the same vector, so the second folds into the first through the in-run arm.
+  /** @type {Record<string, { best: { note: string, s: number } | null, vec: number[] }>} */
+  const replies = {
+    Patterns: { best: { note: '2026-01-01-unrelated', s: 0.5 }, vec: [1, 0, 0] },
+    Mistakes: { best: { note: '2026-01-01-unrelated', s: 0.42 }, vec: [0, 1, 0] },
+    Decisions: { best: { note: '2026-01-01-already-here', s: 0.9 }, vec: [0, 0, 1] },
+  };
+  const slug = await fakeDupeServer(t, root, (req) => replies[req.layer]);
+  const decisions = path.join(root, 'vault', 'Insights', slug, 'Decisions');
+  fs.mkdirSync(decisions, { recursive: true });
+  fs.writeFileSync(path.join(decisions, '2026-01-01-already-here.md'), '## Already here\n\nx\n');
+
+  const [rec] = await runWorkerAsync(root);
+  assert.strictEqual(rec.reason, 'wrote 2, merged 2');
+  assert.deepStrictEqual(rec.arms, { embedding: 3, inRun: 1 }, 'one arm per note, zeros omitted');
+  assert.deepStrictEqual(rec.scores, [0.5, 0.42], 'one score per written note, merges excluded');
+});
+
+// #145's headline: a restatement in a SECOND run folds into the first run's note. The server here
+// answers from the notes on disk, i.e. an index refreshed between runs; the refresh itself is the
+// context-mode test above.
+test('a second distil run folds a restatement of a first-run note', async (t) => {
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      'if [ "$(wc -l < "$(dirname "$0")/../calls")" -gt 1 ]; then t="Cross run lesson restated"; else t="Cross run lesson"; fi\n' +
+      `printf '{"patterns":[{"title":"%s","description":"d"}],"mistakes":[],"decisions":[]}' "$t"\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const slug = projectKey(process.cwd());
+  const patterns = path.join(root, 'vault', 'Insights', slug, 'Patterns');
+  await fakeDupeServer(t, root, () => {
+    const [note] = fs.existsSync(patterns) ? fs.readdirSync(patterns) : [];
+    return { best: note ? { note: note.slice(0, -3), s: 0.9 } : null, vec: [1, 0] };
+  });
+
+  await runWorkerAsync(root);
+  const [first] = fs.readdirSync(patterns);
+  const recs = await runWorkerAsync(root);
+  assert.strictEqual(recs[1].reason, 'wrote 0, merged 1');
+  assert.deepStrictEqual(fs.readdirSync(patterns), [first], 'no second note');
+  assert.match(fs.readFileSync(path.join(patterns, first), 'utf8'), /Cross run lesson restated/);
 });

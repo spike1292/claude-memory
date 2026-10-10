@@ -285,7 +285,8 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                                    │     token overlap >= 0.40 -> reconcile() instead of
                                    │     a new file.  A FALSE MERGE DELETES A LESSON.
                                    └─ reindex(): context-mode `cm index` x5 (120 s each)
-                                        or, if absent, memory-semantic.mjs --index (600 s)
+                                        if present, then always memory-semantic.mjs
+                                        --index (600 s) — the dupe check reads that one
 
   Note the timeout arithmetic: a 15 s hook wrapping work budgeted to 600 s. Correct only
   because detach() in hook-io.mjs is spawn(detached) + unref() + stdio to a log fd — a

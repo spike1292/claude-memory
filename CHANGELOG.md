@@ -11,6 +11,16 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The write-time dupe check can now see notes from an earlier distil run (#145).** With
+  context-mode installed, the distiller refreshed only context-mode's index. The plugin's own index,
+  which the dupe check queries, waited for the next SessionStart. A second run in the same session
+  therefore wrote restatements of the first run's notes as new notes. The distiller now refreshes
+  the plugin index after every run.
+- **The distiller's `worker` log line now records how each note was reconciled.** `arms` counts
+  each note once, under the arm whose verdict stood: `embedding` (the search server answered),
+  `slugFallback` (no embedding answer, so the slug arm decided), or `inRun` (merged into a note
+  from the same run). `scores` lists the top same-folder score of each written note, also when it
+  is below `dupeMin`. Zero counts and empty lists are omitted.
 - `/memory:install` no longer discards a fresh install when the shared `node_modules` in
   `$CLAUDE_MEMORY_HOME` is empty. `share-modules.mjs` now replaces an empty shared copy, refuses a
   non-empty one without `onnxruntime-node`, and exits non-zero when neither side holds an install. The
