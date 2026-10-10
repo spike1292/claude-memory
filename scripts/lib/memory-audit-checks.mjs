@@ -12,7 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SUPERSEDED_MARKER } from './lexical.mjs';
+import { SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -101,7 +101,7 @@ const SUPERSEDED_PROSE =
  */
 export function supersessionState(raw) {
   const fm = (raw.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
-  const by = (fm.match(/^\s*superseded_by:\s*(.+)$/m) || [])[1];
+  const by = (fm.match(SUPERSEDED_BY) || [])[1];
   const on = (fm.match(/^\s*superseded_on:\s*(.+)$/m) || [])[1];
   const body = raw.slice(fm.length);
   return {

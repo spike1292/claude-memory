@@ -30,7 +30,7 @@ import { MODELS } from './models.mjs';
 // its fail-open try, and this module's scope exits the process on an unknown model. Consumers
 // import it from there directly — the re-export that used to sit here was deleted 2026-08-19: a
 // second import path for one implementation is a second thing to keep in step.
-import { CARD, lexTokens, bm25, SUPERSEDED_MARKER } from './lexical.mjs';
+import { CARD, lexTokens, bm25, SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
 
 /** @typedef {{ note: string, layer: string, heading: string, text: string }} ResultRow */
 /** @typedef {ResultRow & { vec: Uint8Array }} ChunkRow */
@@ -282,6 +282,11 @@ export function contentHash(raw) {
 
 // CARD, the card-chunk heading sentinel, is defined in ./lexical.mjs and re-exported above.
 
+// ponytail: note-level superseded_by rides in the header line every chunk but the alias chunk
+// starts with, so the index needs no column; a note indexed before this shipped needs --rebuild.
+const DEAD = ' · superseded_by: ';
+const isDead = (/** @type {string} */ text) => text.split('\n', 1)[0].includes(DEAD);
+
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose
 // and a whole-note question cannot reach it — the vector equivalent of the "### Untitled" chunks
 // FTS5 was returning for L1 notes.
@@ -292,7 +297,11 @@ export function contentHash(raw) {
  */
 export function chunkNote(name, raw) {
   const { meta, body } = stripFrontmatter(raw);
-  const head = meta ? `${name}: ${meta}` : name;
+  const by = raw
+    .match(/^---\n([\s\S]*?)\n---/)?.[1]
+    .match(SUPERSEDED_BY)?.[1]
+    .trim();
+  const head = (meta ? `${name}: ${meta}` : name) + (by ? `${DEAD}${by}` : '');
   const out = [{ heading: CARD, text: `${head}\n${body.slice(0, 700)}`.slice(0, MAX_CHARS) }];
   // `_Also asked as:` gets its OWN chunk — alone at the end of a note it dilutes into the last
   // section's embedding and becomes unreachable by a near-identical query (2026-08-15 near-miss;
@@ -682,12 +691,12 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
   const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
   if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
   const lexDocs = buildLexDocs(rowsUsed, lexMode);
-  const marked = new Set(rowsUsed.filter((r) => SUPERSEDED_MARKER.test(r.text)).map((r) => r.note));
+  const own = (/** @type {ResultRow} */ r) => SUPERSEDED_MARKER.test(r.text) || isDead(r.text);
+  const marked = new Set(rowsUsed.filter(own).map((r) => r.note));
   // Card and alias chunks speak for the whole note, so they carry any of its markers; a section
   // carries only its own, because the rest of a multi-claim note is still true.
   const isSuperseded = (/** @type {ResultRow} */ r) =>
-    SUPERSEDED_MARKER.test(r.text) ||
-    ((r.heading === CARD || r.heading === '(aliases)') && marked.has(r.note));
+    own(r) || ((r.heading === CARD || r.heading === '(aliases)') && marked.has(r.note));
   return {
     slug,
     dbPath,

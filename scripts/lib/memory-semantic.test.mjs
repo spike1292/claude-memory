@@ -1124,6 +1124,58 @@ test('searchIn: demotion never lowers the score a note reports to the recall gat
   }
 });
 
+test('searchIn: note-level superseded_by demotes every chunk of the note', () => {
+  const vec = (/** @type {number} */ x) => {
+    const f = new Float32Array(DIM);
+    f[0] = x;
+    return new Uint8Array(f.buffer);
+  };
+  const dead = [
+    '---',
+    'description: heap ceiling',
+    'superseded_by: "[[heap-new]]"',
+    'superseded_on: 2026-03-02',
+    '---',
+    '',
+    '## Limit',
+    'Workers run with a heap ceiling of two gigabytes and restart when they reach it.',
+    '',
+    '## Owners',
+    'The platform team owns the worker fleet and its restart policy for every region.',
+    '',
+  ].join('\n');
+  const chunks = chunkNote('heap-old', dead);
+  assert.ok(chunks.length >= 3, 'card plus two sections');
+  const rows = [
+    ...chunks.map((c) => ({ ...c, note: 'heap-old', layer: 'Memory', vec: vec(0.95) })),
+    { note: 'heap-new', layer: 'Memory', heading: CARD, text: 'heap ceiling', vec: vec(0.9) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const qvec = new Float32Array(DIM);
+  qvec[0] = 1;
+  const w = process.env.MEMORY_FUSE_W;
+  process.env.MEMORY_FUSE_W = '0';
+  try {
+    assert.deepEqual(
+      searchIn(index, 'zzz', qvec, 2).map((x) => x.r.note),
+      ['heap-new', 'heap-old'],
+    );
+    const explainer = chunkNote(
+      'protocol',
+      '## Dead notes\nsuperseded_by: [[x]]\nputs a wholly dead note behind the note that replaced it.\n',
+    ).map((c) => ({ ...c, note: 'protocol', layer: 'Memory', vec: vec(0.95) }));
+    const kept = buildBundle('p', '/d', [...explainer, rows[rows.length - 1]], { dim: DIM });
+    assert.deepEqual(
+      searchIn(kept, 'zzz', qvec, 2).map((x) => x.r.note),
+      ['protocol', 'heap-new'],
+      'a body line is not the frontmatter field',
+    );
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+  }
+});
+
 // assertVectorWidth exits the process, so it is checked from a child. A row arriving with NO vector
 // used to reach `r.vec.byteLength` behind a double cast through `unknown` and die with a TypeError
 // one line before the message that explains what to do about it.

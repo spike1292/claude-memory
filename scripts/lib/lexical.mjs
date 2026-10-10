@@ -16,6 +16,7 @@
 export const CARD = '(card)';
 
 export const SUPERSEDED_MARKER = /superseded\s+\d{4}-\d{2}-\d{2}\s+by\s+\[\[[^\]]+\]\]/i;
+export const SUPERSEDED_BY = /^\s*superseded_by:\s*(.+)$/m;
 
 export const STOP = new Set(
   'the a an and or of to in on for is are was were it its this that with as by at from be not you your we our they them if then when what which how why do does did can could should would use used using via no yes into over under more most less least than each per also only just same other about have has had will'.split(
