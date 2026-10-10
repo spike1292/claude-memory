@@ -627,18 +627,18 @@ test('costReport counts session starts by distinct session, not by log line', (t
   assert.match(mine, /~1,000 tok per session start/);
   assert.match(
     mine,
-    /2 starts in 2 logged day\(s\)/,
+    /2 starts in 2 logged day\(s\) \(1\/day\)/,
     's1 logged three times is one start; s2 across midnight is one',
   );
   assert.match(mine, /~1,000 tok\/day/);
   assert.match(mine, /ESTIMATED/);
 });
 
-test('costReport says unmeasured, never 0 starts, when the log has no start for this slug', (t) => {
+test('costReport says unmeasured, never 0 starts, when there are no hook logs', (t) => {
   const { vault, logDir } = costFixture(t, { mine: 'x'.repeat(400) }, {});
   const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
   assert.match(mine, /~100 tok per session start/);
-  assert.match(mine, /start frequency unmeasured/);
+  assert.match(mine, /start frequency: unmeasured in 0 logged day/);
   assert.doesNotMatch(mine, /0 starts|tok\/day/);
 });
 
@@ -666,7 +666,7 @@ test('costReport gives every other MOC its cost and frequency, without naming it
   assert.strictEqual(lines.length, 2);
   assert.match(
     lines[1],
-    /^warn\t1 of 2 other MEMORY\.md over the soft budget — ~2,001 tok × 2\/day, ~100 tok × unmeasured\t/,
+    /^warn\t1 of 2 other MEMORY\.md over the soft budget — ~2,001 tok × 2\/day, ~100 tok × no start logged\t/,
   );
   assert.doesNotMatch(lines.join('\n'), /private-repo|quiet/);
 });
@@ -677,4 +677,15 @@ test('costReport says nothing about other MOCs when all are under budget, beyond
     costReport({ vaultDir: vault, slug: 'mine', logDir })[1],
     /^ok\t1 other MEMORY\.md under the soft budget — ~100 tok × unmeasured$/,
   );
+});
+
+test('costReport calls a logged window with no start for this slug a counted zero, not unmeasured', (t) => {
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(400) },
+    { 'hooks-2026-10-01.jsonl': [{ slug: 'other', event: 'SessionStart', session: 'a' }] },
+  );
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /start frequency: no start logged in 1 logged day\(s\)/);
+  assert.doesNotMatch(mine, /unmeasured/);
 });
