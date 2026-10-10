@@ -9,13 +9,6 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
-### Fixed
-
-- **The write-time note check now runs on auto-memory notes (#144).** Claude Code writes them
-  through `~/.claude/projects/<slug>/memory/`, a symlink into the vault. The hook compared the
-  unresolved path with the vault path, so it skipped every such note: no `confidence:`, alias or
-  claim check ran. The hook now resolves both paths first.
-
 ### Added
 
 - **The eval scores knowledge updates and abstention (#155).** A `supersede` case passes when
@@ -23,10 +16,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
   own gate injects nothing. Both report apart from recall@k and do not gate the run.
   `memory-synth-vault.mjs` now writes `cases-supersede.jsonl` (one pair per domain) and
   `cases-abstain.jsonl`. The pairs take their room from filler, in what is left after the gold
-  and echo notes, so `--notes 60` (CI's vault) gets none. Baseline, seed 7, `--notes 300`, bge-m3, all sets
-  `tuning`: supersede 5/8, abstain 8/8 (off-topic top cosine 0.24–0.42 against the 0.55 gate).
+  and echo notes, so `--notes 60` (CI's vault) gets none. Baseline, seed 7, `--notes 300`, bge-m3,
+  all sets `tuning`: supersede 5/8, abstain 8/8 (off-topic top cosine 0.24–0.42 against the 0.55 gate).
   `paraphrase`, `keyword` and `dutch` score the same as on the vault without the pairs: recall@k,
   MRR and unscorable all unchanged.
+
+- **SessionStart names duplicate pairs once per project per day (#100).** Duplicate detection only
+  ran at write time, so the 26 same-folder pairs found on 2026-08-22 had piled up for five days
+  unseen. The link-lint report now prints the count and the top five pairs from the existing index,
+  using the same predicate as the write-time check. It runs at most once per project per UTC day,
+  never merges or deletes, and is silent when there are none or no index exists.
+
 - **The write-time note check warns when no sibling note links an L1 note (#144).** Before, only
   the SessionStart lint reported this, and 11 such notes built up between two audits. There is no
   "not in `MEMORY.md`" warning: auto memory writes the note before its MOC line, so that check
@@ -36,6 +36,29 @@ what a user's setup depends on: config keys, command names, vault layout, and
   load-cap percentage it now prints estimated tokens per start, how often that project started in
   the hook logs, and tokens per day. A MOC over 2,000 estimated tokens per start gets a warning.
   Nothing is trimmed, and the load cap is unchanged.
+
+- **The audit says where a dead repo path went (#151).** In "Path not on this branch", a path that
+  was renamed now shows its new path and the commit, and a deleted path shows the deleting commit.
+  Before, each one needed a `git log` by hand. A path git never saw is listed as before.
+
+### Changed
+
+- **`--dupes` no longer lists pairs where either note is marked `reconcile: manual`.** It now
+  agrees with the SessionStart report. `--dupe-eval` still sees every pair.
+
+### Fixed
+
+- **The write-time note check now runs on auto-memory notes (#144).** Claude Code writes them
+  through `~/.claude/projects/<slug>/memory/`, a symlink into the vault. The hook compared the
+  unresolved path with the vault path, so it skipped every such note: no `confidence:`, alias or
+  claim check ran. The hook now resolves both paths first.
+- **The recall brief no longer passes on invisible characters or fake harness tags (#157).** The
+  distiller writes notes from transcripts, and transcripts can hold fetched pages. A note could
+  carry zero-width or bidi characters, or a `<system-reminder>` tag that Claude Code reads as its
+  own markup. Recall now removes Unicode format characters and invisible lookalikes such as
+  Hangul and braille fillers, the combining grapheme joiner and variation selectors. It turns the
+  `<` of Claude Code tag names into `‹`. Other angle brackets, wikilinks and code spans do not
+  change.
 
 ## [0.8.2] - 2026-10-10
 

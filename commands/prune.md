@@ -61,6 +61,8 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    | pairs (74-note set) | 0 | 0 | 1 | 6 | 9 | **16** |
 
    Real duplicates occupied 0.75–0.869; the first coincidental pair appeared at 0.714.
+   Since 2026-10-10 (#100) `--dupes` hides pairs where either note is `reconcile: manual`; the counts
+   above were taken before that filter, so a recalibration sweep reads lower on a marked vault.
    `--clusters` returned 0 topics at ≥0.76 and 2 real ones at **0.72**. Recalibrating is exactly
    this: sweep, then read the boundary pairs and find where real duplicates stop and coincidence
    starts. Note the tail — 2 real duplicates fell below 0.70 and no threshold would have surfaced

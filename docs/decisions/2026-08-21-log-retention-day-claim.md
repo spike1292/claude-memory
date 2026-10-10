@@ -35,7 +35,7 @@ the backlog until tomorrow — bounded, and the alternative is a lock this path 
 `logs/.retention-<day>` is created with `fs.openSync(path, 'wx')` and closed immediately; its
 content is unused, only its existence. `pruneDatedLogs()` sweeps it alongside the dated logs it
 authorises deleting, so `logs/` does not accumulate one dotfile per day in the name of not
-accumulating one log file per day. Implementation: `claimDay()` in `hooks/lib/hook-io.mjs`.
+accumulating one log file per day. Implementation: `claim()` in `hooks/lib/hook-io.mjs`.
 
 ## If you want to revisit
 

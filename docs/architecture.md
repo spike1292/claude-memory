@@ -152,6 +152,7 @@ Claude Code fires SessionStart
    │
    ├─▶ hooks/memory-link-lint.mjs          10s   report MOC-only notes + drift
    │      -> lib/memory-link-lint.mjs            names only, never auto-fixes
+   │      -> lib/dupe-report.mjs                 duplicate pairs, once per project per day
    │
    ├─▶ hooks/semantic-index-refresh.mjs    10s   plan() decides, then detaches
    │      -> lib/semantic-index-refresh.mjs      `node memory-semantic.mjs --index`
