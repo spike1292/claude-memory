@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { vault, projectKey, legacyKey } from './paths.mjs';
+import { defuse } from './memory-recall.mjs';
 
 // ponytail: titles only, capped, silent when there is nothing.
 export const LIMIT = 15;
@@ -59,7 +60,7 @@ export function render(slug, files, read) {
   const out = [
     `Past mistakes for this project (L3 memory — avoid repeating; full lessons in Insights/${slug}/Mistakes/ or via /memory:health):`,
   ];
-  for (const f of files.slice(0, LIMIT)) out.push(`- ${noteTitle(f, read(f))}`);
+  for (const f of files.slice(0, LIMIT)) out.push(`- ${defuse(noteTitle(f, read(f)))}`);
   if (files.length > LIMIT) out.push(`(+${files.length - LIMIT} older)`);
   return out.join('\n');
 }
