@@ -149,13 +149,14 @@ test('renderLines: strips invisible characters and defuses fake harness tags (#1
 });
 
 test('renderLines: invisible fillers outside Cf cannot hide a tag, and bash/task tags are defused', () => {
-  const body =
-    '<sys\u3164tem-reminder> <\u115Fsystem-reminder> <sys\uFE0Ftem-reminder> <sys\u034Ftem-reminder> <sys\u2800tem-reminder> <bash-stdout> </bash-input> <task-notification>';
-  const [line] = renderLines([hit('n', 1, `# t\n${body}`)]).lines;
-  assert.equal(
-    line,
-    '- [[n]] (Memory): ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹bash-stdout> ‹/bash-input> ‹task-notification>',
-  );
+  const fillers =
+    '<sys\u3164tem-reminder> <\u115Fsystem-reminder> <sys\uFE0Ftem-reminder> <sys\u034Ftem-reminder> <sys\u2800tem-reminder> <sys\u1160tem-reminder> <sys\uFFA0tem-reminder> <sys\u{E0100}tem-reminder>';
+  const tags = '<bash-stdout> </bash-input> <task-notification>';
+  const { lines } = renderLines([hit('n', 1, `# t\n${fillers}`), hit('m', 1, `# t\n${tags}`)]);
+  assert.deepEqual(lines, [
+    '- [[n]] (Memory): ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder> ‹system-reminder>',
+    '- [[m]] (Memory): ‹bash-stdout> ‹/bash-input> ‹task-notification>',
+  ]);
 });
 
 test('renderLines: plain text, wikilinks, code spans and generics come through unchanged', () => {

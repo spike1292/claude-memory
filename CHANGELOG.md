@@ -18,9 +18,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **The recall brief no longer passes on invisible characters or fake harness tags (#157).** The
   distiller writes notes from transcripts, and transcripts can hold fetched pages. A note could
   carry zero-width or bidi characters, or a `<system-reminder>` tag that Claude Code reads as its
-  own markup. Recall now removes Unicode format characters and invisible fillers (Hangul, braille
-  blank, variation selectors), and turns the `<` of Claude Code tag names into `‹`. Other angle brackets, wikilinks and code spans
-  do not change.
+  own markup. Recall now removes Unicode format characters and invisible lookalikes such as
+  Hangul and braille fillers, the combining grapheme joiner and variation selectors. It turns the
+  `<` of Claude Code tag names into `‹`. Other angle brackets, wikilinks and code spans do not
+  change.
 
 ### Added
 
