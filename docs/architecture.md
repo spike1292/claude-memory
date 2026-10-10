@@ -152,6 +152,7 @@ Claude Code fires SessionStart
    │
    ├─▶ hooks/memory-link-lint.mjs          10s   report MOC-only notes + drift
    │      -> lib/memory-link-lint.mjs            names only, never auto-fixes
+   │      -> lib/dupe-report.mjs                 duplicate pairs, once per project per day
    │
    ├─▶ hooks/semantic-index-refresh.mjs    10s   plan() decides, then detaches
    │      -> lib/semantic-index-refresh.mjs      `node memory-semantic.mjs --index`
@@ -440,6 +441,7 @@ deleted on 2026-08-19, and the `preFiltered` parameter it had become went with i
   hooks/lib/memory-recall.mjs ──────────▶ scripts/lib/lexical.mjs
   scripts/lib/recall-stats.mjs ─────────▶ hooks/lib/memory-recall.mjs (MAX_CHARS)
   scripts/lib/hook-stats.mjs ───────────▶ hooks/hooks.json (the declared timeouts)
+  scripts/lib/hook-stats.mjs ───────────▶ hooks/lib/memory-link-lint.mjs (mocs, for costReport)
   scripts/memory-semantic.mjs ──────────▶ hooks/lib/hook-io.mjs (logHook, its own worker line)
   scripts/env.mjs ──────────────────────▶ hooks/lib/env-shell.mjs
                                                         │

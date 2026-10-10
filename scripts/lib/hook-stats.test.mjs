@@ -16,6 +16,7 @@ import {
   estTokens,
   BYTES_PER_TOKEN,
   INJECTED_TOKEN_BUDGET,
+  costReport,
 } from './hook-stats.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -578,4 +579,140 @@ test('with no hook window at all, there is nothing to attribute a pass to', () =
   const out = report({ logDir: dir, manifest: MANIFEST, days: 2 });
   assert.match(out, /no hook logs in/);
   assert.doesNotMatch(out, /retention deleted/);
+});
+
+/**
+ * @param {import('node:test').TestContext} t
+ * @param {Record<string, string>} mocs slug -> MEMORY.md text
+ * @param {Record<string, object[]>} logs filename -> lines
+ */
+function costFixture(t, mocs, logs) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-cost-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const vault = path.join(root, 'vault');
+  const logDir = path.join(root, 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  for (const [slug, text] of Object.entries(mocs)) {
+    fs.mkdirSync(path.join(vault, 'Memory', slug), { recursive: true });
+    fs.writeFileSync(path.join(vault, 'Memory', slug, 'MEMORY.md'), text);
+  }
+  for (const [name, lines] of Object.entries(logs))
+    fs.writeFileSync(path.join(logDir, name), lines.map((l) => JSON.stringify(l) + '\n').join(''));
+  return { vault, logDir };
+}
+
+test('costReport counts session starts by distinct session, not by log line', (t) => {
+  const start = (/** @type {string} */ session, slug = 'mine') => ({
+    slug,
+    event: 'SessionStart',
+    session,
+  });
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(4000) },
+    {
+      'hooks-2026-10-01.jsonl': [
+        { ...start('s1'), hook: 'semantic-index-refresh' },
+        { ...start('s1'), hook: 'graph-staleness-check' },
+        { ...start('s1'), hook: 'insights-surface' },
+        start('s2'),
+        start('s9', 'other'),
+        { slug: 'mine', event: 'Stop', session: 's3' },
+      ],
+      'hooks-2026-10-02.jsonl': [start('s2')],
+    },
+  );
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /^ok\t/);
+  assert.match(mine, /~1,000 tok per session start/);
+  assert.match(
+    mine,
+    /2 starts in 2 logged day\(s\) \(1\/day\)/,
+    's1 logged three times is one start; s2 across midnight is one',
+  );
+  assert.match(mine, /~1,000 tok\/day/);
+  assert.match(mine, /ESTIMATED/);
+});
+
+test('costReport says unmeasured, never 0 starts, when there are no hook logs', (t) => {
+  const { vault, logDir } = costFixture(t, { mine: 'x'.repeat(400) }, {});
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /~100 tok per session start/);
+  assert.match(mine, /start frequency unmeasured — no hook logs/);
+  assert.doesNotMatch(mine, /0 starts|tok\/day/);
+});
+
+test('costReport warns only above the soft budget, and never fails', (t) => {
+  const at = INJECTED_TOKEN_BUDGET * BYTES_PER_TOKEN;
+  const { vault, logDir } = costFixture(t, { under: 'x'.repeat(at), over: 'x'.repeat(at + 4) }, {});
+  assert.match(costReport({ vaultDir: vault, slug: 'under', logDir })[0], /^ok\t.*~2,000 tok/);
+  const [over] = costReport({ vaultDir: vault, slug: 'over', logDir });
+  assert.match(over, /^warn\t.*~2,001 tok.*soft budget 2,000\t.*nothing trims it/);
+});
+
+test('costReport gives every other MOC its cost and frequency, without naming it', (t) => {
+  const over = INJECTED_TOKEN_BUDGET * BYTES_PER_TOKEN + 4;
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(40), 'private-repo': 'x'.repeat(over), quiet: 'x'.repeat(400) },
+    {
+      'hooks-2026-10-01.jsonl': [
+        { slug: 'private-repo', event: 'SessionStart', session: 'a' },
+        { slug: 'private-repo', event: 'SessionStart', session: 'b' },
+      ],
+    },
+  );
+  const lines = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.strictEqual(lines.length, 2);
+  assert.match(
+    lines[1],
+    /^warn\t1 of 2 other MEMORY\.md over the soft budget — ~2,001 tok × 2\/day, ~100 tok × no start logged\t/,
+  );
+  assert.doesNotMatch(lines.join('\n'), /private-repo|quiet/);
+});
+
+test('costReport says nothing about other MOCs when all are under budget, beyond their figures', (t) => {
+  const { vault, logDir } = costFixture(t, { mine: 'x', other: 'x'.repeat(400) }, {});
+  assert.match(
+    costReport({ vaultDir: vault, slug: 'mine', logDir })[1],
+    /^ok\t1 other MEMORY\.md under the soft budget — ~100 tok × unmeasured$/,
+  );
+});
+
+test('costReport calls a logged window with no start for this slug a counted zero, not unmeasured', (t) => {
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(400) },
+    { 'hooks-2026-10-01.jsonl': [{ slug: 'other', event: 'SessionStart', session: 'a' }] },
+  );
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /no start logged in 1 logged day\(s\)/);
+  assert.doesNotMatch(mine, /unmeasured/);
+});
+
+test('costReport never rounds a real start rate down to 0/day', (t) => {
+  /** @type {Record<string, object[]>} */
+  const logs = {
+    'hooks-2026-10-01.jsonl': [{ slug: 'mine', event: 'SessionStart', session: 'a' }],
+  };
+  for (let d = 2; d <= 30; d++)
+    logs[`hooks-2026-10-${String(d).padStart(2, '0')}.jsonl`] = [{ slug: 'x' }];
+  const { vault, logDir } = costFixture(t, { mine: 'x'.repeat(400) }, logs);
+  const [mine] = costReport({ vaultDir: vault, slug: 'mine', logDir });
+  assert.match(mine, /1 start in 30 logged day\(s\) \(<0\.1\/day\)/);
+  assert.doesNotMatch(mine, /\(0\/day\)/);
+});
+
+test('costReport does not count a headless child run as a session start', (t) => {
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(4000) },
+    {
+      'hooks-2026-10-01.jsonl': [
+        { slug: 'mine', event: 'SessionStart', session: 'person' },
+        { slug: 'mine', event: 'SessionStart', session: 'distiller', child: true },
+      ],
+    },
+  );
+  assert.match(costReport({ vaultDir: vault, slug: 'mine', logDir })[0], /1 start in 1 logged day/);
 });
