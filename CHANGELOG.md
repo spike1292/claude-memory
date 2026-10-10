@@ -59,6 +59,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   Hangul and braille fillers, the combining grapheme joiner and variation selectors. It turns the
   `<` of Claude Code tag names into `‹`. Other angle brackets, wikilinks and code spans do not
   change.
+- **The SessionStart "Past mistakes" list gets the same cleaning (#160).** Mistake titles also
+  come from distilled transcripts. Each title now goes through the recall brief's cleaning step
+  before it is printed. Normal titles do not change.
 
 ## [0.8.2] - 2026-10-10
 
