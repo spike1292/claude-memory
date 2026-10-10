@@ -69,6 +69,7 @@ TRANSCRIPT:
  * }} InsightItem
  * @typedef {{ patterns?: InsightItem[], mistakes?: InsightItem[], decisions?: InsightItem[] }} Insights
  * @typedef {{ file: string, title: string, action: 'written'|'merged' }} WrittenNote
+ * @typedef {{ embedding: number, slug: number, inRun: number }} Arms
  */
 
 /**
@@ -650,12 +651,16 @@ export function dupeClient(slug) {
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @returns {Promise<{ written: number, merged: number, declined: number, notes: WrittenNote[] }>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, best: number[], notes: WrittenNote[] }>}
  */
 async function writeNotes(insights, slug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let declined = 0;
+  /** @type {Arms} */
+  const arms = { embedding: 0, slug: 0, inRun: 0 };
+  /** @type {number[]} */
+  const best = [];
   /** @type {WrittenNote[]} */
   const notes = [];
 
@@ -712,8 +717,11 @@ async function writeNotes(insights, slug) {
     let hit = null;
     /** @type {number[] | null} */
     let vec = null;
+    /** @type {number | null} */
+    let top = null;
     if (card) {
-      const r = await ask({ dupe: card, slug, layer: folder, min: sem.PROFILE.dupeMin });
+      // Asked for any positive score and gated here, so a written note still logs how close it came.
+      const r = await ask({ dupe: card, slug, layer: folder, min: Number.MIN_VALUE });
       if (r) {
         vec = r.vec ?? null;
         // The index is a snapshot: a note merged or renamed by /memory:prune since the last
@@ -721,18 +729,24 @@ async function writeNotes(insights, slug) {
         // here throws ENOENT and takes the whole distillation with it — and hooks never fail a
         // session. Before this change every candidate came from readdirSync and existed by
         // construction.
-        const best = r.best ? path.join(d, `${r.best.note}.md`) : null;
-        if (best && fs.existsSync(best)) hit = { file: best, s: r.best.s };
+        top = r.best?.s ?? null;
+        const file = r.best?.s >= sem.PROFILE.dupeMin ? path.join(d, `${r.best.note}.md`) : null;
+        if (file && fs.existsSync(file)) hit = { file, s: r.best.s };
         const inRun = vec && sem.bestDupe(thisRun, { layer: folder, vec }, sem.PROFILE.dupeMin);
         if (inRun && (!hit || inRun.s > hit.s)) {
           const f = thisRun.find((x) => x.note === inRun.note);
-          if (f) hit = { file: f.file, s: inRun.s };
+          if (f) {
+            hit = { file: f.file, s: inRun.s };
+            arms.inRun++;
+          }
         }
       }
     }
     // Server silent: the slug arm is the whole dedup. It is the fallback, not a second opinion —
     // when the embedding arm HAS answered, its verdict stands, because a lexical arm overruling it
     // is exactly the false merge the good arm just declined.
+    if (vec) arms.embedding++;
+    else arms.slug++;
     if (!vec) {
       const dup = findNearDuplicate(d, sl);
       if (dup) hit = { file: dup, s: 1 };
@@ -754,6 +768,7 @@ async function writeNotes(insights, slug) {
     const file = path.join(d, `${name}.md`);
     fs.writeFileSync(file, raw);
     if (vec) thisRun.push({ note: name, layer: folder, vec, file });
+    if (top != null) best.push(+top.toFixed(3));
     notes.push({ file, title, action: 'written' });
   };
 
@@ -789,7 +804,21 @@ async function writeNotes(insights, slug) {
   }
   const written = notes.filter((n) => n.action === 'written').length;
   const merged = notes.filter((n) => n.action === 'merged').length;
-  return { written, merged, declined, notes };
+  return { written, merged, declined, arms, best, notes };
+}
+
+/**
+ * The worker line's reconcile fields. Zero counts and an empty score list are omitted, never 0.
+ *
+ * @param {{ arms: Arms, best: number[] }} r
+ * @returns {{ arms?: Partial<Arms>, best?: number[] }}
+ */
+export function reconcileFields({ arms, best }) {
+  const nonZero = Object.fromEntries(Object.entries(arms).filter(([, n]) => n > 0));
+  return {
+    ...(Object.keys(nonZero).length ? { arms: nonZero } : {}),
+    ...(best.length ? { best } : {}),
+  };
 }
 
 /** 10s: local, fast git operations — the bound exists only to stop a stale index.lock or a gpg
@@ -926,6 +955,8 @@ function reindex(cwd, slug) {
       );
     }
   }
+  // Also with context-mode: the write-time dupe check queries this index, not that one (#145).
+  refreshOwnIndex(cwd, slug);
 }
 
 /**
@@ -967,7 +998,7 @@ function refreshOwnIndex(cwd, slug) {
  * @param {string} transcript
  * @param {string} cwd
  * @param {string} [key] resolved by the gate while `cwd` still existed; absent from an older gate
- * @returns {Promise<{ written: number, merged: number, declined: number, slug: string } | null>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, best: number[], slug: string } | null>}
  */
 export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
@@ -991,14 +1022,14 @@ export async function distill(transcript, cwd, key) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd, resolved);
-  const { written, merged, declined, notes } = await writeNotes(insights, slug);
+  const { written, merged, declined, arms, best, notes } = await writeNotes(insights, slug);
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need
   // /memory:prune's purge — the distiller only keeps additions fresh.
   reindex(cwd, slug);
-  return { written, merged, declined, slug };
+  return { written, merged, declined, arms, best, slug };
 }
 
 // ---------------------------------------------------------------- gate (SessionEnd + Stop)

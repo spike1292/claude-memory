@@ -6,7 +6,7 @@
 //
 // The gate re-invokes this same path, so the argv form is a contract — keep it.
 import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
-import { distill, gate, gateOutcome } from './lib/distill-session.mjs';
+import { distill, gate, gateOutcome, reconcileFields } from './lib/distill-session.mjs';
 
 const argv = process.argv.slice(2);
 
@@ -27,9 +27,10 @@ if (argv.length >= 2) {
       outcome,
       reason,
       // appendJsonl() would re-derive the slug from argv[1], which may be gone (#138).
-      extra: argv[2] ? { slug: argv[2] } : undefined,
+      extra: { ...(argv[2] ? { slug: argv[2] } : {}), ...(r ? reconcileFields(r) : {}) },
     }),
   );
+  /** @type {Awaited<ReturnType<typeof distill>> | undefined} */
   let r;
   try {
     r = await distill(argv[0], argv[1], argv[2]);

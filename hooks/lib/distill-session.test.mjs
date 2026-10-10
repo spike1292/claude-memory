@@ -4,7 +4,9 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import net from 'node:net';
+import { promisify } from 'node:util';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as paths from './paths.mjs';
 import {
@@ -735,6 +737,8 @@ test('the distill WORKER really writes its own line, outcome and reason and all'
   assert.strictEqual(rec.outcome, 'ran');
   assert.strictEqual(rec.session, 'sess-worker', 'correlated to its gate through the environment');
   assert.match(String(rec.reason), /^wrote \d+, merged \d+$/);
+  assert.deepStrictEqual(rec.arms, { slug: 3 }, 'no index, so the slug arm decided all three');
+  assert.strictEqual(rec.best, undefined, 'no embedding answer, no score');
   // The duration has to be the WORK. A gate decides in ~40 ms; this process did the distillation.
   assert.ok(rec.ms > 0);
 });
@@ -1366,4 +1370,100 @@ test('auto-commit unstages notes when commit fails after add succeeded (e.g. no 
     !/^[AM]/m.test(status),
     'add must be rolled back when commit fails — nothing left staged across future sessions',
   );
+});
+
+// #145: with context-mode installed, the plugin's own index was refreshed only at SessionStart, so a
+// second distil run before then could not see the first run's notes. The refresh fails fast here
+// (no embedding runtime in a checkout), and either stderr line proves it was attempted.
+test('the plugin index is refreshed even when context-mode is installed', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-own-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'context-mode'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const r = spawnSync(process.execPath, [entry, transcript, process.cwd()], {
+    encoding: 'utf8',
+    env: {
+      ...GIT_ENV,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      DISTILL_DRYRUN: '1',
+    },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stderr, /distill: reindex Insights failed/, 'context-mode was the branch taken');
+  assert.match(r.stderr, /refreshed the plugin semantic index|semantic index refresh failed/);
+});
+
+test('the worker line records which arm decided each note, and the best score of each written one', async (t) => {
+  const { MODEL_KEY } = await import('../../scripts/lib/memory-semantic.mjs');
+  const root = withStubClaude(
+    '#!/bin/sh\ncat > /dev/null\n' +
+      `printf '%s' '{"patterns":[{"title":"Arm pattern one","description":"d"},{"title":"Arm pattern two","description":"d"}],"mistakes":[{"title":"Arm mistake","error":"e","fix":"f"}],"decisions":[{"title":"Arm decision","decision":"d","why":"w"}]}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const slug = projectKey(process.cwd());
+  const decisions = path.join(root, 'vault', 'Insights', slug, 'Decisions');
+  fs.mkdirSync(decisions, { recursive: true });
+  fs.writeFileSync(path.join(decisions, '2026-01-01-already-here.md'), '## Already here\n\nx\n');
+  const db = path.join(root, 'state', 'db', `semantic-${slug}-${MODEL_KEY}.db`);
+  fs.mkdirSync(path.dirname(db), { recursive: true });
+  fs.writeFileSync(db, '');
+  fs.mkdirSync(path.join(root, 'state', 'run'), { recursive: true });
+
+  // Both patterns get the same vector, so the second folds into the first through the in-run arm.
+  // The server honours `min` the way bestDupe does, so a request at dupeMin would hide the 0.42.
+  /** @type {Record<string, { best: { note: string, s: number } | null, vec: number[] }>} */
+  const replies = {
+    Patterns: { best: { note: '2026-01-01-unrelated', s: 0.5 }, vec: [1, 0, 0] },
+    Mistakes: { best: { note: '2026-01-01-unrelated', s: 0.42 }, vec: [0, 1, 0] },
+    Decisions: { best: { note: '2026-01-01-already-here', s: 0.9 }, vec: [0, 0, 1] },
+  };
+  const server = net.createServer((sock) => {
+    let buf = '';
+    sock.on('data', (d) => {
+      buf += d;
+      if (!buf.includes('\n')) return;
+      const req = JSON.parse(buf);
+      const r = replies[req.layer];
+      const best = r.best && r.best.s >= req.min ? r.best : null;
+      sock.end(JSON.stringify({ mode: 'dupe', slug: req.slug, best, vec: r.vec }) + '\n');
+    });
+  });
+  await new Promise((resolve) =>
+    server.listen(path.join(root, 'state', 'run', `search-${MODEL_KEY}.sock`), () => resolve(null)),
+  );
+  t.after(() => server.close());
+
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  await promisify(execFile)(process.execPath, [entry, path.join(root, 't.jsonl'), process.cwd()], {
+    env: {
+      ...process.env,
+      ...GIT_ENV,
+      PATH: `${path.join(root, 'bin')}:${process.env.PATH}`,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      MEMORY_HOOK_SESSION: 'sess-arms',
+      DISTILL_DRYRUN: '',
+    },
+  });
+
+  const logDir = path.join(root, 'state', 'logs');
+  const rec = fs
+    .readdirSync(logDir)
+    .filter((f) => f.startsWith('hooks-'))
+    .flatMap((f) => fs.readFileSync(path.join(logDir, f), 'utf8').trim().split('\n'))
+    .map((l) => JSON.parse(l))
+    .find((l) => l.event === 'worker');
+  assert.strictEqual(rec.reason, 'wrote 2, merged 2');
+  assert.deepStrictEqual(rec.arms, { embedding: 4, inRun: 1 }, 'zero-count arms are omitted');
+  assert.deepStrictEqual(rec.best, [0.5, 0.42], 'one score per written note, merges excluded');
 });
