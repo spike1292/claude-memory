@@ -635,7 +635,11 @@ if (flag('--json')) {
         frozen,
         pairwise: { total: pairs.length, failed: pairFails.length },
         supersede: { total: supersede.length, passed: supersede.length - supersedeFails.length },
-        abstain: { total: abstain.length, passed: abstain.length - spoke.length },
+        abstain: {
+          total: abstain.length,
+          passed: abstain.length - spoke.length,
+          ...(skipped.length ? { skipped: skipped.length } : {}),
+        },
         gate: failures,
       },
       null,

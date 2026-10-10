@@ -1159,7 +1159,7 @@ test('CLI reports supersession and abstention apart from recall, and neither gat
   assert.deepEqual(out.pairwise, { total: 0, failed: 0 }, 'supersession is not a pairwise gate');
   assert.equal(out.n, 1, 'neither type counts toward recall');
   // BM25 scores are not cosine, so the hook's gate cannot be applied to them.
-  assert.deepEqual(out.abstain, { total: 0, passed: 0 });
+  assert.deepEqual(out.abstain, { total: 0, passed: 0, skipped: 1 });
   assert.equal(out.unscorable, 0, 'skipped, not unscorable — that would gate under --min-rank1');
 
   const human = run('--run', '--cases', casesPath, '--mode', 'lexical');

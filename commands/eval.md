@@ -105,8 +105,8 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    **Two typed cases report on their own line and never gate the run.** `"type":"supersede"` is a
    pairwise case whose owner is the newer note and whose `gold` is the note it superseded.
    `"type":"abstain"` with `"gold":[]` is a question the vault cannot answer; it passes only if the
-   recall hook's own gate injects nothing, so it is scored in semantic mode only and is unscorable
-   under `--mode lexical`. The synthetic vault writes both as `cases-supersede.jsonl` and
+   recall hook's own gate injects nothing, so it is scored in semantic mode only and is skipped
+   under `--mode lexical` (`abstain.skipped` in `--json`). The synthetic vault writes both as `cases-supersede.jsonl` and
    `cases-abstain.jsonl`.
 
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.

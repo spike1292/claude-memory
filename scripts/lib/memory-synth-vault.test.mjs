@@ -337,7 +337,14 @@ test('memory-eval scores the synthetic supersede set end to end', () => {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'synth-eval-')));
   const out = path.join(tmp, 'vault');
   try {
-    spawnSync(process.execPath, [synth, '--out', out, '--notes', '140', '--seed', '7']);
+    const built = spawnSync(
+      process.execPath,
+      [synth, '--out', out, '--notes', '140', '--seed', '7'],
+      {
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(built.status, 0, built.stderr);
     const r = spawnSync(
       process.execPath,
       [

@@ -22,8 +22,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
   the newer note outranks the one it superseded. An `abstain` case passes when the recall hook's
   own gate injects nothing. Both report apart from recall@k and do not gate the run.
   `memory-synth-vault.mjs` now writes `cases-supersede.jsonl` (one pair per domain) and
-  `cases-abstain.jsonl`. The pairs take their room from filler, and only once all 40 gold cases
-  fit, so `--notes 60` (CI's vault) gets none. Baseline, seed 7, `--notes 300`, bge-m3, all sets
+  `cases-abstain.jsonl`. The pairs take their room from filler, in what is left after the gold
+  and echo notes, so `--notes 60` (CI's vault) gets none. Baseline, seed 7, `--notes 300`, bge-m3, all sets
   `tuning`: supersede 5/8, abstain 8/8 (off-topic top cosine 0.24–0.42 against the 0.55 gate).
   `paraphrase`, `keyword` and `dutch` score the same as on the vault without the pairs: recall@k,
   MRR and unscorable all unchanged.
