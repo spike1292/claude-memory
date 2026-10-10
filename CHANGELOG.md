@@ -18,7 +18,7 @@ what a user's setup depends on: config keys, command names, vault layout, and
   the plugin index after every run.
 - **The distiller's `worker` log line now records how each note was reconciled.** `arms` counts
   each note once, under the arm whose verdict stood: `embedding` (the search server answered),
-  `slugFallback` (the server was silent, so the slug arm decided), or `inRun` (merged into a note
+  `slugFallback` (no embedding answer, so the slug arm decided), or `inRun` (merged into a note
   from the same run). `scores` lists the top same-folder score of each written note, also when it
   is below `dupeMin`. Zero counts and empty lists are omitted.
 - `/memory:install` no longer discards a fresh install when the shared `node_modules` in
