@@ -11,6 +11,7 @@ import {
   isRemovable,
   isRealDir,
   isLink,
+  hasInstall,
   siblingCopies,
 } from './lib/share-modules.mjs';
 import { bytes } from './lib/slim-install.mjs';
@@ -40,9 +41,17 @@ let freed = 0;
 
 // 1. Establish the shared copy. rename() is a no-copy move when $CLAUDE_MEMORY_HOME is on the
 //    same filesystem, and a fallback is needed when it is not.
-if (!isRealDir(shared)) {
-  if (!isRealDir(here) || isLink(here)) {
-    console.error(`nothing to share: ${here} is missing. Run npm ci first (step 4).`);
+if (!hasInstall(shared)) {
+  if (!hasInstall(here)) {
+    console.error(
+      `nothing to share: no install in ${here} or ${shared}. Run npm ci first (step 4).`,
+    );
+    process.exit(1);
+  }
+  try {
+    if (isRealDir(shared)) fs.rmdirSync(shared);
+  } catch {
+    console.error(`refusing: ${shared} has files but no install. Remove it by hand, then re-run.`);
     process.exit(1);
   }
   fs.mkdirSync(state, { recursive: true });

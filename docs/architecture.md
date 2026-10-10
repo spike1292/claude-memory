@@ -288,7 +288,8 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                                    │     token overlap >= 0.40 -> reconcile() instead of
                                    │     a new file.  A FALSE MERGE DELETES A LESSON.
                                    └─ reindex(): context-mode `cm index` x5 (120 s each)
-                                        or, if absent, memory-semantic.mjs --index (600 s)
+                                        if present, then always memory-semantic.mjs
+                                        --index (600 s) — the dupe check reads that one
 
   Note the timeout arithmetic: a 15 s hook wrapping work budgeted to 600 s. Correct only
   because detach() in hook-io.mjs is spawn(detached) + unref() + stdio to a log fd — a
@@ -315,7 +316,9 @@ That is why /memory:install exists at all.
          move node_modules to $CLAUDE_MEMORY_HOME, symlink every version dir at it.
          Claude Code does NOT replace the cache on update: 6 versions x 381 MB = 2.2 GB
          measured 2026-08-18. Refuses to run outside a plugins/cache/ path (it deletes
-         directories); a git checkout keeps its own.
+         directories); a git checkout keeps its own. An EMPTY shared dir is
+         replaced, a non-empty one without onnxruntime-node is refused: npm ci through
+         the old symlink empties it, and an empty one once swallowed the fresh install (#107).
 ```
 
 ### Flow 6 — release
