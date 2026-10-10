@@ -7,8 +7,8 @@
 
 `AUTO_MEMORY_CAP` (25 KB / 200 lines) answers "will Claude Code truncate it?". It says nothing about
 "what does loading it cost?". A MOC can pass the first and be the most expensive thing the plugin
-does: the work repo below sat at 78% of the cap in August, was reported healthy, and cost ~5k
-tokens at every start.
+does: the work repo was at 78% of the cap on 2026-08-29 (#109) and reported healthy. Its cost per
+start is in the table below.
 
 So `/memory:doctor` now prints a second figure per MOC, from `costReport()`:
 
