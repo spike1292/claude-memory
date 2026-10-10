@@ -75,7 +75,7 @@ const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u2800\u3164\uFE00-\uFE0F\uFFA0\u{E0
 const HARNESS_TAG =
   /<(?=\/?(?:system-reminder|command-(?:name|message|args)|(?:local-command|bash)-[a-z]+|task-notification|user-prompt-submit-hook)\b)/gi;
 /** @param {string} s */
-const defuse = (s) => s.replace(INVISIBLE, '').replace(HARNESS_TAG, '‹');
+export const defuse = (s) => s.replace(INVISIBLE, '').replace(HARNESS_TAG, '‹');
 
 /** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;

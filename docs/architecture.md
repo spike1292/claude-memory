@@ -149,6 +149,7 @@ Claude Code fires SessionStart
    │
    ├─▶ hooks/insights-surface.mjs          10s   print <=15 newest L3 Mistakes
    │      -> lib/insights-surface.mjs            (Insights/<slug>/Mistakes/)
+   │      -> lib/memory-recall.mjs               defuse() on each title
    │
    ├─▶ hooks/memory-link-lint.mjs          10s   report MOC-only notes + drift
    │      -> lib/memory-link-lint.mjs            names only, never auto-fixes
