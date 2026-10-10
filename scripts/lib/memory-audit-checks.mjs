@@ -12,6 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -94,17 +95,13 @@ export function parseDeferred(text) {
 // dead *claim* is line-initial and shouty: "⚠ SUPERSEDED …" or "**Superseded since …**".
 const SUPERSEDED_PROSE =
   /^[\s>*_#-]*(?:⚠\s*)?\**(?:SUPERSEDED\b|Superseded (?:since|on|by)\b|No longer true\b)/m;
-// The load-bearing part is "superseded <date> by [[note]]" — it may sit anywhere inside a
-// parenthetical, e.g. "(measured 2026-08-12, superseded 2026-08-14 by [[x]])". Requiring the paren
-// to be adjacent rejected exactly the markers this convention produces.
-const SUPERSEDED_MARKER = /superseded\s+\d{4}-\d{2}-\d{2}\s+by\s+\[\[[^\]]+\]\]/i;
 /**
  * @param {string} raw
  * @returns {{ declared: string|null, on: string|null, inProse: boolean, marked: boolean }}
  */
 export function supersessionState(raw) {
   const fm = (raw.match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
-  const by = (fm.match(/^\s*superseded_by:\s*(.+)$/m) || [])[1];
+  const by = (fm.match(SUPERSEDED_BY) || [])[1];
   const on = (fm.match(/^\s*superseded_on:\s*(.+)$/m) || [])[1];
   const body = raw.slice(fm.length);
   return {

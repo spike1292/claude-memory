@@ -975,6 +975,221 @@ test('searchIn: the reserve promotes an L1 note into the window', () => {
   }
 });
 
+const unitVec = (/** @type {number} */ x) => {
+  const f = new Float32Array(DIM);
+  f[0] = x;
+  return new Uint8Array(f.buffer);
+};
+const unitQuery = () => {
+  const q = new Float32Array(DIM);
+  q[0] = 1;
+  return q;
+};
+/**
+ * @template T
+ * @param {string | undefined} value
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function withFuseW(value, fn) {
+  const w = process.env.MEMORY_FUSE_W;
+  if (value === undefined) delete process.env.MEMORY_FUSE_W;
+  else process.env.MEMORY_FUSE_W = value;
+  try {
+    return fn();
+  } finally {
+    if (w === undefined) delete process.env.MEMORY_FUSE_W;
+    else process.env.MEMORY_FUSE_W = w;
+  }
+}
+const MARK = '(superseded 2026-03-02 by [[new]])';
+
+test('searchIn: a superseded claim ranks below its replacement but is still returned', () => {
+  const old = {
+    note: 'old',
+    layer: 'Insights',
+    heading: '(body)',
+    text: `purge requests carry one hundred paths ${MARK}`,
+    vec: unitVec(0.95),
+  };
+  const fresh = {
+    note: 'new',
+    layer: 'Insights',
+    heading: '(body)',
+    text: 'purge requests carry five thousand paths',
+    vec: unitVec(0.9),
+  };
+  const q = 'purge requests paths';
+  for (const fw of ['0', undefined])
+    withFuseW(fw, () => {
+      const index = buildBundle('p', '/d', [old, fresh], { lexMode: 'chunk', dim: DIM });
+      assert.deepEqual(
+        searchIn(index, q, unitQuery(), 2).map((x) => [x.r.note, +x.s.toFixed(2)]),
+        [
+          ['new', 0.9],
+          ['old', 0.95],
+        ],
+        `MEMORY_FUSE_W=${fw}: demoted in order, raw cosine kept for the recall gate`,
+      );
+      const alone = buildBundle('p', '/d', [old], { lexMode: 'chunk', dim: DIM });
+      assert.deepEqual(
+        searchIn(alone, q, unitQuery(), 2).map((x) => x.r.note),
+        ['old'],
+      );
+    });
+});
+
+test('searchIn: the marker demotes its own chunk, not the rest of a multi-claim note', () => {
+  const rows = [
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Limits',
+      text: `one hundred paths ${MARK}`,
+      vec: unitVec(0.95),
+    },
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Owners',
+      text: 'the edge team',
+      vec: unitVec(0.94),
+    },
+    { note: 'other', layer: 'Memory', heading: '(body)', text: 'unrelated', vec: unitVec(0.93) },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  withFuseW('0', () =>
+    assert.deepEqual(
+      searchIn(index, 'zzz', unitQuery(), 2).map((x) => [x.r.note, +x.s.toFixed(2)]),
+      [
+        ['mixed', 0.95],
+        ['other', 0.93],
+      ],
+    ),
+  );
+  // MEMORY_FUSE_LEX=note folds a note into one keyword doc; an inline marker in one section must
+  // not demote it, a note-level field still does.
+  const folded = buildBundle('p', '/d', rows, { lexMode: 'note', dim: DIM });
+  assert.deepEqual(
+    folded.lexDocs.filter((d) => folded.superseded?.has(d)),
+    [],
+  );
+  const dead = chunkNote('dead', '---\nsuperseded_by: "[[new]]"\n---\n\nbody\n').map((c) => ({
+    ...c,
+    note: 'dead',
+    layer: 'Memory',
+    vec: unitVec(0.5),
+  }));
+  const deadIndex = buildBundle('p', '/d', dead, { lexMode: 'note', dim: DIM });
+  assert.equal(deadIndex.lexDocs.filter((d) => deadIndex.superseded?.has(d)).length, 1);
+});
+
+test('searchIn: a marked note is demoted through its alias chunk too', () => {
+  const rows = [
+    {
+      note: 'old',
+      layer: 'Insights',
+      heading: 'Detail',
+      text: `two gigabytes ${MARK}`,
+      vec: unitVec(0.5),
+    },
+    {
+      note: 'old',
+      layer: 'Insights',
+      heading: '(aliases)',
+      text: 'how much heap',
+      vec: unitVec(0.95),
+    },
+    {
+      note: 'new',
+      layer: 'Insights',
+      heading: '(aliases)',
+      text: 'how much heap',
+      vec: unitVec(0.9),
+    },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  withFuseW(undefined, () =>
+    assert.deepEqual(
+      searchIn(index, 'how much heap', unitQuery(), 2).map((x) => x.r.note),
+      ['new', 'old'],
+    ),
+  );
+});
+
+test('searchIn: demotion never lowers the score a note reports to the recall gate', () => {
+  const rows = [
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Limits',
+      text: `one hundred paths ${MARK}`,
+      vec: unitVec(0.6),
+    },
+    {
+      note: 'mixed',
+      layer: 'Memory',
+      heading: 'Owners',
+      text: 'the edge team',
+      vec: unitVec(0.545),
+    },
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  withFuseW('0', () =>
+    assert.deepEqual(
+      searchIn(index, 'zzz', unitQuery(), 1).map((x) => +x.s.toFixed(2)),
+      [0.6],
+    ),
+  );
+});
+
+test('searchIn: note-level superseded_by demotes every chunk of the note', () => {
+  const dead = [
+    '---',
+    'description: heap ceiling',
+    'superseded_by: "[[heap-new]]"',
+    'superseded_on: 2026-03-02',
+    '---',
+    '',
+    '## Limit',
+    'Workers run with a heap ceiling of two gigabytes and restart when they reach it.',
+    '',
+    '## Owners',
+    'The platform team owns the worker fleet and its restart policy for every region.',
+    '',
+  ].join('\n');
+  const chunks = chunkNote('heap-old', dead);
+  assert.ok(chunks.length >= 3, 'card plus two sections');
+  const fresh = {
+    note: 'heap-new',
+    layer: 'Memory',
+    heading: CARD,
+    text: 'heap ceiling',
+    vec: unitVec(0.9),
+  };
+  const rows = [
+    ...chunks.map((c) => ({ ...c, note: 'heap-old', layer: 'Memory', vec: unitVec(0.95) })),
+    fresh,
+  ];
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  const explainer = chunkNote(
+    'protocol',
+    '## Dead notes\nsuperseded_by: [[x]]\nputs a wholly dead note behind the note that replaced it.\n',
+  ).map((c) => ({ ...c, note: 'protocol', layer: 'Memory', vec: unitVec(0.95) }));
+  const kept = buildBundle('p', '/d', [...explainer, fresh], { dim: DIM });
+  withFuseW('0', () => {
+    assert.deepEqual(
+      searchIn(index, 'zzz', unitQuery(), 2).map((x) => x.r.note),
+      ['heap-new', 'heap-old'],
+    );
+    assert.deepEqual(
+      searchIn(kept, 'zzz', unitQuery(), 2).map((x) => x.r.note),
+      ['protocol', 'heap-new'],
+      'a body line is not the frontmatter field',
+    );
+  });
+});
+
 // assertVectorWidth exits the process, so it is checked from a child. A row arriving with NO vector
 // used to reach `r.vec.byteLength` behind a double cast through `unknown` and die with a TypeError
 // one line before the message that explains what to do about it.

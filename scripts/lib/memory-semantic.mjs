@@ -30,7 +30,7 @@ import { MODELS } from './models.mjs';
 // its fail-open try, and this module's scope exits the process on an unknown model. Consumers
 // import it from there directly — the re-export that used to sit here was deleted 2026-08-19: a
 // second import path for one implementation is a second thing to keep in step.
-import { CARD, lexTokens, bm25 } from './lexical.mjs';
+import { CARD, lexTokens, bm25, SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
 
 /** @typedef {{ note: string, layer: string, heading: string, text: string }} ResultRow */
 /** @typedef {ResultRow & { vec: Uint8Array }} ChunkRow */
@@ -44,6 +44,7 @@ import { CARD, lexTokens, bm25 } from './lexical.mjs';
  * @property {readonly T[]} rowsUsed
  * @property {LexDoc[]} lexDocs
  * @property {Map<string, string>} cardByNote
+ * @property {Set<ResultRow>} [superseded] rows and lexDocs whose text carries the inline marker
  * @property {number} loadedAt
  */
 
@@ -281,6 +282,11 @@ export function contentHash(raw) {
 
 // CARD, the card-chunk heading sentinel, is defined in ./lexical.mjs and re-exported above.
 
+// ponytail: note-level superseded_by rides in the header line every chunk but the alias chunk
+// starts with, so the index needs no column; a note indexed before this shipped needs --rebuild.
+const DEAD = ' · superseded_by: ';
+const isDead = (/** @type {string} */ text) => text.split('\n', 1)[0].includes(DEAD);
+
 // Every chunk carries the note's identity. Without it a mid-note section embeds as anonymous prose
 // and a whole-note question cannot reach it — the vector equivalent of the "### Untitled" chunks
 // FTS5 was returning for L1 notes.
@@ -291,7 +297,11 @@ export function contentHash(raw) {
  */
 export function chunkNote(name, raw) {
   const { meta, body } = stripFrontmatter(raw);
-  const head = meta ? `${name}: ${meta}` : name;
+  const by = raw
+    .match(/^---\n([\s\S]*?)\n---/)?.[1]
+    .match(SUPERSEDED_BY)?.[1]
+    .trim();
+  const head = (meta ? `${name}: ${meta}` : name) + (by ? `${DEAD}${by}` : '');
   const out = [{ heading: CARD, text: `${head}\n${body.slice(0, 700)}`.slice(0, MAX_CHARS) }];
   // `_Also asked as:` gets its OWN chunk — alone at the end of a note it dilutes into the last
   // section's embedding and becomes unreachable by a near-identical query (2026-08-15 near-miss;
@@ -635,6 +645,10 @@ export const RRF_K = 60;
 // docs/decisions/2026-08-15-fusion-tuning.md.
 // 0 disables fusion (vector only). Override per run with MEMORY_FUSE_W.
 export const DEFAULT_FUSE_W = 2;
+// Multiplies a superseded chunk's score in BOTH arms for ORDERING only; the returned `s` stays raw
+// cosine so the recall gate never drops a claim on demotion alone.
+// Sweep and why 0.9: docs/decisions/2026-10-10-superseded-demote.md.
+export const SUPERSEDED_DEMOTE = 0.9;
 // 'chunk' scoring (concatenate per-chunk, not per whole note) chosen by measurement — beats
 // whole-note scoring at every weight and worst for Dutch (2026-08-15 sweep). MEMORY_FUSE_LEX=note
 // kept as a reproducible negative result. Sweep: docs/decisions/2026-08-15-fusion-tuning.md.
@@ -677,15 +691,24 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
   // and why it could not be trusted. Query-time exclusion holds the note set fixed by construction.
   const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
   if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
+  const lexDocs = buildLexDocs(rowsUsed, lexMode);
+  const own = (/** @type {ResultRow} */ r) =>
+    isDead(r.text) || (r.heading !== '(note)' && SUPERSEDED_MARKER.test(r.text));
+  const marked = new Set(rowsUsed.filter(own).map((r) => r.note));
+  // Card and alias chunks speak for the whole note, so they carry any of its markers; a section
+  // carries only its own, because the rest of a multi-claim note is still true.
+  const isSuperseded = (/** @type {ResultRow} */ r) =>
+    own(r) || ((r.heading === CARD || r.heading === '(aliases)') && marked.has(r.note));
   return {
     slug,
     dbPath,
     rowsUsed,
-    lexDocs: buildLexDocs(rowsUsed, lexMode),
+    lexDocs,
     // Display text comes from the note's CARD, not from whichever chunk matched. Alias chunks win
     // the match often (that is their job) but their text is a list of questions — as a one-line
     // brief it reads as noise. Match on any chunk, describe with the card.
     cardByNote: new Map(rowsUsed.filter((r) => r.heading === CARD).map((r) => [r.note, r.text])),
+    superseded: new Set([...rowsUsed, ...lexDocs].filter(isSuperseded)),
     loadedAt: Date.now(),
   };
 }
@@ -705,15 +728,21 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
  */
 export function searchIn(index, q, qvec, k) {
   const { rowsUsed, lexDocs } = index;
+  const demote = (/** @type {ResultRow} */ r) => (index.superseded?.has(r) ? SUPERSEDED_DEMOTE : 1);
   // best chunk per note, so one long note cannot fill the whole result list
   /** @type {Map<string, Scored>} */
   const best = new Map();
+  /** @type {Map<string, number>} */
+  const rank = new Map();
   for (const r of rowsUsed) {
     const s = cosine(qvec, new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM));
     if (!best.has(r.note) || /** @type {Scored} */ (best.get(r.note)).s < s)
       best.set(r.note, { r, s });
+    const key = s * demote(r);
+    if (!rank.has(r.note) || /** @type {number} */ (rank.get(r.note)) < key) rank.set(r.note, key);
   }
-  const sorted = [...best.values()].sort((a, b) => b.s - a.s);
+  const at = (/** @type {Scored} */ x) => /** @type {number} */ (rank.get(x.r.note));
+  const sorted = [...best.values()].sort((a, b) => at(b) - at(a));
 
   // Keyword arm over the SAME units, then rank-fuse.
   const FUSE_W = Number(process.env.MEMORY_FUSE_W ?? DEFAULT_FUSE_W);
@@ -726,8 +755,9 @@ export function searchIn(index, q, qvec, k) {
       /** @type {Map<string, number>} */
       const bestLex = new Map();
       lexDocs.forEach((d, i) => {
-        if (!bestLex.has(d.note) || /** @type {number} */ (bestLex.get(d.note)) < scores[i])
-          bestLex.set(d.note, scores[i]);
+        const v = scores[i] * demote(d);
+        if (!bestLex.has(d.note) || /** @type {number} */ (bestLex.get(d.note)) < v)
+          bestLex.set(d.note, v);
       });
       const lexRanked = [...bestLex.entries()]
         .filter(([, v]) => v > 0)

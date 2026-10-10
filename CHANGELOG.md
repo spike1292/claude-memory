@@ -11,6 +11,17 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Retrieval ranks a superseded claim below the note that replaced it (#163).** A chunk carrying
+  `(superseded YYYY-MM-DD by [[note]])` has its score multiplied by `SUPERSEDED_DEMOTE` in both
+  arms, for ordering only: the returned score stays raw cosine, so the recall gate never drops a
+  claim on demotion alone and a superseded note still comes back when nothing better matches. A
+  section carries only its own marker; the card and alias chunks carry any marker in their note. A
+  note with `superseded_by:` frontmatter has every chunk demoted: the indexer writes the field into
+  the header line each chunk starts with, so the index needs no new column, but a note that already
+  had the field when it was indexed needs `--index --rebuild`. Inline markers are detected when the
+  index loads, so no re-index. Not covered: the recall hook's keyword-only fallback when the server
+  is down. Measurements and the sweep: `docs/decisions/2026-10-10-superseded-demote.md`.
+
 - **The eval scores knowledge updates and abstention (#155).** A `supersede` case passes when
   the newer note outranks the one it superseded. An `abstain` case passes when the recall hook's
   own gate injects nothing. Both report apart from recall@k and do not gate the run.
