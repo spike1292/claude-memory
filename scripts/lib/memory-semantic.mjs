@@ -647,6 +647,7 @@ export const RRF_K = 60;
 export const DEFAULT_FUSE_W = 2;
 // Multiplies a superseded chunk's score in BOTH arms for ORDERING only; the returned `s` stays raw
 // cosine so the recall gate never drops a claim on demotion alone.
+// Sweep and why 0.9: docs/decisions/2026-10-10-superseded-demote.md.
 export const SUPERSEDED_DEMOTE = 0.9;
 // 'chunk' scoring (concatenate per-chunk, not per whole note) chosen by measurement — beats
 // whole-note scoring at every weight and worst for Dutch (2026-08-15 sweep). MEMORY_FUSE_LEX=note
@@ -691,7 +692,8 @@ export function buildBundle(slug, dbPath, rows, { dropAliases = false, lexMode, 
   const rowsUsed = dropAliases ? rows.filter((r) => r.heading !== '(aliases)') : rows;
   if (dim != null) assertVectorWidth(rowsUsed, dim, 'query');
   const lexDocs = buildLexDocs(rowsUsed, lexMode);
-  const own = (/** @type {ResultRow} */ r) => SUPERSEDED_MARKER.test(r.text) || isDead(r.text);
+  const own = (/** @type {ResultRow} */ r) =>
+    isDead(r.text) || (r.heading !== '(note)' && SUPERSEDED_MARKER.test(r.text));
   const marked = new Set(rowsUsed.filter(own).map((r) => r.note));
   // Card and alias chunks speak for the whole note, so they carry any of its markers; a section
   // carries only its own, because the rest of a multi-claim note is still true.

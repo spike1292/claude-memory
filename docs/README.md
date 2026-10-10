@@ -25,6 +25,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [The prose ceiling](decisions/2026-09-05-prose-ceiling.md) | Comments may not outnumber code; CI fails at 1.00. Supersedes the reader-distance record's "No CI guard", and buries the scanner that scored 0. |
 | [A third memory system: `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`](decisions/2026-09-05-cowork-auto-memory.md) | Not `autoMemoryDirectory` — a separate, global, typed-note feature. Why `/memory:doctor` warns rather than tries to merge it. |
 | [A soft cost budget for `MEMORY.md`](decisions/2026-10-10-moc-cost-budget.md) | Tokens per session start beside the load cap; the budget picked from five MOCs, warn only, never trims. |
+| [`SUPERSEDED_DEMOTE` = 0.9](decisions/2026-10-10-superseded-demote.md) | The sweep: every value from 0.98 down passes; why 0.9 without a cost signal, and when to re-sweep. |
 
 ## Guides
 
