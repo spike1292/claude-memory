@@ -240,6 +240,8 @@ export function reconcile(file, title, body, aliasLine, today) {
   fs.writeFileSync(file, text);
 }
 
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
+
 /**
  * `text` with `(superseded <today> by [[newNote]])` after the sentence holding `quote`, or null when
  * the quote, normalised, is under 12 characters or not in the body. The model picks the claim; this
@@ -255,7 +257,7 @@ export function markSuperseded(text, quote, newNote, today) {
   if (typeof quote !== 'string') return null;
   const q = fold(quote).norm.trim();
   if (q.length < 12) return null;
-  const { norm, at } = fold(text, text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/)?.[0].length ?? 0);
+  const { norm, at } = fold(text, text.match(FRONTMATTER)?.[0].length ?? 0);
   const k = norm.indexOf(q);
   if (k < 0) return null;
   // A line break ends the sentence unless the next line starts with a letter: a wrapped sentence.
@@ -880,10 +882,7 @@ async function writeNotes(insights, slug) {
   const verdict = pending.length
     ? runJudge(
         pending.map((p) => ({
-          old: fs
-            .readFileSync(p.file, 'utf8')
-            .replace(/^---\n[\s\S]*?\n---\n/, '')
-            .trim(),
+          old: fs.readFileSync(p.file, 'utf8').replace(FRONTMATTER, '').trim(),
           new: p.body,
         })),
       )
