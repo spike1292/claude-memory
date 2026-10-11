@@ -53,6 +53,19 @@ A thin session may yield empty TOP-LEVEL arrays (no patterns/mistakes/decisions)
 TRANSCRIPT:
 `;
 
+// Measured against hand-labelled real pairs before it shipped: docs/decisions/2026-10-10-reversal-judge.md.
+const JUDGE_PROMPT = `Each item pairs an EXISTING note with a NEW lesson that a matcher judged to be about the same topic. Decide how NEW relates to EXISTING.
+
+- "same": NEW restates EXISTING.
+- "extends": NEW adds detail, or makes a DIFFERENT point on the same topic (another bug, another cause, another example, another step). Two different mistakes about one subject are "extends", not "reverses".
+- "reverses": one specific claim in EXISTING (a value, a rule, a decision, a stated fact) cannot be true at the same time as a claim in NEW. The facts changed, or EXISTING was wrong.
+
+Be strict. If you cannot point at one sentence in EXISTING that NEW makes false, the answer is not "reverses".
+
+Return STRICT JSON only, no prose. For "same" or "extends" give the string. For "reverses" give an object with the two claims quoted VERBATIM:
+{"<id>":"same", "<id>":"extends", "<id>":{"v":"reverses","old":"<exact words copied from EXISTING>","new":"<exact words copied from NEW>"}}
+`;
+
 // ---------------------------------------------------------------- pure helpers (self-tested)
 
 // \p{L}\p{N} with the u flag, NOT \w: JS's \w is ASCII-only where Python's is unicode-aware, so
@@ -68,7 +81,7 @@ TRANSCRIPT:
  *   aliases?: unknown,
  * }} InsightItem
  * @typedef {{ patterns?: InsightItem[], mistakes?: InsightItem[], decisions?: InsightItem[] }} Insights
- * @typedef {{ file: string, title: string, action: 'written'|'merged' }} WrittenNote
+ * @typedef {{ file: string, title: string, action: 'written'|'merged'|'marked' }} WrittenNote
  * @typedef {{ embedding: number, slugFallback: number, inRun: number }} Arms
  */
 
@@ -225,6 +238,43 @@ export function reconcile(file, title, body, aliasLine, today) {
     text = `${text.replace(/\s+$/, '')}\n\n**Also seen ${today} (${title}):** ${gist.slice(0, 400)}\n`;
   }
   fs.writeFileSync(file, text);
+}
+
+/**
+ * `text` with `(superseded <today> by [[newNote]])` after the sentence holding `quote`, or null when
+ * the quote, normalised, is under 12 characters or not in the body. The model picks the claim; this
+ * proves it is really there.
+ *
+ * @param {string} text
+ * @param {string} quote
+ * @param {string} newNote
+ * @param {string} today
+ * @returns {string | null}
+ */
+export function markSuperseded(text, quote, newNote, today) {
+  if (typeof quote !== 'string') return null;
+  const q = quote
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  if (q.length < 12) return null;
+  const from = text.match(/^---\n[\s\S]*?\n---\n/)?.[0].length ?? 0;
+  let norm = '';
+  /** @type {number[]} */
+  const at = [];
+  for (let i = from; i < text.length; i++) {
+    const c = text[i].toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    const add = c || (norm && !norm.endsWith(' ') ? ' ' : '');
+    norm += add;
+    for (let j = 0; j < add.length; j++) at.push(i);
+  }
+  const k = norm.indexOf(q);
+  if (k < 0) return null;
+  const end = /[.!?](?=\s|$)|\n/g;
+  end.lastIndex = at[k + q.length - 1] + 1;
+  const m = end.exec(text);
+  const cut = !m ? text.length : m[0] === '\n' ? m.index : m.index + 1;
+  return `${text.slice(0, cut)} (superseded ${today} by [[${newNote}]])${text.slice(cut)}`;
 }
 
 /**
@@ -504,6 +554,41 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
   }
 }
 
+/**
+ * One headless call that labels every merge pair of the run. Null when there is no answer at all;
+ * the caller then merges every pair exactly as before.
+ *
+ * @param {{ old: string, new: string }[]} pairs
+ * @returns {{ answers: Record<string, any>, usd?: number } | null}
+ */
+function runJudge(pairs) {
+  if (process.env.DISTILL_DRYRUN) return null;
+  const claude = findClaude();
+  if (!claude) return null;
+  const items = pairs.map((p, i) => `[${i}]\nEXISTING: ${p.old}\nNEW: ${p.new}`).join('\n\n');
+  let out;
+  let failed = false;
+  try {
+    out = execFileSync(claude, ['-p', '--model', 'haiku', '--output-format', 'json'], {
+      input: `${JUDGE_PROMPT}\n${items}`,
+      encoding: 'utf8',
+      timeout: 150_000,
+      maxBuffer: 16 * 1024 * 1024,
+      cwd: os.tmpdir(),
+      env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' },
+    });
+  } catch (e) {
+    console.error(`distill: judge failed: ${/** @type {Error} */ (e).message}`);
+    out = String(/** @type {{ stdout?: string }} */ (e).stdout ?? '');
+    failed = true;
+  }
+  const envelope = parseEnvelope(out);
+  const usd = envelope?.usage?.usd;
+  const answers = failed || envelope?.isError ? {} : extractJson(envelope ? envelope.text : out);
+  if (!Object.keys(answers).length && usd == null) return null;
+  return { answers, ...(usd != null && { usd }) };
+}
+
 // ---------------------------------------------------------------- reconcile client
 
 // How long a distillation waits for a cold search server. The recall hook allows 700ms because a
@@ -625,7 +710,7 @@ export function dupeClient(slug) {
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], notes: WrittenNote[] }>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], notes: WrittenNote[], judge: Record<string, number>, judgeUsd?: number }>}
  */
 async function writeNotes(insights, slug) {
   const today = todayStr();
@@ -643,6 +728,9 @@ async function writeNotes(insights, slug) {
   // dupe gap; see docs/decisions/2026-08-23-embedding-reconcile.md "Same-run comparison".
   /** @type {{ note: string, layer: string, vec: number[], file: string }[]} */
   const thisRun = [];
+  // Merges wait for one judge call over the whole run (#156).
+  /** @type {{ file: string, title: string, body: string, line: string, name: string, raw: string, d: string, top: number | null }[]} */
+  const pending = [];
   /** @type {any} */
   let sem = null;
   try {
@@ -731,8 +819,7 @@ async function writeNotes(insights, slug) {
       if (isManual(hit.file)) {
         declined++;
       } else {
-        reconcile(hit.file, title, body, line, today);
-        notes.push({ file: hit.file, title, action: 'merged' });
+        pending.push({ file: hit.file, title, body, line, name, raw, d, top });
         return;
       }
     }
@@ -774,22 +861,59 @@ async function writeNotes(insights, slug) {
         it.aliases,
       );
   }
+  const verdict = pending.length
+    ? runJudge(
+        pending.map((p) => ({
+          old: fs
+            .readFileSync(p.file, 'utf8')
+            .replace(/^---\n[\s\S]*?\n---\n/, '')
+            .trim(),
+          new: p.body,
+        })),
+      )
+    : null;
+  /** @type {Record<string, number>} */
+  const judge = {};
+  for (const [i, p] of pending.entries()) {
+    const a = verdict?.answers[String(i)];
+    const v = a === 'same' || a === 'extends' ? a : a?.v === 'reverses' ? 'reverses' : null;
+    const file = path.join(p.d, `${p.name}.md`);
+    const marked =
+      v === 'reverses' && !fs.existsSync(file)
+        ? markSuperseded(fs.readFileSync(p.file, 'utf8'), a.old, p.name, today)
+        : null;
+    const label = v === 'reverses' && !marked ? 'extends' : v;
+    if (label) judge[label] = (judge[label] ?? 0) + 1;
+    if (!marked) {
+      reconcile(p.file, p.title, p.body, p.line, today);
+      notes.push({ file: p.file, title: p.title, action: 'merged' });
+      continue;
+    }
+    const back = `Supersedes a claim in [[${path.basename(p.file, '.md')}]].`;
+    fs.writeFileSync(file, `${p.raw.replace(/\s+$/, '')}\n\n${back}\n`);
+    fs.writeFileSync(p.file, marked);
+    if (p.top != null) scores.push(+p.top.toFixed(3));
+    notes.push({ file, title: p.title, action: 'written' });
+    notes.push({ file: p.file, title: p.title, action: 'marked' });
+  }
   const written = notes.filter((n) => n.action === 'written').length;
   const merged = notes.filter((n) => n.action === 'merged').length;
-  return { written, merged, declined, arms, scores, notes };
+  return { written, merged, declined, arms, scores, notes, judge, judgeUsd: verdict?.usd };
 }
 
 /**
  * The worker line's reconcile fields. Zero counts and an empty score list are omitted, never 0.
  *
- * @param {{ arms: Arms, scores: number[] }} r
- * @returns {{ arms?: Partial<Arms>, scores?: number[] }}
+ * @param {{ arms: Arms, scores: number[], judge?: Record<string, number>, judgeUsd?: number }} r
+ * @returns {{ arms?: Partial<Arms>, scores?: number[], judge?: Record<string, number>, judgeUsd?: number }}
  */
-export function reconcileFields({ arms, scores }) {
+export function reconcileFields({ arms, scores, judge, judgeUsd }) {
   const nonZero = Object.fromEntries(Object.entries(arms).filter(([, n]) => n > 0));
   return {
     ...(Object.keys(nonZero).length ? { arms: nonZero } : {}),
     ...(scores.length ? { scores } : {}),
+    ...(judge && Object.keys(judge).length ? { judge } : {}),
+    ...(judgeUsd != null ? { judgeUsd } : {}),
   };
 }
 
@@ -970,7 +1094,7 @@ function refreshOwnIndex(cwd, slug) {
  * @param {string} transcript
  * @param {string} cwd
  * @param {string} [key] resolved by the gate while `cwd` still existed; absent from an older gate
- * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], slug: string } | null>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], judge: Record<string, number>, judgeUsd?: number, slug: string } | null>}
  */
 export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
@@ -994,14 +1118,17 @@ export async function distill(transcript, cwd, key) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd, resolved);
-  const { written, merged, declined, arms, scores, notes } = await writeNotes(insights, slug);
+  const { written, merged, declined, arms, scores, notes, judge, judgeUsd } = await writeNotes(
+    insights,
+    slug,
+  );
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
   // note edits), and reindex() skips missing dirs.
   // ponytail: re-reads dirs every session end; append-only so deletions still need
   // /memory:prune's purge — the distiller only keeps additions fresh.
   reindex(cwd, slug);
-  return { written, merged, declined, arms, scores, slug };
+  return { written, merged, declined, arms, scores, judge, judgeUsd, slug };
 }
 
 // ---------------------------------------------------------------- gate (SessionEnd + Stop)

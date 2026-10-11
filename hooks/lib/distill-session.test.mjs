@@ -27,6 +27,7 @@ import {
   distill,
   workerArgs,
   recordRun,
+  markSuperseded,
 } from './distill-session.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
@@ -1553,4 +1554,123 @@ test('a second distil run folds a restatement of a first-run note', async (t) =>
   assert.strictEqual(recs[1].reason, 'wrote 0, merged 1');
   assert.deepStrictEqual(fs.readdirSync(patterns), [first], 'no second note');
   assert.match(fs.readFileSync(path.join(patterns, first), 'utf8'), /Cross run lesson restated/);
+});
+
+test('markSuperseded marks the sentence holding a verified quote, and nothing else', () => {
+  const note =
+    '---\ntitle: "Cache"\n---\n\n## Cache\n\nThe cache TTL is five\nminutes. Keys are hashed.\n';
+  assert.strictEqual(
+    markSuperseded(note, 'cache ttl is five minutes', 'n2', '2026-10-10'),
+    '---\ntitle: "Cache"\n---\n\n## Cache\n\nThe cache TTL is five\nminutes. (superseded 2026-10-10 by [[n2]]) Keys are hashed.\n',
+  );
+  assert.strictEqual(
+    markSuperseded('Keys are hashed\nnext', 'Keys are hashed', 'n2', '2026-10-10'),
+    'Keys are hashed (superseded 2026-10-10 by [[n2]])\nnext',
+    'no full stop: the marker goes before the line break',
+  );
+  assert.strictEqual(
+    markSuperseded(note, 'the cache TTL is one hour', 'n2', 'd'),
+    null,
+    'not in the note',
+  );
+  assert.strictEqual(markSuperseded(note, 'Keys', 'n2', 'd'), null, 'under 12 characters');
+  assert.strictEqual(
+    markSuperseded(note, 'title cache', 'n2', 'd'),
+    null,
+    'frontmatter is not the body',
+  );
+  assert.strictEqual(
+    markSuperseded('Le cache expire après cinq minutes.', 'expire après cinq', 'n2', 'd'),
+    'Le cache expire après cinq minutes. (superseded d by [[n2]])',
+    'a non-ASCII letter is a letter, not a separator',
+  );
+  assert.strictEqual(markSuperseded(note, /** @type {any} */ ({}), 'n2', 'd'), null);
+});
+
+test('a reversal the judge proves becomes a new note that supersedes the old claim', async (t) => {
+  const slug = projectKey(process.cwd());
+  const oldName = '2026-01-01-cache-ttl-is-five-minutes';
+  const oldText =
+    '---\ntitle: "Cache TTL is five minutes"\n---\n\n## Cache TTL is five minutes\n\nThe cache TTL is five minutes. Keys are hashed.\n';
+  /**
+   * @param {string} judge the stub's reply to the judge prompt
+   * @param {string} [fm] extra frontmatter for the old note
+   */
+  const run = (judge, fm = '') => {
+    const root = withStubClaude(
+      '#!/bin/sh\nin=$(cat)\ncase "$in" in\n' +
+        `"Each item pairs"*) ${judge} ;;\n` +
+        `*) printf '%s' '{"patterns":[{"title":"Cache TTL is ten minutes","description":"The cache TTL is now ten minutes."}],"mistakes":[],"decisions":[]}' ;;\nesac\n`,
+    );
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const dir = path.join(root, 'vault', 'Insights', slug, 'Patterns');
+    fs.mkdirSync(dir, { recursive: true });
+    const old = path.join(dir, `${oldName}.md`);
+    fs.writeFileSync(old, oldText.replace('---\n\n', `${fm}---\n\n`));
+    const { lines, notes, calls } = runWorker(root);
+    const worker = lines.find((l) => l.event === 'worker');
+    return { old: fs.readFileSync(old, 'utf8'), notes, calls, worker, dir };
+  };
+  const envelope = (/** @type {string} */ answer) =>
+    `printf '%s' '${JSON.stringify({ type: 'result', result: answer, total_cost_usd: 0.01 })}'`;
+
+  const proved = run(
+    envelope(
+      '{"0":{"v":"reverses","old":"The cache TTL is five minutes","new":"now ten minutes"}}',
+    ),
+  );
+  assert.strictEqual(proved.calls, 2, 'one extractor call, one judge call');
+  assert.strictEqual(proved.notes.length, 2, 'the reversal is its own note');
+  const [fresh] = fs.readdirSync(proved.dir).filter((f) => !f.startsWith('2026-01-01'));
+  assert.match(
+    proved.old,
+    new RegExp(
+      `five minutes\\. \\(superseded \\d{4}-\\d{2}-\\d{2} by \\[\\[${fresh.slice(0, -3)}\\]\\]\\) Keys`,
+    ),
+  );
+  assert.ok(!proved.old.includes('Also seen'), 'not filed as corroboration');
+  assert.match(
+    fs.readFileSync(path.join(proved.dir, fresh), 'utf8'),
+    new RegExp(`\\[\\[${oldName}\\]\\]`),
+  );
+  assert.deepStrictEqual(proved.worker.judge, { reverses: 1 });
+  assert.strictEqual(proved.worker.judgeUsd, 0.01);
+
+  // The round trip: both notes as written, through the shipped chunker, index and ranking.
+  const { chunkNote, buildBundle, searchIn, DIM } = await import(
+    '../../scripts/lib/memory-semantic.mjs'
+  );
+  const vec = new Float32Array(DIM);
+  vec[0] = 1;
+  const rows = [oldName, fresh.slice(0, -3)].flatMap((note) =>
+    chunkNote(note, fs.readFileSync(path.join(proved.dir, `${note}.md`), 'utf8')).map(
+      (/** @type {any} */ c) => ({
+        ...c,
+        note,
+        layer: 'Insights',
+        vec: new Uint8Array(vec.buffer.slice(0)),
+      }),
+    ),
+  );
+  const index = buildBundle('p', '/d', rows, { lexMode: 'chunk', dim: DIM });
+  assert.deepStrictEqual(
+    searchIn(index, 'cache ttl minutes', vec, 2).map((/** @type {any} */ x) => x.r.note),
+    [fresh.slice(0, -3), oldName],
+  );
+
+  const unproved = run(envelope('{"0":{"v":"reverses","old":"the cache TTL is one hour"}}'));
+  assert.strictEqual(unproved.notes.length, 1, 'an unverified quote merges as today');
+  assert.match(unproved.old, /\*\*Also seen/);
+  assert.deepStrictEqual(unproved.worker.judge, { extends: 1 });
+
+  const failed = run('exit 1');
+  assert.strictEqual(failed.notes.length, 1, 'a failed judge merges as today');
+  assert.match(failed.old, /\*\*Also seen/);
+  assert.strictEqual(failed.worker.judge, undefined, 'nothing measured, nothing logged');
+  assert.strictEqual(failed.worker.judgeUsd, undefined);
+
+  const manual = run(envelope('{}'), 'reconcile: manual\n');
+  assert.strictEqual(manual.calls, 1, 'no pair to merge, so no judge call');
+  assert.strictEqual(manual.notes.length, 2, 'the new note is still written');
+  assert.strictEqual(manual.old, oldText.replace('---\n\n', 'reconcile: manual\n---\n\n'));
 });

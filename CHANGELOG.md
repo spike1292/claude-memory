@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **The distiller files a reversal as a new note and marks the old claim superseded (#156).** One
+  extra haiku call per run judges the run's merge pairs; a proved reversal gets its own note and
+  `(superseded <date> by [[note]])` in the old one, instead of an `**Also seen**` line. Measurements:
+  [docs/decisions/2026-10-10-reversal-judge.md](docs/decisions/2026-10-10-reversal-judge.md).
 - **Retrieval ranks a superseded claim below the note that replaced it (#163).** A chunk carrying
   `(superseded YYYY-MM-DD by [[note]])` has its score multiplied by `SUPERSEDED_DEMOTE` in both
   arms, for ordering only: the returned score stays raw cosine, so the recall gate never drops a
