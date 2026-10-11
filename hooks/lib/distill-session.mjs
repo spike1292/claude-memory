@@ -897,7 +897,7 @@ async function writeNotes(insights, slug) {
       v === 'reverses' && !fs.existsSync(file)
         ? markSuperseded(fs.readFileSync(p.file, 'utf8'), a.old, p.name, today)
         : null;
-    const label = v === 'reverses' && !marked ? 'extends' : v;
+    const label = v === 'reverses' && !marked ? 'rejected' : v;
     if (label) judge[label] = (judge[label] ?? 0) + 1;
     if (!marked) {
       reconcile(p.file, p.title, p.body, p.line, today);

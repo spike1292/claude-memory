@@ -1721,7 +1721,7 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
   const unproved = run(envelope('{"0":{"v":"reverses","old":"the cache TTL is one hour"}}'));
   assert.strictEqual(unproved.notes.length, 1, 'an unverified quote merges as today');
   assert.match(unproved.old, /\*\*Also seen/);
-  assert.deepStrictEqual(unproved.worker.judge, { extends: 1 });
+  assert.deepStrictEqual(unproved.worker.judge, { rejected: 1 });
 
   const failed = run('exit 1');
   assert.strictEqual(failed.notes.length, 1, 'a failed judge merges as today');

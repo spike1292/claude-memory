@@ -43,6 +43,6 @@ multi-sentence notes.
 
 ## Where it is logged
 
-The worker line carries `judge` (verdict counts after the quote check, zeros omitted) and `judgeUsd`
+The worker line carries `judge` (verdict counts, zeros omitted; `rejected` is a `reverses` the quote check refused) and `judgeUsd`
 (omitted when the call reported none). `/memory:doctor --hooks` sums cost from `extract` lines only,
 so its cost table does not include the judge yet.
