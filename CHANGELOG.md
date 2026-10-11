@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-11
+
 ### Added
 
 - **The distiller files a reversal as a new note and marks the old claim superseded (#156).** One
@@ -1502,7 +1504,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/spike1292/claude-memory/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/spike1292/claude-memory/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/spike1292/claude-memory/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spike1292/claude-memory/compare/v0.7.0...v0.8.0
