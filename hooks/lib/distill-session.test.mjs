@@ -1564,8 +1564,8 @@ test('markSuperseded marks the sentence holding a verified quote, and nothing el
     '---\ntitle: "Cache"\n---\n\n## Cache\n\nThe cache TTL is five\nminutes. (superseded 2026-10-10 by [[n2]]) Keys are hashed.\n',
   );
   assert.strictEqual(
-    markSuperseded('Keys are hashed\nnext', 'Keys are hashed', 'n2', '2026-10-10'),
-    'Keys are hashed (superseded 2026-10-10 by [[n2]])\nnext',
+    markSuperseded('Keys are hashed\n\nnext', 'Keys are hashed', 'n2', '2026-10-10'),
+    'Keys are hashed (superseded 2026-10-10 by [[n2]])\n\nnext',
     'no full stop: the marker goes before the line break',
   );
   assert.strictEqual(
@@ -1585,6 +1585,66 @@ test('markSuperseded marks the sentence holding a verified quote, and nothing el
     'a non-ASCII letter is a letter, not a separator',
   );
   assert.strictEqual(markSuperseded(note, /** @type {any} */ ({}), 'n2', 'd'), null);
+  assert.strictEqual(
+    markSuperseded('Use İstanbul servers for the cache.', 'İstanbul servers for', 'n2', 'd'),
+    'Use İstanbul servers for the cache. (superseded d by [[n2]])',
+    'the quote and the body fold the same way',
+  );
+  assert.strictEqual(
+    markSuperseded(
+      'The cache TTL is five\nminutes. Keys.\n- next',
+      'the cache ttl is five',
+      'n2',
+      'd',
+    ),
+    'The cache TTL is five\nminutes. (superseded d by [[n2]]) Keys.\n- next',
+    'a wrapped line is not a sentence end',
+  );
+  assert.strictEqual(
+    markSuperseded('Keys are hashed\n- next item', 'Keys are hashed', 'n2', 'd'),
+    'Keys are hashed (superseded d by [[n2]])\n- next item',
+    'a list item after the line is',
+  );
+  assert.strictEqual(
+    markSuperseded(
+      'The cache lives in redis\r\n\r\nNext para. More.',
+      'the cache lives in',
+      'n2',
+      'd',
+    ),
+    'The cache lives in redis (superseded d by [[n2]])\r\n\r\nNext para. More.',
+    'CRLF',
+  );
+  assert.strictEqual(
+    markSuperseded(
+      '| a | the cache lives in redis |\n| b | row |',
+      'the cache lives in',
+      'n2',
+      'd',
+    ),
+    '| a | the cache lives in redis | (superseded d by [[n2]])\n| b | row |',
+    'a table row',
+  );
+  assert.strictEqual(
+    markSuperseded('ΟΔΟΣ cache servers run.', 'οδος cache servers', 'n2', 'd'),
+    'ΟΔΟΣ cache servers run. (superseded d by [[n2]])',
+    'final sigma',
+  );
+  assert.strictEqual(
+    markSuperseded(
+      '---\r\ntitle: uses redis for caching\r\n---\r\nBody uses redis for caching.\r\n',
+      'uses redis for caching',
+      'n2',
+      'd',
+    ),
+    '---\r\ntitle: uses redis for caching\r\n---\r\nBody uses redis for caching. (superseded d by [[n2]])\r\n',
+    'CRLF frontmatter is not the body',
+  );
+  assert.strictEqual(
+    markSuperseded('nai\u0308ve approach wins here.', 'na\u00efve approach wins', 'n2', 'd'),
+    'nai\u0308ve approach wins here. (superseded d by [[n2]])',
+    'NFD body, NFC quote',
+  );
 });
 
 test('a reversal the judge proves becomes a new note that supersedes the old claim', async (t) => {

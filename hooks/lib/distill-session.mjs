@@ -253,28 +253,44 @@ export function reconcile(file, title, body, aliasLine, today) {
  */
 export function markSuperseded(text, quote, newNote, today) {
   if (typeof quote !== 'string') return null;
-  const q = quote
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+  const q = fold(quote).norm.trim();
   if (q.length < 12) return null;
-  const from = text.match(/^---\n[\s\S]*?\n---\n/)?.[0].length ?? 0;
+  const { norm, at } = fold(text, text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/)?.[0].length ?? 0);
+  const k = norm.indexOf(q);
+  if (k < 0) return null;
+  // A line break ends the sentence unless the next line starts with a letter: a wrapped sentence.
+  const end = /[.!?](?=\s|$)|\r?\n(?![ \t]*\p{L})/gu;
+  end.lastIndex = at[k + q.length - 1] + 1;
+  const m = end.exec(text);
+  const cut = !m ? text.length : /\n$/.test(m[0]) ? m.index : m.index + 1;
+  return `${text.slice(0, cut)} (superseded ${today} by [[${newNote}]])${text.slice(cut)}`;
+}
+
+/**
+ * Lowercase letters and digits, every other run as one space, folded ONE character at a time so a
+ * quote and a body always fold alike, accents dropped so NFC and NFD agree; `at[j]` is the index in `s` of `norm[j]`.
+ *
+ * @param {string} s
+ * @param {number} [from]
+ * @returns {{ norm: string, at: number[] }}
+ */
+function fold(s, from = 0) {
   let norm = '';
   /** @type {number[]} */
   const at = [];
-  for (let i = from; i < text.length; i++) {
-    const c = text[i].toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  for (let i = from; i < s.length; i++) {
+    if (/\p{M}/u.test(s[i])) continue;
+    const c = s[i]
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/ς/g, 'σ')
+      .replace(/[^\p{L}\p{N}]/gu, '');
     const add = c || (norm && !norm.endsWith(' ') ? ' ' : '');
     norm += add;
     for (let j = 0; j < add.length; j++) at.push(i);
   }
-  const k = norm.indexOf(q);
-  if (k < 0) return null;
-  const end = /[.!?](?=\s|$)|\n/g;
-  end.lastIndex = at[k + q.length - 1] + 1;
-  const m = end.exec(text);
-  const cut = !m ? text.length : m[0] === '\n' ? m.index : m.index + 1;
-  return `${text.slice(0, cut)} (superseded ${today} by [[${newNote}]])${text.slice(cut)}`;
+  return { norm, at };
 }
 
 /**
