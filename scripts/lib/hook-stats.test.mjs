@@ -18,6 +18,7 @@ import {
   INJECTED_TOKEN_BUDGET,
   costReport,
 } from './hook-stats.mjs';
+import { COST_EVENT } from '../../hooks/lib/hook-io.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST = path.join(here, '../../hooks/hooks.json');
@@ -393,6 +394,41 @@ test('an extract line is a cost record, not a hook invocation', () => {
   const out = render(s, timeouts(MANIFEST));
   assert.doesNotMatch(out, /extract\s+1\s+92000/);
   assert.match(out, /distiller cost \(MEASURED/);
+});
+
+test('a judge line is a cost record of its own, beside the extractor', () => {
+  const s = summarize([
+    line({
+      hook: 'distill-session',
+      event: 'SessionEnd',
+      ms: 40,
+      outcome: 'spawned',
+      session: 'a',
+    }),
+    line({ hook: 'distill-session', event: COST_EVENT.extract, usd: 0.04, inTok: 9, session: 'a' }),
+    line({
+      hook: 'distill-session',
+      event: COST_EVENT.judge,
+      usd: 0.0065,
+      outTok: 40,
+      session: 'a',
+    }),
+  ]);
+  assert.strictEqual(s.invocations, 1);
+  const out = render(s, new Map());
+  assert.match(out, /per run \(÷1 extract run\(s\)\)\s+9\s+-\s+-\s+-\s+0\.0400/);
+  assert.match(out, /reversal judge cost \(MEASURED[^\n]*1 call\(s\)/);
+  assert.match(out, /per call \(÷1 run\(s\) with a judge call\)\s+-\s+-\s+-\s+40\s+0\.0065/);
+});
+
+test('a window with no judge call says not measured, and prints no zero for it', () => {
+  const out = render(
+    summarize([line({ hook: 'distill-session', event: COST_EVENT.extract, usd: 0.04 })]),
+    new Map(),
+  );
+  const judge = out.slice(out.indexOf('reversal judge cost'));
+  assert.match(judge, /^reversal judge cost: not measured/);
+  assert.doesNotMatch(judge, /\$0|0\.0000/);
 });
 
 test('a usage field missing from some runs is averaged over the runs that had it', () => {

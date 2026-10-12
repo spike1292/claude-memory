@@ -15,6 +15,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   exports its own `CLAUDE_PLUGIN_ROOT` there, so `$MEM` pointed at the wrong plugin and every step
   failed with `MODULE_NOT_FOUND`. The preamble now trusts that variable only when it holds
   `scripts/memory-semantic.mjs`, and reads the `plugin-root` breadcrumb otherwise.
+- **`/memory:doctor --hooks` now counts the reversal judge's cost (#168).** The judge call writes
+  its own `event: 'judge'` cost line with token counts, and the report shows it as its own table.
+  `judgeUsd` is gone from the worker line.
 
 ## [0.9.0] - 2026-10-11
 

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { table } from './doctor-perf.mjs';
 import { logFiles, readLines, percentile, DEFAULT_DAYS } from './recall-stats.mjs';
 import { mocs } from '../../hooks/lib/memory-link-lint.mjs';
+import { COST_EVENT } from '../../hooks/lib/hook-io.mjs';
 
 export { DEFAULT_DAYS };
 
@@ -161,6 +162,8 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
   const unsized = new Map();
   /** @type {HookLine[]} */
   const extracts = [];
+  /** @type {HookLine[]} */
+  const judges = [];
   /** @type {Set<string>} */
   const sessions = new Set();
   /** @type {Set<string>} */
@@ -188,7 +191,8 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
     // An absent `bytes` means either "injected nothing" or "written before this field existed",
     // indistinguishable, so a hook's older lines read as zeros until they age out of the window (a
     // week). Counted separately below as `unsized` rather than silently folded into the average.
-    if (!l.child && l.session && !worker && l.event !== 'extract') {
+    const cost = l.event === COST_EVENT.extract || l.event === COST_EVENT.judge;
+    if (!l.child && l.session && !worker && !cost) {
       const by = perSession.get(name) ?? new Map();
       by.set(l.session, (by.get(l.session) ?? 0) + (typeof l.bytes === 'number' ? l.bytes : 0));
       perSession.set(name, by);
@@ -200,8 +204,8 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
     // cost section and nowhere else. Counted as an invocation it took distill-session's 15 s
     // timeout with it and reported every 40-second API call as a near-breach of a limit it is not
     // subject to — inside a worker that is already detached.
-    if (l.event === 'extract') {
-      extracts.push(l);
+    if (cost) {
+      (l.event === COST_EVENT.judge ? judges : extracts).push(l);
       continue;
     }
     invocations++;
@@ -256,6 +260,7 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
       .filter(([name]) => measured.has(name))
       .reduce((a, [, n]) => a + n, 0),
     extracts,
+    judges,
     sessions: sessions.size,
     days: logDays || days.size,
     slug,
@@ -613,16 +618,39 @@ function injectedSection(s, recall) {
  * than by the transcript: a throwaway prompt measured 9 input tokens against 18,078 cache-creation
  * and 22,363 cache-read, at $0.0389 (2026-08-20). That is why nothing here is derived from length.
  *
+ * The reversal judge (#156) is a second paid call in a run with merge pairs, so it is a second
+ * table: its per-call row divides by the runs that called it, never by every distillation.
+ *
  * @param {ReturnType<typeof summarize>} s
  * @returns {string[]}
  */
 function costSection(s) {
-  if (!s.extracts.length)
-    return [
-      '',
-      'distiller cost: not measured — no extract line in this window. A distillation that was',
-      'debounced, found no CLI, or failed before the call writes no cost at all, by design.',
-    ];
+  return [
+    ...(s.extracts.length
+      ? costTable(s.extracts, s.days, 'extract')
+      : [
+          '',
+          'distiller cost: not measured — no extract line in this window. A distillation that was',
+          'debounced, found no CLI, or failed before the call writes no cost at all, by design.',
+        ]),
+    ...(s.judges.length
+      ? costTable(s.judges, s.days, 'judge')
+      : [
+          '',
+          'reversal judge cost: not measured — no judge line in this window. A run without merge',
+          'pairs makes no judge call.',
+        ]),
+  ];
+}
+
+/**
+ * @param {HookLine[]} lines
+ * @param {number} days
+ * @param {keyof typeof COST_EVENT} kind
+ * @returns {string[]}
+ */
+function costTable(lines, days, kind) {
+  const judge = kind === 'judge';
 
   // PER FIELD, counting only the lines that carry it. parseEnvelope writes the finite figures it
   // found and omits the rest — the API drops `cache_creation_input_tokens` when nothing was cached
@@ -633,7 +661,7 @@ function costSection(s) {
   const col = (k) => {
     /** @type {number[]} */
     const v = [];
-    for (const l of s.extracts) {
+    for (const l of lines) {
       const x = l[k];
       if (typeof x === 'number' && Number.isFinite(x)) v.push(x);
     }
@@ -643,7 +671,7 @@ function costSection(s) {
   const usd = col('usd');
   /** @param {{ total: number, n: number }} c @param {number} [digits] */
   const per = (c, digits = 0) => (c.n ? (c.total / c.n).toFixed(digits) : '-');
-  const runs = s.extracts.length;
+  const runs = lines.length;
   const partial = [...cols, usd].filter((c) => c.n && c.n < runs).length;
   const absent = [...cols, usd].filter((c) => !c.n).length;
 
@@ -651,26 +679,34 @@ function costSection(s) {
   // But it wrote no notes, so folding it silently into "per run" prices a distillation using runs
   // that did not distil — the exact fold the extract line's `outcome` was added to prevent, one
   // level down. The log tells them apart; so must the report.
-  const errored = s.extracts.filter((l) => l.outcome === 'error').length;
+  const errored = lines.filter((l) => l.outcome === 'error').length;
 
   return [
     '',
-    `distiller cost (MEASURED, from the CLI's own usage figures) — ${runs} run(s)` +
+    (judge
+      ? `reversal judge cost (MEASURED, from the CLI's own usage figures) — ${runs} call(s)`
+      : `distiller cost (MEASURED, from the CLI's own usage figures) — ${runs} run(s)`) +
       (errored ? `, ${errored} of which failed after being billed` : ''),
     table(
       ['', 'in', 'cache write', 'cache read', 'out', 'USD'],
       [
         ['total', ...cols.map((c) => (c.n ? c.total : '-')), usd.n ? usd.total.toFixed(4) : '-'],
-        ['per run', ...cols.map((c) => per(c)), per(usd, 4)],
+        [
+          judge
+            ? `per call (÷${runs} run(s) with a judge call)`
+            : `per run (÷${runs} extract run(s))`,
+          ...cols.map((c) => per(c)),
+          per(usd, 4),
+        ],
         // Divided by the number of DAILY LOG FILES the window read, which is the number of days
         // anything was logged at all — not the days the distiller happened to run, and not a
         // calendar span. A fortnight's spend over the one day it ran is not a daily rate, and the
         // denominator is printed so nobody has to guess which one was used.
-        s.days
+        days
           ? [
-              `per day (÷${s.days} log day(s))`,
-              ...cols.map((c) => (c.n ? Math.round(c.total / s.days) : '-')),
-              usd.n ? (usd.total / s.days).toFixed(4) : '-',
+              `per day (÷${days} log day(s))`,
+              ...cols.map((c) => (c.n ? Math.round(c.total / days) : '-')),
+              usd.n ? (usd.total / days).toFixed(4) : '-',
             ]
           : ['per day', '-', '-', '-', '-', '-'],
       ],
@@ -684,14 +720,21 @@ function costSection(s) {
     ...(absent
       ? [`${absent} column(s) print "-": no run in this window reported that figure at all.`]
       : []),
-    ...(errored
+    ...(errored && judge
+      ? ['The failed calls are included: they cost money, and their merge pairs were not judged.']
+      : []),
+    ...(errored && !judge
       ? [
           'The failed runs are included: they cost money. They wrote no notes, so "per run" is not',
           'the price of a distillation while any are in the window.',
         ]
       : []),
-    'Cache traffic dominates, and it is a near-fixed cost of the headless session rather than a',
-    'function of transcript length — a longer session is not a proportionally dearer distillation.',
+    ...(judge
+      ? []
+      : [
+          'Cache traffic dominates, and it is a near-fixed cost of the headless session rather than a',
+          'function of transcript length — a longer session is not a proportionally dearer distillation.',
+        ]),
   ];
 }
 

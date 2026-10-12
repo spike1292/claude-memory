@@ -43,6 +43,8 @@ multi-sentence notes.
 
 ## Where it is logged
 
-The worker line carries `judge` (verdict counts, zeros omitted; `rejected` is a `reverses` the quote check refused) and `judgeUsd`
-(omitted when the call reported none). `/memory:doctor --hooks` sums cost from `extract` lines only,
-so its cost table does not include the judge yet.
+The worker line carries `judge` (verdict counts, zeros omitted; `rejected` is a `reverses` the quote check refused).
+The call's cost is its own `event: 'judge'` line, like the extractor's `extract` line: every usage
+field the envelope reported and none it did not, `outcome: 'error'` for a billed failure, and no
+line at all when no envelope came back. `/memory:doctor --hooks` prints it as a second cost table,
+per call over the runs that made one; a window without a judge line says "not measured" (#168).

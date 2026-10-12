@@ -540,6 +540,9 @@ export function pruneDatedLogs(now = new Date()) {
   return removed;
 }
 
+/** Events that are a cost record for one paid API call, never a hook invocation. */
+export const COST_EVENT = /** @type {const} */ ({ extract: 'extract', judge: 'judge' });
+
 /**
  * The closed set of hook outcomes — a hook that did nothing must be DISTINGUISHABLE from one that
  * ran, since hooks degrade silently by design. `spawned` is a gate line only: the detached child's
