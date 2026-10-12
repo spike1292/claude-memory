@@ -18,10 +18,12 @@ import {
   parseDeferred,
   supersessionState,
   freshnessFindings,
+  staleStampFindings,
   isUnprovenancedMetric,
   isUnstampedVolatileClaim,
   buildSuffixIndex,
   stripCodeBlocks,
+  checkFile,
   pathFates,
 } from './memory-audit-checks.mjs';
 
@@ -153,6 +155,42 @@ test('freshnessFindings flags unstamped volatile quantities', () => {
   );
   assert.equal(ff.length, 1, 'only the claim outside the dated section');
   assert.ok(ff[0].text.includes('501 projects'));
+});
+
+test('staleStampFindings: FRESH-2 warns one day past the window, never at it', () => {
+  const today = '2026-10-12';
+  const stale = (/** @type {string} */ body) => staleStampFindings(body, 90, today);
+  assert.deepEqual(stale('47 tasks (as of 2026-07-14).'), [], 'exactly 90 days old');
+  assert.deepEqual(stale('47 tasks (as of 2026-07-13).'), [
+    { line: 1, date: '2026-07-13', age: 91, text: '47 tasks (as of 2026-07-13).' },
+  ]);
+  assert.equal(
+    stale('last observed: 39,385 events/30d (As of 2026-01-02)')[0]?.age,
+    283,
+    'the protocol pointer form, any case',
+  );
+  assert.deepEqual(
+    stale(
+      [
+        '## Measured 2026-01-01',
+        '501 projects (as of 2026-01-01)',
+        '## Now',
+        'Decided 2026-01-01, shipped 2026-02-02.',
+        '`(as of 2026-01-01)` is the stamp format',
+        '```',
+        '(as of 2026-01-01)',
+        '```',
+      ].join('\n'),
+    ),
+    [],
+    'dated heading region, bare dates, and code are snapshots or examples, not stamps',
+  );
+});
+
+test('checkFile: the write-time path never reports FRESH-2', () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fresh2-')), 'n.md');
+  fs.writeFileSync(f, 'Pointer to the dashboard (as of 2000-01-01).\n');
+  assert.deepEqual(checkFile(f), []);
 });
 
 test('isUnprovenancedMetric requires an instrument', () => {

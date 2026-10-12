@@ -20,6 +20,7 @@ import {
   parseDeferred,
   supersessionState,
   freshnessFindings,
+  staleStampFindings,
   isUnprovenancedMetric,
   buildSuffixIndex,
   checkFile,
@@ -327,6 +328,20 @@ const unstamped = [];
 for (const n of memNames)
   for (const f of freshnessFindings(/** @type {Note} */ (notes.get(n)).body))
     unstamped.push(`${n}:${f.line} ${f.text.slice(0, 110)}`);
+// FRESH-2 runs over both layers: a stamp is a stamp wherever it sits.
+const now = new Date();
+const today = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+  .map((n) => String(n).padStart(2, '0'))
+  .join('-');
+/** @type {string[]} */
+const staleStamps = [];
+for (const [n, v] of notes) {
+  const w = paths.freshnessWindow(path.relative(VAULT, v.file).split(path.sep).join('/'));
+  for (const f of staleStampFindings(v.body, w.days, today))
+    staleStamps.push(
+      `${n}:${f.line} ${f.age}d old, ${w.folder} window ${w.days}d — ${f.text.slice(0, 80)}`,
+    );
+}
 // CLAIM-1 runs over BOTH layers: the inflated recall figure reached L1 notes, L3 Decision notes and
 // a public README, so restricting it to Memory would have missed most of the damage.
 /** @type {string[]} */
@@ -349,6 +364,12 @@ section(
 section(
   `FRESH-1 — volatile quantity, present tense, no stamp (${unstamped.length}); make it timeless, a dated snapshot, or a pointer`,
   unstamped.slice(0, 15).concat(unstamped.length > 15 ? [`… +${unstamped.length - 15} more`] : []),
+);
+section(
+  `FRESH-2 — \`as of\` stamp older than its freshness window (${staleStamps.length}); refresh the observation or convert it to a pointer`,
+  staleStamps
+    .slice(0, 15)
+    .concat(staleStamps.length > 15 ? [`… +${staleStamps.length - 15} more`] : []),
 );
 section('superseded_by: points at a note that does not exist', danglingSupersede);
 if (supersededOk.length)

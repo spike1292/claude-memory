@@ -195,19 +195,51 @@ export function isUnprovenancedMetric(line, context = line) {
 export function freshnessFindings(body) {
   /** @type {{ line: number, text: string }[]} */
   const out = [];
+  for (const [line, i] of undatedLines(body))
+    if (isUnstampedVolatileClaim(line)) out.push({ line: i + 1, text: line.trim() });
+  return out;
+}
+
+/** @param {string} body @returns {Generator<[string, number]>} */
+function* undatedLines(body) {
   /** @type {number|null} */
   let datedLevel = null;
-  body.split('\n').forEach((line, i) => {
+  for (const [i, line] of body.split('\n').entries()) {
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       const level = h[1].length;
       if (datedLevel !== null && level <= datedLevel) datedLevel = null;
       if (/\d{4}-\d{2}(-\d{2})?/.test(h[2])) datedLevel = level;
-      return;
+      continue;
     }
-    if (datedLevel !== null) return;
-    if (isUnstampedVolatileClaim(line)) out.push({ line: i + 1, text: line.trim() });
-  });
+    if (datedLevel === null) yield [line, i];
+  }
+}
+
+// FRESH-2: an `as of` stamp older than its window. Audit-only — never from checkFile(), which the
+// write-time hook shares, because a stamp is not stale when it is written.
+const AS_OF = /\bas of (\d{4})-(\d{2})-(\d{2})\b/i;
+/**
+ * @param {string} body
+ * @param {number} windowDays
+ * @param {string} today YYYY-MM-DD
+ * @returns {{ line: number, date: string, age: number, text: string }[]}
+ */
+export function staleStampFindings(body, windowDays, today) {
+  const day = (/** @type {string} */ y, /** @type {string} */ m, /** @type {string} */ d) =>
+    Date.UTC(+y, +m - 1, +d) / 864e5;
+  const now = day(.../** @type {[string, string, string]} */ (today.split('-')));
+  /** @type {{ line: number, date: string, age: number, text: string }[]} */
+  const out = [];
+  let fenced = false;
+  for (const [line, i] of undatedLines(body)) {
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    const m = !fenced && line.replace(/`[^`]*`/g, ' ').match(AS_OF);
+    if (!m) continue;
+    const age = now - day(m[1], m[2], m[3]);
+    if (age > windowDays)
+      out.push({ line: i + 1, date: `${m[1]}-${m[2]}-${m[3]}`, age, text: line.trim() });
+  }
   return out;
 }
 

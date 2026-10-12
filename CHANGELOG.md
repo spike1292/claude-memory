@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`/memory:health` warns on an `(as of YYYY-MM-DD)` stamp older than its freshness window
+  (FRESH-2, #68).** Default 90 days, overridable per vault folder with `freshnessDays` in
+  `config.json`; the warning names the window that applied. Audit-only: saving a note never warns,
+  and nothing is deleted.
+
 ### Fixed
 
 - **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode

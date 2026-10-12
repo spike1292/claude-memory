@@ -34,6 +34,7 @@ export function configFile() {
  * @property {number} [modelIdleMs]
  * @property {number} [serveIdleMs]
  * @property {number} [logRetentionDays]
+ * @property {number|string|Record<string, number|string>} [freshnessDays]
  * @property {boolean} [gitAutoCommit]
  */
 
@@ -174,6 +175,28 @@ export function logRetentionDays() {
   const s = String(raw ?? '').trim();
   if (!/^\d+$/.test(s)) return 30;
   return Math.min(Number(s), MAX_RETENTION_DAYS);
+}
+
+/**
+ * FRESH-2's window for a vault-relative note path: `freshnessDays` is a number, or folder prefixes
+ * mapped to days plus an optional `default`; the longest prefix wins. Why 90:
+ * docs/decisions/2026-10-12-freshness-window.md.
+ * @param {string} rel
+ * @returns {{ days: number, folder: string }}
+ */
+export function freshnessWindow(rel) {
+  /** @param {unknown} v */
+  const days = (v) => (/^\d+$/.test(String(v ?? '').trim()) ? Number(v) : null);
+  const env = process.env.MEMORY_FRESHNESS_DAYS;
+  const cfg = env === undefined || env.trim() === '' ? config().freshnessDays : env;
+  /** @type {Record<string, unknown>} */
+  const table = cfg && typeof cfg === 'object' ? cfg : { default: cfg };
+  const hit = Object.keys(table)
+    .filter((k) => k !== 'default' && rel.startsWith(k.replace(/\/+$/, '') + '/'))
+    .filter((k) => days(table[k]) !== null)
+    .sort((a, b) => b.length - a.length)[0];
+  if (hit) return { days: /** @type {number} */ (days(table[hit])), folder: hit };
+  return { days: days(table.default) ?? 90, folder: 'default' };
 }
 
 /**
