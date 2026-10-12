@@ -238,7 +238,8 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
       assert.ok(fs.statSync(path.join(w.vault, rel)).isDirectory(), `missing vault dir ${rel}`);
     }
 
-    // The breadcrumb /memory:* commands fall back to when ${CLAUDE_PLUGIN_ROOT} is absent.
+    // The breadcrumb /memory:* commands fall back to when ${CLAUDE_PLUGIN_ROOT} is absent or
+    // not this plugin.
     assert.strictEqual(
       fs.readFileSync(path.join(w.memHome, 'plugin-root'), 'utf8'),
       fs.realpathSync(path.dirname(path.dirname(SCRIPT))),
