@@ -22,11 +22,11 @@ import {
   isUnprovenancedMetric,
   isUnstampedVolatileClaim,
   buildSuffixIndex,
-  stripCodeBlocks,
   checkFile,
   pathFates,
   linkResolver,
 } from './memory-audit-checks.mjs';
+import { stripCodeBlocks } from '../../hooks/lib/memory-link-lint.mjs';
 
 test('isStandingNegative separates claims from instructions', () => {
   // standing negatives — real claims

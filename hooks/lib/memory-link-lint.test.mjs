@@ -30,6 +30,20 @@ test('linkTargets parses aliases and headings', () => {
   assert.deepStrictEqual([...linkTargets('no links here')], []);
 });
 
+test('linkTargets and noteTargets agree: trimmed, non-empty, never inside code (#99)', () => {
+  /** @type {[string, string[]][]} */
+  const rows = [
+    ['see [[ foo ]]', ['foo']],
+    ['see [[]]', []],
+    ['```bash\n[[ -f x ]] && echo\n```\n', []],
+    ['run `[[ -n $v ]]` first', []],
+  ];
+  for (const [text, want] of rows) {
+    assert.deepStrictEqual([...linkTargets(text)], want, text);
+    assert.deepStrictEqual(noteTargets(text), want, text);
+  }
+});
+
 const M = '/v/Memory/p';
 /**
  * @param {readonly (readonly [string, string])[]} pairs

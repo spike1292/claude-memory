@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
-import { mdFiles } from '../../hooks/lib/memory-link-lint.mjs';
+import { mdFiles, FENCE, INLINE_CODE } from '../../hooks/lib/memory-link-lint.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -320,17 +320,6 @@ export function checkFile(f) {
   if (s.inProse && !s.marked && !s.declared)
     out.push('  · reversal stated in prose only — mark it: (superseded YYYY-MM-DD by [[note]])');
   return out;
-}
-
-// A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
-// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
-// and inline code with them: a literal `[[wikilink]]` in REFLECTIONS.md false-positives otherwise.
-// ponytail: backtick fences only — 0 of 442 notes use `~~~`; add it when one does.
-const FENCE = /^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm;
-const INLINE_CODE = /`[^`\n]*`/g;
-/** @param {string} text @returns {string} */
-export function stripCodeBlocks(text) {
-  return text.replace(FENCE, '').replace(INLINE_CODE, '');
 }
 
 /** @param {string} d @returns {string[]} */

@@ -29,6 +29,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The SessionStart link lint and `/memory:health` now read links with one parser (#99).**
+  `linkTargets()` trims targets, drops empty ones and ignores links in fenced or inline code, so
+  `[[ foo ]]` no longer makes `foo` a false orphan and a bash `[[ -f x ]]` test is never a link.
+  `noteTargets()` (the MOC reader) ignores code too. The audit's private `linksIn` is gone.
 - **`/memory:health` no longer reports links to another project's notes as dangling (#172).**
   Obsidian resolves a wikilink vault-wide, so these links work. They now get their own section,
   "Links to other projects", which names the link only, never the other project. A name found
