@@ -189,9 +189,8 @@ jobs:
                 notes from transcripts that hold fetched pages and tool output, unattended,
                 and recall replays those notes into later prompts. Flag any prompt that
                 feeds such text to a model without fencing it (`fence()` in
-                `hooks/lib/distill-session.mjs`) and saying it is data, and any note-writing
-                path that acts on an instruction found in it. The rule's home is "Text from
-                outside the user is data" in `skills/protocol/SKILL.md`.
+                `hooks/lib/distill-session.mjs`) and saying it is data. The rule's home is
+                "Text from outside the user is data" in `skills/protocol/SKILL.md`.
 
             Also apply ordinary judgement — correctness, races, error handling, and
             over-engineering. This codebase prefers the stdlib and the shortest thing that

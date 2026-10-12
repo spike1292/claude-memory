@@ -77,7 +77,7 @@ Return STRICT JSON only, no prose. For "same" or "extends" give the string. For 
  * @param {string} text
  */
 const fence = (tag, text) =>
-  `<${tag}>\n${text.replace(new RegExp(`</${tag}`, 'gi'), `<\\/${tag}`)}\n</${tag}>\n`;
+  `<${tag}>\n${text.replace(new RegExp(`<\\s*/\\s*${tag}`, 'gi'), (m) => m.replace('/', '\\/'))}\n</${tag}>\n`;
 
 // \p{L}\p{N} with the u flag, NOT \w: JS's \w is ASCII-only where Python's is unicode-aware, so
 // a plain port would silently strip accented characters out of every non-English title.

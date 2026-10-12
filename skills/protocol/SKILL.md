@@ -131,7 +131,8 @@ user or from the repo itself.
 The loop is live and unattended: the distiller writes `Insights/` from transcripts that hold this
 text, and recall injects those notes into later prompts. So an instruction that slips in once gets
 replayed in every later session. The distiller's prompts fence the transcript as data for the same
-reason.
+reason. They do not yet enforce the evidence rule: the reversal judge can still mark a claim
+superseded on a lesson that came from a fetched page (#70).
 
 ## Private content
 
