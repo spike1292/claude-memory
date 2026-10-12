@@ -192,6 +192,15 @@ jobs:
                 `hooks/lib/distill-session.mjs`) and saying it is data. The rule's home is
                 "Text from outside the user is data" in `skills/protocol/SKILL.md`.
 
+            12. The PR description and commit messages are terse. Read them with
+                `gh pr view <PR NUMBER> --json body,commits`. Flag one that restates the diff,
+                narrates obvious steps, or pads a short change with prose — the same
+                finding as a code comment that restates the code. Do not flag length
+                alone: a measurement or a verification step is content. This rule is
+                separate from reader distance for code comments — a load-bearing figure
+                stays in the `.mjs` file and does not move to the PR body. A PR body has
+                no line to comment on, so post this finding in the summary comment.
+
             Also apply ordinary judgement — correctness, races, error handling, and
             over-engineering. This codebase prefers the stdlib and the shortest thing that
             works; an abstraction with one caller is a finding.

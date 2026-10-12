@@ -15,6 +15,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `high`, `medium` or `low` per insight, defined by what the session verified. A missing or
   unrecognised value writes no `confidence:` line; it is never defaulted. Existing notes are not
   backfilled.
+- **The CI reviewer flags a PR description or commit message that is not terse (#115).** It reads
+  them with `gh pr view` and reports one that restates the diff or narrates obvious steps in its
+  summary comment. Length alone is not a finding.
 - **A committed baseline for `bench-hooks.mjs` (#128).** `docs/hook-startup-baseline.md` holds
   every hook row, the floor and the import costs, with date, machine, note count and local-disk
   vault beside them, and the command that regenerates it.
