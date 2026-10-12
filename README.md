@@ -284,8 +284,9 @@ recall hook are built on; the native deps load fine. Full evaluation with number
 
 Nothing resolves an absolute install path: bash uses `BASH_SOURCE` and node uses
 `import.meta.url`. So a dev checkout, a symlink, and the version-pinned plugin cache all work
-the same way. `${CLAUDE_PLUGIN_ROOT}` is used only in `hooks/hooks.json` and command bodies, where
-it is guaranteed — commands fall back to the `$CLAUDE_MEMORY_HOME/plugin-root` breadcrumb the
+the same way. `${CLAUDE_PLUGIN_ROOT}` is guaranteed only in `hooks/hooks.json`. Command bodies
+trust it only when it holds `scripts/memory-semantic.mjs` — inside `ctx_execute` it is
+context-mode's root — and otherwise read the `$CLAUDE_MEMORY_HOME/plugin-root` breadcrumb the
 SessionStart hook writes.
 
 ### Contributing

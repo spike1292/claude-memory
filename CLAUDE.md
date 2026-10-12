@@ -159,8 +159,10 @@ its own `env.cacheDir`.
 
 **Nothing resolves an absolute install path**: bash uses `BASH_SOURCE`, Node uses
 `import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside
-`hooks/hooks.json` command strings; command bodies fall back to the `$CLAUDE_MEMORY_HOME/plugin-root`
-breadcrumb that `vault-memory-sync.sh` rewrites every session.
+`hooks/hooks.json` command strings — inside `ctx_execute` it is context-mode's root. Command bodies
+trust it only when it holds `scripts/memory-semantic.mjs`, else read the
+`$CLAUDE_MEMORY_HOME/plugin-root` breadcrumb that `vault-memory-sync.sh` rewrites every session;
+`scripts/commands-preamble.test.mjs` holds every copy to one line.
 
 **Project identity is the normalised git remote**, not the checkout path (`project_key` in
 `vault-env.sh`), so one repo maps to one vault folder from any machine or subdirectory. `legacy_key`

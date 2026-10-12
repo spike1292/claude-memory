@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode
+  exports its own `CLAUDE_PLUGIN_ROOT` there, so `$MEM` pointed at the wrong plugin and every step
+  failed with `MODULE_NOT_FOUND`. The preamble now trusts that variable only when it holds
+  `scripts/memory-semantic.mjs`, and reads the `plugin-root` breadcrumb otherwise.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added

@@ -12,7 +12,7 @@ Run each step, report pass/fail per step, and stop at the first hard failure.
 
 ```bash
 STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
-MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+MEM="${CLAUDE_PLUGIN_ROOT:-}"; [ -f "$MEM/scripts/memory-semantic.mjs" ] || MEM="$(cat "$STATE/plugin-root")"
 ```
 
 1. **Check Node.** `node --version` must be **≥ 22.5** — the engine uses the built-in `node:sqlite`
