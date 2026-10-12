@@ -19,6 +19,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `config.json`; the warning names the window that applied. Audit-only: saving a note never warns,
   and nothing is deleted.
 
+### Changed
+
+- **`/memory:health` reads what the scans name, not every note (#95).** Step 0 now also runs
+  `--dupes` and `--clusters`. Step 1 reads `REFLECTIONS.md`, `MEMORY.md`, the named notes in
+  claim-line form, and a capped sample just below the dupe threshold. `/memory:prune` step 2
+  points at the same rule. Band, cap and measurements:
+  `docs/decisions/2026-10-12-health-read-scope.md`.
+
 ### Fixed
 
 - **`/memory:health` no longer reports links to another project's notes as dangling (#172).**

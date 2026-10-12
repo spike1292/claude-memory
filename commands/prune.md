@@ -37,6 +37,9 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
 
    **Calibration is per-model — do not carry a threshold across models.** Run it with no `--min` and trust the profile default (`bge-m3` 0.75, `bge-small-en` 0.86, `e5-multi` 0.95). The number does not transfer **in either direction**: e5-multi packs similarities into a high narrow band, so bge-small-en's 0.86 returns **29,560 pairs** under it — noise that reads like a backlog. bge-m3's band sits low and wide, so e5-multi's 0.95 returned **0 pairs on a 74-note set holding 16 real duplicates** — a clean bill of health that was pure miscalibration (measured 2026-08-17; that is why the default is now 0.75). **High similarity is not proof** — under the old model `aws-cra1-login` and `aws-cra2-login` scored 0.890 and must never be merged: same shape, opposite content (two different AWS orgs). And a clean run is not proof either: two real duplicates in that same set scored **below 0.70** and were found only by reading. The scan proposes; you judge.
 
+   Read the notes the scans name, not the folder: as in `/memory:health` step 1
+   (`commands/health.md`), a full-corpus read is not the intended path.
+
    Then, for each candidate, find notes that describe the **same** lesson or that a later note supersedes.
    - **Cluster within each folder FIRST, then look across folders.** Cross-type pairs (a Mistake plus its matching Decision) are complementary by design and get kept — so if a greedy pass assigns a note to a cross-type cluster first and marks it consumed, it never gets compared against its real same-type twin and the duplicate survives the prune. That is precisely how `cloudfront-function-code-budgeting-with-esbuild` and `…-size-budgeting-with-esbuild` (Jaccard 0.67) slipped through on 2026-08-07 and were only caught by the next audit. Same-folder first, always.
    - Propose a concrete merge plan: which note survives, what content folds in, which become redundant.

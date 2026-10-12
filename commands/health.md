@@ -16,7 +16,12 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
    ```
    node "$MEM/scripts/memory-audit-checks.mjs"
    node "$MEM/scripts/memory-semantic.mjs" --coverage
+   node "$MEM/scripts/memory-semantic.mjs" --dupes
+   node "$MEM/scripts/memory-semantic.mjs" --clusters
    ```
+
+   `--dupes` and `--clusters` are the same scans `/memory:prune` steps 2 and 3b run, at the
+   profile's own thresholds. Here they only name notes for step 1 to read.
 
    The second one answers a question no audit had ever asked: **is every note actually in the
    index?** A note missing from the index is indistinguishable from a note that ranks badly — both
@@ -29,7 +34,24 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
    Three audits hand-wrote these checks and two got the same two wrong: `confidence:` is nested under `metadata:` (a `^confidence:` grep reports every note as missing it), and a path regex swallows the `…/` in abbreviated prose paths (15 of 24 "missing" paths in the 2026-08-14 audit). Both are encoded in `scripts/lib/memory-audit-checks.mjs` and covered by
    `scripts/lib/memory-audit-checks.test.mjs`. If you extend the checks, add an assertion.
 
-1. **Gather.** First read `Insights/<slug>/REFLECTIONS.md` if it exists — the log of every prior audit. It tells you what was already found, what was fixed, and what was deliberately declined, so you don't re-report a closed item as new. Then read `Memory/<slug>/MEMORY.md` (the MOC) and every note under `Memory/<slug>/*.md` and `Insights/<slug>/{Patterns,Mistakes,Decisions}/*.md`. For large sets use `ctx_execute_file` / `ctx_search` so raw bytes stay out of context.
+1. **Gather.** First read `Insights/<slug>/REFLECTIONS.md` if it exists — the log of every prior audit. It tells you what was already found, what was fixed, and what was deliberately declined, so you don't re-report a closed item as new. Then read `Memory/<slug>/MEMORY.md` (the MOC) in full. Then read only:
+
+   - **every note a step-0 scan names**, in claim-line form — from the first `## ` heading on
+     (`sed -n '/^## /,$p' <note>`), not the whole file;
+   - **a bounded sample below the dupe threshold.** `--dupes` sorts pairs highest first, so take
+     `N` from step 0's header (`same-folder pairs ≥ <dupeMin>: N`), run
+     `--dupes --min <lower> --top <N + 15>`, and read only the pairs after the first `N` — at most
+     **15 pairs**. None printed after them means the band is empty; write that in the **Scope**
+     line rather than reading it as clean. `<lower>` is **0.70** for `bge-m3`, set from the
+     `/memory:prune` step 2b sweep. The band is per-model: on any other profile none is measured,
+     so skip the sample and say so in the **Scope** line.
+
+   **A full-corpus read is not the intended path.** The scans already name every candidate the
+   audit acts on, and reading every note re-derives them at a cost that grows with the vault. The
+   measurements behind this, the band and the cap:
+   `docs/decisions/2026-10-12-health-read-scope.md`. Steps 2–6 work from the notes gathered here; a finding may still pull in a
+   note that a gathered note links to — a targeted read, not a sweep. `ctx_execute_file` /
+   `ctx_search` keep raw bytes out of context if you have them.
 
    **Note the snapshot size** (note count per layer) — the distiller writes notes concurrently, so record what you actually audited and report it. If the count grew mid-audit, say so rather than implying full coverage.
 
