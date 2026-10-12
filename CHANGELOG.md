@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Security
+
+- **The distiller treats the transcript as data, not instructions (#67).** Both of its prompts now
+  fence their input — the transcript, and the note pairs the reversal judge compares — and tell
+  the model that an instruction inside is a claim to record, not a command. Text in the input
+  cannot close its fence early. `/memory:protocol` carries the same rule for hand-written notes.
+
 ### Fixed
 
 - **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode
