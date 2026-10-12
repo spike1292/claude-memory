@@ -33,6 +33,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The Project status workflow adds the issue by node id.** `gh project item-add --owner` failed
+  with `unknown owner type` on its first run; the GraphQL mutation needs no owner lookup.
 - **The SessionStart link lint and `/memory:health` now read links with one parser (#99).**
   `linkTargets()` trims targets, drops empty ones and ignores links in fenced or inline code, so
   `[[ foo ]]` no longer makes `foo` a false orphan and a bash `[[ -f x ]]` test is never a link.

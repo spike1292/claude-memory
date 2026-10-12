@@ -15,7 +15,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           LABEL: ${{ github.event.label.name }}
-          URL: ${{ github.event.issue.html_url }}
+          ISSUE: ${{ github.event.issue.node_id }}
         # ponytail: IDs hardcoded; they survive renames, re-read them if the board is rebuilt.
         run: |
           if [ -z "$GH_TOKEN" ]; then
@@ -27,6 +27,7 @@ jobs:
             ready-for-agent) option=30669849 ;;
             ready-for-human) option=d24d0054 ;;
           esac
-          item=$(gh project item-add 1 --owner spike1292 --url "$URL" --format json --jq .id)
+          item=$(gh api graphql -f p=PVT_kwHOAARnVc4BmowK -f c="$ISSUE" --jq .data.addProjectV2ItemById.item.id \
+            -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}')
           gh project item-edit --project-id PVT_kwHOAARnVc4BmowK --id "$item" \
             --field-id PVTSSF_lAHOAARnVc4BmowKzhlQ8U4 --single-select-option-id "$option"
