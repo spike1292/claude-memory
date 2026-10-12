@@ -11,8 +11,10 @@ startup regression is compared against. It is replaced in place by a new run; th
 node scripts/bench-hooks.mjs -n 20 --notes 50 --cwd ~/Development/claude-memory
 ```
 
-`--cwd` must be a normal checkout, not a worktree: a worktree adds ~10 ms per hook (see the
-decision record). Replace the table and the conditions together, never one without the other.
+Run it from the checkout whose code you want to time: the hooks come from the script's own
+checkout. `--cwd` only sets the project the hooks resolve, and must be a normal checkout, not a
+worktree: a worktree adds ~10 ms per hook (see the decision record).
+Replace the table and the conditions together, never one without the other.
 
 ## Conditions
 
@@ -50,3 +52,5 @@ Milliseconds. Compare medians; p90 and max on a loaded laptop are noise.
 A run directly before this one, same conditions, agreed within 3 ms on every median except
 `validate-note` (57.8) and `memory-link-lint` (45.1). Re-run before calling a move of that size a
 regression.
+
+`+ import node:sqlite` sits under the floor; that is noise, and so is any gap under ~3 ms.
