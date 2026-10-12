@@ -177,6 +177,7 @@ export function logRetentionDays() {
   return Math.min(Number(s), MAX_RETENTION_DAYS);
 }
 
+const DEFAULT_FRESHNESS_DAYS = 90;
 /**
  * FRESH-2's window for a vault-relative note path: `freshnessDays` is a number, or folder prefixes
  * mapped to days plus an optional `default`; the longest prefix wins. Why 90:
@@ -196,7 +197,7 @@ export function freshnessWindow(rel) {
     .filter((k) => days(table[k]) !== null)
     .sort((a, b) => b.length - a.length)[0];
   if (hit) return { days: /** @type {number} */ (days(table[hit])), folder: hit };
-  return { days: days(table.default) ?? 90, folder: 'default' };
+  return { days: days(table.default) ?? DEFAULT_FRESHNESS_DAYS, folder: 'default' };
 }
 
 /**
