@@ -22,7 +22,6 @@ import {
   isUnprovenancedMetric,
   isUnstampedVolatileClaim,
   buildSuffixIndex,
-  stripCodeBlocks,
   checkFile,
   pathFates,
   linkResolver,
@@ -243,15 +242,6 @@ test('isUnprovenancedMetric requires an instrument', () => {
     ),
     'provenance may sit on a neighbouring line',
   );
-});
-
-test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
-  const body = 'text\n\n```bash\nif [[ $var =~ ^[0-9]+$ ]]; then :; fi\n```\n\n[[real-note]]\n';
-  const out = stripCodeBlocks(body);
-  assert.equal(out.includes('$var'), false);
-  assert.equal(out.includes('[[real-note]]'), true);
-  assert.equal(stripCodeBlocks('a `[[ -f x ]]` b').includes('[['), false);
-  assert.equal(stripCodeBlocks('plain [[link]] here'), 'plain [[link]] here');
 });
 
 test('linkResolver: another project resolves as elsewhere, a name found nowhere stays dangling (#172)', () => {

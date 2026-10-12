@@ -9,6 +9,7 @@ import {
   findOrphans,
   findDrift,
   noteTargets,
+  stripCodeBlocks,
   mocSize,
   findOversize,
   reportFor,
@@ -28,6 +29,29 @@ test('linkTargets parses aliases and headings', () => {
   );
   assert.deepStrictEqual([...linkTargets('[[nx]] is not [[n]]')], ['nx', 'n']);
   assert.deepStrictEqual([...linkTargets('no links here')], []);
+});
+
+test('linkTargets and noteTargets agree: trimmed, non-empty, never inside code (#99)', () => {
+  /** @type {[string, string[]][]} */
+  const rows = [
+    ['see [[ foo ]]', ['foo']],
+    ['see [[]]', []],
+    ['```bash\n[[ -f x ]] && echo\n```\n', []],
+    ['run `[[ -n $v ]]` first', []],
+  ];
+  for (const [text, want] of rows) {
+    assert.deepStrictEqual([...linkTargets(text)], want, text);
+    assert.deepStrictEqual(noteTargets(text), want, text);
+  }
+});
+
+test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
+  const body = 'text\n\n```bash\nif [[ $var =~ ^[0-9]+$ ]]; then :; fi\n```\n\n[[real-note]]\n';
+  const out = stripCodeBlocks(body);
+  assert.equal(out.includes('$var'), false);
+  assert.equal(out.includes('[[real-note]]'), true);
+  assert.equal(stripCodeBlocks('a `[[ -f x ]]` b').includes('[['), false);
+  assert.equal(stripCodeBlocks('plain [[link]] here'), 'plain [[link]] here');
 });
 
 const M = '/v/Memory/p';
