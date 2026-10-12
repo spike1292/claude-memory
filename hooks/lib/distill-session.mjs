@@ -25,6 +25,7 @@ import * as paths from './paths.mjs';
 // and is therefore reached only through an await import() inside a function.
 import { isManual } from '../../scripts/lib/memory-mark.mjs';
 import {
+  COST_EVENT,
   countLines,
   detach,
   logHook,
@@ -502,7 +503,7 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
     if (envelope?.usage)
       logHook({
         hook: 'distill-session',
-        event: 'extract',
+        event: COST_EVENT.extract,
         cwd,
         session,
         // The money was spent either way, so the line is written either way — but an envelope that
@@ -574,12 +575,14 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
 
 /**
  * One headless call that labels every merge pair of the run. Null when there is no answer at all;
- * the caller then merges every pair exactly as before.
+ * the caller then merges every pair exactly as before. Its cost is its own line, as the extractor's.
  *
  * @param {{ old: string, new: string }[]} pairs
- * @returns {{ answers: Record<string, any>, usd?: number } | null}
+ * @param {string} cwd
+ * @param {string} slug
+ * @returns {{ answers: Record<string, any> } | null}
  */
-function runJudge(pairs) {
+function runJudge(pairs, cwd, slug) {
   if (process.env.DISTILL_DRYRUN) return null;
   const claude = findClaude();
   if (!claude) return null;
@@ -601,10 +604,17 @@ function runJudge(pairs) {
     failed = true;
   }
   const envelope = parseEnvelope(out);
-  const usd = envelope?.usage?.usd;
+  if (envelope?.usage)
+    logHook({
+      hook: 'distill-session',
+      event: COST_EVENT.judge,
+      cwd,
+      session: process.env.MEMORY_HOOK_SESSION,
+      outcome: failed || envelope.isError ? 'error' : 'ran',
+      extra: { ...envelope.usage, slug },
+    });
   const answers = failed || envelope?.isError ? {} : extractJson(envelope ? envelope.text : out);
-  if (!Object.keys(answers).length && usd == null) return null;
-  return { answers, ...(usd != null && { usd }) };
+  return Object.keys(answers).length ? { answers } : null;
 }
 
 // ---------------------------------------------------------------- reconcile client
@@ -728,9 +738,11 @@ export function dupeClient(slug) {
 /**
  * @param {Insights} insights
  * @param {string} slug
- * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], notes: WrittenNote[], judge: Record<string, number>, judgeUsd?: number }>}
+ * @param {string} cwd
+ * @param {string} logSlug the key the cost lines are filed under, as the extractor's
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], notes: WrittenNote[], judge: Record<string, number> }>}
  */
-async function writeNotes(insights, slug) {
+async function writeNotes(insights, slug, cwd, logSlug) {
   const today = todayStr();
   const base = path.join(VAULT, 'Insights', slug);
   let declined = 0;
@@ -885,6 +897,8 @@ async function writeNotes(insights, slug) {
           old: fs.readFileSync(p.file, 'utf8').replace(FRONTMATTER, '').trim(),
           new: p.body,
         })),
+        cwd,
+        logSlug,
       )
     : null;
   /** @type {Record<string, number>} */
@@ -913,22 +927,21 @@ async function writeNotes(insights, slug) {
   }
   const written = notes.filter((n) => n.action === 'written').length;
   const merged = notes.filter((n) => n.action === 'merged').length;
-  return { written, merged, declined, arms, scores, notes, judge, judgeUsd: verdict?.usd };
+  return { written, merged, declined, arms, scores, notes, judge };
 }
 
 /**
  * The worker line's reconcile fields. Zero counts and an empty score list are omitted, never 0.
  *
- * @param {{ arms: Arms, scores: number[], judge?: Record<string, number>, judgeUsd?: number }} r
- * @returns {{ arms?: Partial<Arms>, scores?: number[], judge?: Record<string, number>, judgeUsd?: number }}
+ * @param {{ arms: Arms, scores: number[], judge?: Record<string, number> }} r
+ * @returns {{ arms?: Partial<Arms>, scores?: number[], judge?: Record<string, number> }}
  */
-export function reconcileFields({ arms, scores, judge, judgeUsd }) {
+export function reconcileFields({ arms, scores, judge }) {
   const nonZero = Object.fromEntries(Object.entries(arms).filter(([, n]) => n > 0));
   return {
     ...(Object.keys(nonZero).length ? { arms: nonZero } : {}),
     ...(scores.length ? { scores } : {}),
     ...(judge && Object.keys(judge).length ? { judge } : {}),
-    ...(judgeUsd != null ? { judgeUsd } : {}),
   };
 }
 
@@ -1109,7 +1122,7 @@ function refreshOwnIndex(cwd, slug) {
  * @param {string} transcript
  * @param {string} cwd
  * @param {string} [key] resolved by the gate while `cwd` still existed; absent from an older gate
- * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], judge: Record<string, number>, judgeUsd?: number, slug: string } | null>}
+ * @returns {Promise<{ written: number, merged: number, declined: number, arms: Arms, scores: number[], judge: Record<string, number>, slug: string } | null>}
  */
 export async function distill(transcript, cwd, key) {
   // Both checked before anything is read or written: a write whose scope can't be resolved must
@@ -1133,9 +1146,11 @@ export async function distill(transcript, cwd, key) {
   const convo = transcriptToText(transcript);
   if (convo.length < 200) return null;
   const insights = runExtractor(convo, cwd, resolved);
-  const { written, merged, declined, arms, scores, notes, judge, judgeUsd } = await writeNotes(
+  const { written, merged, declined, arms, scores, notes, judge } = await writeNotes(
     insights,
     slug,
+    cwd,
+    resolved,
   );
   autoCommit(notes, merged, slug);
   // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
@@ -1143,7 +1158,7 @@ export async function distill(transcript, cwd, key) {
   // ponytail: re-reads dirs every session end; append-only so deletions still need
   // /memory:prune's purge — the distiller only keeps additions fresh.
   reindex(cwd, slug);
-  return { written, merged, declined, arms, scores, judge, judgeUsd, slug };
+  return { written, merged, declined, arms, scores, judge, slug };
 }
 
 // ---------------------------------------------------------------- gate (SessionEnd + Stop)

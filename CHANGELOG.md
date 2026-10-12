@@ -9,6 +9,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/memory:doctor --hooks` now counts the reversal judge's cost (#168).** The judge call writes
+  its own `event: 'judge'` cost line with token counts, and the report shows it as its own table.
+  `judgeUsd` is gone from the worker line.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added

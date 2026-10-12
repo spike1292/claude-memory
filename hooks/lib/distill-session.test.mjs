@@ -29,6 +29,7 @@ import {
   recordRun,
   markSuperseded,
 } from './distill-session.mjs';
+import { COST_EVENT } from './hook-io.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
 // different remote than the test expects and fail on a machine setting rather than on the code.
@@ -1669,10 +1670,11 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
     fs.writeFileSync(old, oldText.replace('---\n\n', `${fm}---\n\n`));
     const { lines, notes, calls } = runWorker(root);
     const worker = lines.find((l) => l.event === 'worker');
-    return { old: fs.readFileSync(old, 'utf8'), notes, calls, worker, dir };
+    const judges = lines.filter((l) => l.event === COST_EVENT.judge);
+    return { old: fs.readFileSync(old, 'utf8'), notes, calls, worker, judges, dir, root };
   };
   const envelope = (/** @type {string} */ answer) =>
-    `printf '%s' '${JSON.stringify({ type: 'result', result: answer, total_cost_usd: 0.01 })}'`;
+    `printf '%s' '${JSON.stringify({ type: 'result', result: answer, total_cost_usd: 0.01, usage: { input_tokens: 5, output_tokens: 2 } })}'`;
 
   const proved = run(
     envelope(
@@ -1694,7 +1696,31 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
     new RegExp(`\\[\\[${oldName}\\]\\]`),
   );
   assert.deepStrictEqual(proved.worker.judge, { reverses: 1 });
-  assert.strictEqual(proved.worker.judgeUsd, 0.01);
+  assert.strictEqual(proved.worker.judgeUsd, undefined, 'the cost is on its own line');
+  assert.strictEqual(proved.judges.length, 1);
+  const { t: _t, ms: _ms, ...judgeLine } = proved.judges[0];
+  assert.deepStrictEqual(judgeLine, {
+    inTok: 5,
+    outTok: 2,
+    usd: 0.01,
+    slug,
+    hook: 'distill-session',
+    event: COST_EVENT.judge,
+    outcome: 'ran',
+    session: 'sess-cli',
+  });
+
+  // Writer to reader: the line the worker wrote is the judge row the report prints, and it is not
+  // an invocation.
+  const { report } = await import('../../scripts/lib/hook-stats.mjs');
+  const out = report({
+    logDir: path.join(proved.root, 'state', 'logs'),
+    manifest: path.join(path.dirname(fileURLToPath(import.meta.url)), '../hooks.json'),
+    slug,
+  });
+  assert.match(out, /reversal judge cost \(MEASURED[^\n]*1 call\(s\)/);
+  assert.match(out, /per call \(÷1 run\(s\) with a judge call\)\s+5\s+-\s+-\s+2\s+0\.0100/);
+  assert.match(out, /1 invocations/);
 
   // The round trip: both notes as written, through the shipped chunker, index and ranking.
   const { chunkNote, buildBundle, searchIn, DIM } = await import(
@@ -1727,10 +1753,21 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
   assert.strictEqual(failed.notes.length, 1, 'a failed judge merges as today');
   assert.match(failed.old, /\*\*Also seen/);
   assert.strictEqual(failed.worker.judge, undefined, 'nothing measured, nothing logged');
-  assert.strictEqual(failed.worker.judgeUsd, undefined);
+  assert.deepStrictEqual(failed.judges, [], 'no envelope, no cost line');
+
+  const billed = run(
+    `printf '%s' '${JSON.stringify({ type: 'result', is_error: true, result: 'Error', total_cost_usd: 0.006 })}'; exit 1`,
+  );
+  assert.match(billed.old, /\*\*Also seen/, 'a billed failure merges as today');
+  assert.deepStrictEqual(
+    billed.judges.map((l) => [l.usd, l.outcome]),
+    [[0.006, 'error']],
+    'the money is recorded, marked error',
+  );
 
   const manual = run(envelope('{}'), 'reconcile: manual\n');
   assert.strictEqual(manual.calls, 1, 'no pair to merge, so no judge call');
+  assert.deepStrictEqual(manual.judges, []);
   assert.strictEqual(manual.notes.length, 2, 'the new note is still written');
   assert.strictEqual(manual.old, oldText.replace('---\n\n', 'reconcile: manual\n---\n\n'));
 });
