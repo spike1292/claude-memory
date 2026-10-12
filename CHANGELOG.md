@@ -29,6 +29,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The Project status workflow adds the issue by node id.** `gh project item-add --owner` failed
+  with `unknown owner type` on its first run; the GraphQL mutation needs no owner lookup.
 - **`/memory:health` no longer reports links to another project's notes as dangling (#172).**
   Obsidian resolves a wikilink vault-wide, so these links work. They now get their own section,
   "Links to other projects", which names the link only, never the other project. A name found
