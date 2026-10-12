@@ -38,13 +38,15 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
 
    - **every note a step-0 scan names**, in claim-line form — from the first `## ` heading on
      (`sed -n '/^## /,$p' <note>`), not the whole file;
-   - **a bounded sample below the dupe threshold.** Run `--dupes --min <lower> --top 60` and read
-     only the pairs scored below the profile's `dupeMin`, at most **15 pairs**. For `bge-m3`,
+   - **a bounded sample below the dupe threshold.** `--dupes` sorts pairs highest first, so take
+     `N` from step 0's header (`same-folder pairs ≥ <dupeMin>: N`), run
+     `--dupes --min <lower> --top <N + 15>`, and read only the pairs after the first `N` — at most
+     **15 pairs**. None printed after them means the band is empty; write that in the **Scope**
+     line rather than reading it as clean. For `bge-m3`,
      `<lower>` is **0.70**: the 2026-08-17 sweep (`/memory:prune` step 2b) put the first coincidental
      pair at 0.714 with real duplicates from 0.75 up, so 0.70–0.75 is the measured boundary band.
-     Two real duplicates sat below 0.70, and no threshold reaches them. The cap is 30 notes, the
-     size of the 2026-08-22 audit's read (#95), which found more than the read-everything audit of
-     2026-08-17. The band is per-model: on any other profile no band is measured, so skip the
+     Two real duplicates sat below 0.70, and no threshold reaches them. The cap is 30 notes, about
+     what the 2026-08-22 audit read beyond the scans (recorded in issue #95). The band is per-model: on any other profile no band is measured, so skip the
      sample and say so in the **Scope** line.
 
    **A full-corpus read is not the intended path.** The scans already name every candidate the

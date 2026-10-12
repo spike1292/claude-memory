@@ -19,6 +19,13 @@ test('neither command tells the agent to read every note', () => {
     assert.doesNotMatch(read(f), /\bevery note under\b/i, f);
 });
 
+test('the --dupes header health tells the agent to read N from is the one the scan prints', () => {
+  const header = 'same-folder pairs ≥ ';
+  assert.ok(read('health.md').includes(header));
+  const src = fs.readFileSync(path.join(COMMANDS, '..', 'scripts', 'memory-semantic.mjs'), 'utf8');
+  assert.ok(src.includes(header));
+});
+
 test('prune points at the one statement of the read scope in health', () => {
   assert.match(read('health.md'), /full-corpus read is not the intended path/i);
   assert.match(read('prune.md'), /health\.md.*full-corpus read/is);
