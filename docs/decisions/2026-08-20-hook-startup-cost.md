@@ -168,3 +168,6 @@ in the bench above (an ordinary clone) and is recorded as a `ponytail:` marker n
 
 Re-run `node scripts/bench-hooks.mjs -n 20 --notes 50` and paste the table. State the vault
 (cloud-backed or local), the note count and n, or the numbers are not comparable with these.
+
+The current numbers live in [../hook-startup-baseline.md](../hook-startup-baseline.md), which is
+replaced on each re-run; the tables above stay as they were measured.
