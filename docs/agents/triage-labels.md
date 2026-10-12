@@ -12,4 +12,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
+The label is the only state. Adding one moves the issue's card on the [Kanban board](https://github.com/users/spike1292/projects/1) (`.github/workflows/project-status.yml`); never set the card's Status by hand.
+
 Edit the right-hand column to match whatever vocabulary you actually use.

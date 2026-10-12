@@ -1,0 +1,32 @@
+name: Project status
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  sync:
+    if: contains(fromJSON('["needs-triage","needs-info","ready-for-agent","ready-for-human"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move the issue's card to the label's column
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          LABEL: ${{ github.event.label.name }}
+          URL: ${{ github.event.issue.html_url }}
+        # ponytail: IDs hardcoded; they survive renames, re-read them if the board is rebuilt.
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PROJECT_TOKEN is not set; the board was not updated."
+            exit 0
+          fi
+          case "$LABEL" in
+            needs-triage | needs-info) option=f75ad846 ;;
+            ready-for-agent) option=30669849 ;;
+            ready-for-human) option=d24d0054 ;;
+          esac
+          item=$(gh project item-add 1 --owner spike1292 --url "$URL" --format json --jq .id)
+          gh project item-edit --project-id PVT_kwHOAARnVc4BmowK --id "$item" \
+            --field-id PVTSSF_lAHOAARnVc4BmowKzhlQ8U4 --single-select-option-id "$option"

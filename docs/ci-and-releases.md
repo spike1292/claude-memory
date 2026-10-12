@@ -107,6 +107,14 @@ than a YAML dependency — one key, and a dependency for it ships into every use
 plugin cache. It is not parameterised by key either; a single-caller `key` argument was deleted
 2026-08-19.
 
+## Project board
+
+**`project-status.yml`** moves an issue's card on the Kanban board when a triage label is added:
+`needs-triage`/`needs-info` → Triage, `ready-for-agent` → Ready for agent, `ready-for-human` →
+Ready for human. The board's built-in workflows own the rest (new → Triage, closed or merged →
+Done). It authenticates with **`PROJECT_TOKEN`**, a classic token with the `project` scope:
+`GITHUB_TOKEN` cannot reach a user-owned project. Without the secret it warns and exits 0.
+
 ## Releasing
 
 Changelog entries land with the change, under `## [Unreleased]` in `CHANGELOG.md` — Keep a
