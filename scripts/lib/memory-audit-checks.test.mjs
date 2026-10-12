@@ -264,12 +264,14 @@ test('linkResolver: another project resolves as elsewhere, a name found nowhere 
   put('Memory/other/their-fact.md');
   put('Insights/other/Patterns/their-lesson.md');
   put('permanent/sub/shared.md');
+  put('Memory/other/MEMORY.md');
   const r = linkResolver(vault, 'here', new Set(['local-note']));
   assert.equal(r('local-note'), 'here');
   assert.equal(r('shared'), 'here');
   assert.equal(r('their-fact'), 'elsewhere');
   assert.equal(r('their-lesson'), 'elsewhere');
   assert.equal(r('no-such-note'), null);
+  assert.equal(r('MEMORY'), null);
 });
 
 test('pathFates names the commit that renamed or deleted a dead path (#151)', () => {

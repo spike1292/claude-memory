@@ -146,6 +146,7 @@ section(
   'Dangling wikilinks',
   allLinks.filter((n) => !resolves(n)).map((n) => `[[${n}]] — no such note anywhere in the vault`),
 );
+// By link name only: another project's slug is a private repo's remote, and this output is pasted into issues.
 section(
   'Links to other projects (resolve in Obsidian — not dangling)',
   allLinks.filter((n) => resolve(n) === 'elsewhere').map((n) => `[[${n}]]`),

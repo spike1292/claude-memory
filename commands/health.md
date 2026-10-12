@@ -24,7 +24,7 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
    two files sharing a filename, which the index silently MERGES into one entry (2026-08-15:
    `structural-code-tools` existed in `Memory/` and `permanent/tools/`).
 
-   It prints the snapshot size and every candidate for: notes missing from the MOC, dangling wikilinks (resolved against `permanent/` too), MOC-only notes, missing/mismatched frontmatter, repo paths that are absent **or abbreviated to a suffix**, standing-negative claims a later event may have reversed, and same-folder near-duplicates ≥0.45. Everything it prints is a candidate, not a verdict — steps 2-6 are where you judge.
+   It prints the snapshot size and every candidate for: notes missing from the MOC, dangling wikilinks (resolved against the whole vault), links into another project's notes (listed apart, by link name only — not defects), MOC-only notes, missing/mismatched frontmatter, repo paths that are absent **or abbreviated to a suffix**, standing-negative claims a later event may have reversed, and same-folder near-duplicates ≥0.45. Everything it prints is a candidate, not a verdict — steps 2-6 are where you judge.
 
    Three audits hand-wrote these checks and two got the same two wrong: `confidence:` is nested under `metadata:` (a `^confidence:` grep reports every note as missing it), and a path regex swallows the `…/` in abbreviated prose paths (15 of 24 "missing" paths in the 2026-08-14 audit). Both are encoded in `scripts/lib/memory-audit-checks.mjs` and covered by
    `scripts/lib/memory-audit-checks.test.mjs`. If you extend the checks, add an assertion.
