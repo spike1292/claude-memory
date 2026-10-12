@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SUPERSEDED_BY, SUPERSEDED_MARKER } from './lexical.mjs';
+import { mdFiles } from '../../hooks/lib/memory-link-lint.mjs';
 
 // ---------------------------------------------------------------- predicates (self-tested below)
 
@@ -330,4 +331,25 @@ const INLINE_CODE = /`[^`\n]*`/g;
 /** @param {string} text @returns {string} */
 export function stripCodeBlocks(text) {
   return text.replace(FENCE, '').replace(INLINE_CODE, '');
+}
+
+/** @param {string} d @returns {string[]} */
+const noteNames = (d) => mdFiles(d).map((f) => path.basename(f, '.md'));
+
+// Obsidian resolves a wikilink vault-wide, so a link into another project's notes is not dangling.
+/**
+ * @param {string} vault @param {string} slug @param {Set<string>} local this project's note names
+ * @returns {(name: string) => 'here' | 'elsewhere' | null}
+ */
+export function linkResolver(vault, slug, local) {
+  const permanent = new Set(noteNames(path.join(vault, 'permanent')));
+  const elsewhere = new Set();
+  for (const layer of ['Memory', 'Insights']) {
+    const root = path.join(vault, layer);
+    if (!fs.existsSync(root)) continue;
+    for (const e of fs.readdirSync(root, { withFileTypes: true }))
+      if (e.isDirectory() && e.name !== slug)
+        for (const n of noteNames(path.join(root, e.name))) if (n !== 'MEMORY') elsewhere.add(n);
+  }
+  return (n) => (local.has(n) || permanent.has(n) ? 'here' : elsewhere.has(n) ? 'elsewhere' : null);
 }

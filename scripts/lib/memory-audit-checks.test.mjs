@@ -25,6 +25,7 @@ import {
   stripCodeBlocks,
   checkFile,
   pathFates,
+  linkResolver,
 } from './memory-audit-checks.mjs';
 
 test('isStandingNegative separates claims from instructions', () => {
@@ -251,6 +252,26 @@ test('stripCodeBlocks keeps a bash [[ ]] test out of the wikilink scan', () => {
   assert.equal(out.includes('[[real-note]]'), true);
   assert.equal(stripCodeBlocks('a `[[ -f x ]]` b').includes('[['), false);
   assert.equal(stripCodeBlocks('plain [[link]] here'), 'plain [[link]] here');
+});
+
+test('linkResolver: another project resolves as elsewhere, a name found nowhere stays dangling (#172)', () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'links-'));
+  const put = (/** @type {string} */ rel) => {
+    fs.mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true });
+    fs.writeFileSync(path.join(vault, rel), 'x\n');
+  };
+  put('Memory/here/local-note.md');
+  put('Memory/other/their-fact.md');
+  put('Insights/other/Patterns/their-lesson.md');
+  put('permanent/sub/shared.md');
+  put('Memory/other/MEMORY.md');
+  const r = linkResolver(vault, 'here', new Set(['local-note']));
+  assert.equal(r('local-note'), 'here');
+  assert.equal(r('shared'), 'here');
+  assert.equal(r('their-fact'), 'elsewhere');
+  assert.equal(r('their-lesson'), 'elsewhere');
+  assert.equal(r('no-such-note'), null);
+  assert.equal(r('MEMORY'), null);
 });
 
 test('pathFates names the commit that renamed or deleted a dead path (#151)', () => {

@@ -21,6 +21,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`/memory:health` no longer reports links to another project's notes as dangling (#172).**
+  Obsidian resolves a wikilink vault-wide, so these links work. They now get their own section,
+  "Links to other projects", which names the link only, never the other project. A name found
+  nowhere in the vault stays dangling. A `superseded_by:` that points into another project now
+  counts as resolved too.
 - **The distill-session socket tests pass under a long `TMPDIR` (#171).** Their fake search server
   now binds under `/tmp`, so its socket path stays under macOS's 104-byte limit inside
   context-mode's sandbox. Test-only.
