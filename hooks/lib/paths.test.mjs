@@ -258,6 +258,47 @@ test('logRetentionDays: env wins, then config, then a sane default', () => {
   }
 });
 
+/** @param {string} home @param {unknown} cfg @param {string} rel @param {Record<string, string>} [env] */
+const windowIn = (home, cfg, rel, env = { MEMORY_FRESHNESS_DAYS: '' }) => {
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(cfg));
+  return run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import(${JSON.stringify(MODULE)}).then((m) => console.log(JSON.stringify(m.freshnessWindow(${JSON.stringify(rel)}))))`,
+    ],
+    { env: { ...process.env, CLAUDE_MEMORY_HOME: home, ...env }, encoding: 'utf8' },
+  ).trim();
+};
+
+test('freshnessWindow: longest folder prefix wins, then default, then 90', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'freshness-'));
+  const rel = 'Memory/proj/note.md';
+  const w = (/** @type {number} */ days, /** @type {string} */ folder) =>
+    JSON.stringify({ days, folder });
+
+  assert.equal(windowIn(home, {}, rel), w(90, 'default'));
+  assert.equal(windowIn(home, { freshnessDays: 30 }, rel), w(30, 'default'));
+  assert.equal(windowIn(home, { freshnessDays: { default: 45 } }, rel), w(45, 'default'));
+  const per = { freshnessDays: { default: 45, Memory: 60, 'Memory/proj': 120, Mem: 1 } };
+  assert.equal(windowIn(home, per, rel), w(120, 'Memory/proj'));
+  assert.equal(windowIn(home, per, 'Memory/other/n.md'), w(60, 'Memory'));
+  assert.equal(windowIn(home, per, 'Memoryless/n.md'), w(45, 'default'), 'prefix is a folder');
+  assert.equal(windowIn(home, per, 'Insights/proj/n.md'), w(45, 'default'));
+  assert.equal(
+    windowIn(home, { freshnessDays: 30 }, rel, { MEMORY_FRESHNESS_DAYS: '7' }),
+    w(7, 'default'),
+  );
+
+  for (const bad of ['thirty', ' ', '-1', null, { Memory: 'x' }])
+    assert.equal(
+      windowIn(home, { freshnessDays: bad }, rel),
+      w(90, 'default'),
+      JSON.stringify(bad),
+    );
+});
+
 // Subprocess for the same reason retentionIn() is: config() memoises per process.
 /** @param {Record<string, string>} env @returns {{ok: true, v: string} | {ok: false, msg: string}} */
 const requireVaultIn = (env) =>

@@ -27,6 +27,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [A soft cost budget for `MEMORY.md`](decisions/2026-10-10-moc-cost-budget.md) | Tokens per session start beside the load cap; the budget picked from five MOCs, warn only, never trims. |
 | [`SUPERSEDED_DEMOTE` = 0.9](decisions/2026-10-10-superseded-demote.md) | The sweep: every value from 0.98 down passes; why 0.9 without a cost signal, and when to re-sweep. |
 | [A haiku judge decides when a merge is a reversal](decisions/2026-10-10-reversal-judge.md) | Haiku vs local NLI on real merge pairs: hits, false alarms, cost per call, and why NLI was rejected. |
+| [FRESH-2 window: 90 days](decisions/2026-10-12-freshness-window.md) | Stamps flagged at 7/30/60/90/180 days on the real vault, and why only `as of` stamps count. |
 
 ## Guides
 

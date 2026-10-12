@@ -9,12 +9,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
-### Security
+### Added
 
-- **The distiller treats the transcript as data, not instructions (#67).** Both of its prompts now
-  fence their input — the transcript, and the note pairs the reversal judge compares — and tell
-  the model that an instruction inside is a claim to record, not a command. Text in the input
-  cannot close its fence early. `/memory:protocol` carries the same rule for hand-written notes.
+- **`/memory:health` warns on an `(as of YYYY-MM-DD)` stamp older than its freshness window
+  (FRESH-2, #68).** Default 90 days, overridable per vault folder with `freshnessDays` in
+  `config.json`; the warning names the window that applied. Audit-only: saving a note never warns,
+  and nothing is deleted.
 
 ### Fixed
 
@@ -25,6 +25,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **`/memory:doctor --hooks` now counts the reversal judge's cost (#168).** The judge call writes
   its own `event: 'judge'` cost line with token counts, and the report shows it as its own table.
   `judgeUsd` is gone from the worker line.
+
+### Security
+
+- **The distiller treats the transcript as data, not instructions (#67).** Both of its prompts now
+  fence their input — the transcript, and the note pairs the reversal judge compares — and tell
+  the model that an instruction inside is a claim to record, not a command. Text in the input
+  cannot close its fence early. `/memory:protocol` carries the same rule for hand-written notes.
 
 ## [0.9.0] - 2026-10-11
 
