@@ -10,8 +10,9 @@ VAULT=$(resolve_vault)
 
 # Breadcrumb so /memory:* commands can find the plugin. ${CLAUDE_PLUGIN_ROOT} is only
 # guaranteed inside hooks.json command strings; a command body running in the Bash tool
-# may not have it. This file is the fallback, rewritten every session so a /plugin update
-# to a new version dir cannot leave it stale.
+# may not have it, and inside ctx_execute it is context-mode's root. This file is the
+# fallback, rewritten every session so a /plugin update to a new version dir cannot leave it
+# stale.
 MEM_HOME=$(memory_home); mkdir -p "$MEM_HOME"
 printf '%s' "$(cd "$HERE/.." && pwd)" > "$MEM_HOME/plugin-root"
 

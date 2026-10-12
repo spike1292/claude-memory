@@ -5,7 +5,7 @@ description: Apply a reviewed /memory:synthesize draft from Staging/ into perman
 > **Paths.** Every shell snippet below assumes these two, set first:
 > ```bash
 > STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
-> MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+> MEM="${CLAUDE_PLUGIN_ROOT:-}"; [ -f "$MEM/scripts/memory-semantic.mjs" ] || MEM="$(cat "$STATE/plugin-root")"
 > ```
 > `$MEM` is the plugin root, `$STATE` is machine-local state (indexes, models, logs, eval cases).
 

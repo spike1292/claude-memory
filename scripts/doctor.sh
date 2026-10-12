@@ -289,7 +289,7 @@ if [ ! -f "$(config_file)" ]; then
        "running on defaults and env vars. Run /memory:install to write one."
 fi
 [ -f "$STATE/plugin-root" ] && ok "plugin-root breadcrumb written" \
-  || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset. Start a new session."
+  || warn "no $STATE/plugin-root" "written by the SessionStart hook; /memory:* commands fall back to it when CLAUDE_PLUGIN_ROOT is unset or not this plugin. Start a new session."
 
 # Claude Code's own auto memory loads MEMORY.md — the file this plugin's L1 index IS, via the
 # symlink — and keeps only what fits AUTO_MEMORY_CAP (no digits here: the cap lives in

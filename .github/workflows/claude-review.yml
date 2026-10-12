@@ -94,7 +94,8 @@ jobs:
                722 MB of model weights included.
             3. An absolute install path anywhere. bash resolves via `BASH_SOURCE` and node via
                `import.meta.url`. `${CLAUDE_PLUGIN_ROOT}` is only reliable inside hooks.json
-               command strings.
+               command strings; a command body that uses it without checking for
+               `scripts/memory-semantic.mjs` picks up another plugin's root (#170).
             4. A hook that can block, hang, or fail a session. Hooks degrade to a no-op when
                a dependency is missing; `validate-note.sh` warns and never blocks; heavy
                hooks detach, debounce, and guard against recursing into themselves via a

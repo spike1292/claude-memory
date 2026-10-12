@@ -7,7 +7,7 @@ exits 0, so treat the printed FAIL/WARN lines as the result, not the exit code.
 
 ```bash
 STATE="${CLAUDE_MEMORY_HOME:-$HOME/.claude-memory}"
-MEM="${CLAUDE_PLUGIN_ROOT:-$(cat "$STATE/plugin-root")}"
+MEM="${CLAUDE_PLUGIN_ROOT:-}"; [ -f "$MEM/scripts/memory-semantic.mjs" ] || MEM="$(cat "$STATE/plugin-root")"
 "$MEM/scripts/doctor.sh"
 ```
 
