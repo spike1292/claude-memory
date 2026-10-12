@@ -81,6 +81,7 @@ Settings live in **`~/.claude-memory/config.json`**:
 | `recall` | `false` | arm per-prompt recall |
 | `model` | `bge-m3` | also `bge-small-en`, `e5-multi`. Changing it means a full re-index. |
 | `logRetentionDays` | `30` | days of `logs/{recall,hooks}-<date>.jsonl` kept; older ones are deleted on the first log line of a new day. Clamped to 36500 (a century) — set it high to keep everything |
+| `freshnessDays` | `90` | `/memory:health` warns on an `(as of YYYY-MM-DD)` stamp older than this. A number, or `{ "default": 90, "Memory/<project>": 30 }` — vault-relative folder prefixes, longest wins. Env: `MEMORY_FRESHNESS_DAYS`. [Why 90](docs/decisions/2026-10-12-freshness-window.md) |
 | `gitAutoCommit` | `false` | when the vault is a git repo, commit the notes the distiller writes or merges at session end, in one commit, by path — never `git add -A`. See [Troubleshooting](#troubleshooting) for what counts as a no-op |
 
 `/memory:install` writes this file. `/memory:doctor` prints which source each value came from, and
@@ -230,7 +231,8 @@ a self-test with real cases.
   the rest, reporting nothing. The SessionStart lint and `/memory:doctor` report the size against
   that cap from 80% up ([the decision](docs/decisions/2026-08-22-auto-memory.md)); deciding what
   leaves the MOC is still a human act.
-- **Notes have no expiry**, so phase-specific facts linger after the phase ends.
+- **Notes have no expiry**, so phase-specific facts linger after the phase ends. `/memory:health`
+  warns on an `as of` stamp past its window (FRESH-2), but an unstamped claim still never ages.
 - **The real-vault eval sets are small and self-authored** (28 EN, 15 NL), so one case is 3.6
   points and the numbers measure one vault, not memory systems in general. Read MRR and direction,
   not single moves.
