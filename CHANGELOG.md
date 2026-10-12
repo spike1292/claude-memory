@@ -18,6 +18,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The distill-session socket tests pass under a long `TMPDIR` (#171).** Their fake search server
+  now binds under `/tmp`, so its socket path stays under macOS's 104-byte limit inside
+  context-mode's sandbox. Test-only.
 - **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode
   exports its own `CLAUDE_PLUGIN_ROOT` there, so `$MEM` pointed at the wrong plugin and every step
   failed with `MODULE_NOT_FOUND`. The preamble now trusts that variable only when it holds
