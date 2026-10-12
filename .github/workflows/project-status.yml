@@ -29,5 +29,5 @@ jobs:
           esac
           item=$(gh api graphql -f p=PVT_kwHOAARnVc4BmowK -f c="$ISSUE" --jq .data.addProjectV2ItemById.item.id \
             -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}')
-          gh project item-edit --project-id PVT_kwHOAARnVc4BmowK --id "$item" \
-            --field-id PVTSSF_lAHOAARnVc4BmowKzhlQ8U4 --single-select-option-id "$option"
+          gh api graphql -f p=PVT_kwHOAARnVc4BmowK -f i="$item" -f f=PVTSSF_lAHOAARnVc4BmowKzhlQ8U4 -f o="$option" \
+            -f query='mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}'

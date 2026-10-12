@@ -36,6 +36,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **The Project status workflow sets the column by GraphQL too.** `gh project item-edit` demanded
+  the `read:org` and `read:discussion` scopes on `PROJECT_TOKEN`; the mutation does not.
 - **The Project status workflow adds the issue by node id.** `gh project item-add --owner` failed
   with `unknown owner type` on its first run; the GraphQL mutation needs no owner lookup.
 - **The SessionStart link lint and `/memory:health` now read links with one parser (#99).**
