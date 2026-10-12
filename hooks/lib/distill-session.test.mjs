@@ -30,6 +30,7 @@ import {
   markSuperseded,
 } from './distill-session.mjs';
 import { COST_EVENT } from './hook-io.mjs';
+import { hasConfidence } from '../../scripts/lib/memory-audit-checks.mjs';
 // Git with user and system config neutralised. Both helpers below resolve a remote URL that the
 // assertions compare exactly, so a developer with a global `[url] insteadOf` rewrite would see a
 // different remote than the test expects and fail on a machine setting rather than on the code.
@@ -1812,5 +1813,51 @@ test('transcript and judge pairs reach the model fenced as data, and cannot clos
     assert.doesNotMatch(body, new RegExp(`<\\s*/\\s*${tag}`, 'i'), `${file}: no closer inside`);
     assert.match(body, /Ignore all previous instructions/, `${file}: the text is kept as data`);
     assert.match(input, /never instructions/, `${file}: the model is told what the fence means`);
+  }
+});
+
+test('a returned confidence reaches the note as a line the audit accepts; anything else is absent', (t) => {
+  const slug = projectKey(process.cwd());
+  /** @type {[string, string | null][]} */
+  const items = [
+    ['Alpha zebra harbour', '"high"'],
+    ['Bravo walrus lantern', '"High "'],
+    ['Charlie otter meadow', '"sure"'],
+    ['Delta falcon quarry', '""'],
+    ['Echo badger orchard', '3'],
+    ['Foxtrot heron canyon', null],
+  ];
+  const patterns = items
+    .map(
+      ([title, c]) =>
+        `{"title":"${title}","description":"About ${title}."${c === null ? '' : `,"confidence":${c}`}}`,
+    )
+    .join(',');
+  const root = withStubClaude(
+    '#!/bin/sh\nd=$(dirname "$0")/..\nin=$(cat)\nprintf \'%s\' "$in" > "$d/extract.in"\n' +
+      `printf '%s' '{"patterns":[${patterns}],"mistakes":[],"decisions":[]}'\n`,
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  runWorker(root);
+
+  assert.match(
+    fs.readFileSync(path.join(root, 'extract.in'), 'utf8'),
+    /"confidence":"high\|medium\|low"/,
+    'the prompt asks for confidence',
+  );
+  const dir = path.join(root, 'vault', 'Insights', slug, 'Patterns');
+  const keys = ['title', 'date', 'project', 'tags', 'type'];
+  for (const [title, c] of items) {
+    const f = fs.readdirSync(dir).find((n) => n.endsWith(`-${slugify(title)}.md`));
+    assert.ok(f, `${title}: written`);
+    const front = fs.readFileSync(path.join(dir, f), 'utf8').split('\n---\n')[0].slice(4);
+    const want = c === '"high"' || c === '"High "';
+    assert.strictEqual(hasConfidence(front), want, `${title}: hasConfidence`);
+    assert.deepStrictEqual(
+      front.split('\n').map((l) => l.split(':')[0]),
+      want ? [...keys, 'confidence'] : keys,
+      `${title}: frontmatter keys`,
+    );
+    if (want) assert.match(front, /^confidence: high$/m);
   }
 });

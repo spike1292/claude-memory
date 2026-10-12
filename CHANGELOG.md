@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Distilled notes carry `confidence:` when the model gives one (#102).** The extractor asks for
+  `high`, `medium` or `low` per insight, defined by what the session verified. A missing or
+  unrecognised value writes no `confidence:` line; it is never defaulted. Existing notes are not
+  backfilled.
 - **A committed baseline for `bench-hooks.mjs` (#128).** `docs/hook-startup-baseline.md` holds
   every hook row, the floor and the import costs, with date, machine, note count and local-disk
   vault beside them, and the command that regenerates it.
