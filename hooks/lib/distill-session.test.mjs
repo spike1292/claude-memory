@@ -1066,8 +1066,8 @@ test('an envelope with no usage block still yields its text', () => {
 });
 
 /** A stand-in `claude` on PATH, so the extractor path can be driven end to end. */
-const withStubClaude = (/** @type {string} */ script) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillcli-'));
+const withStubClaude = (/** @type {string} */ script, base = os.tmpdir()) => {
+  const root = fs.mkdtempSync(path.join(base, 'distillcli-'));
   fs.mkdirSync(path.join(root, 'bin'));
   // Every stub records that it was called. A second call is a second BILLED call, and the test
   // that should have caught one could not see it: it asserted only on the log line, which is
@@ -1451,6 +1451,9 @@ for (const [what, code] of [
     assert.match(r.stderr, /refreshed the plugin semantic index|semantic index refresh failed/);
   });
 
+// macOS caps a socket path at 104 bytes; a long TMPDIR (context-mode sandbox) overruns it.
+const SOCK_BASE = '/tmp';
+
 /**
  * A stand-in search server on the socket dupeClient() dials. `answer` gets each dupe request.
  *
@@ -1512,6 +1515,7 @@ test('the worker line records which arm decided each note, and the best score of
   const root = withStubClaude(
     '#!/bin/sh\ncat > /dev/null\n' +
       `printf '%s' '{"patterns":[{"title":"Arm pattern one","description":"d"},{"title":"Arm pattern two","description":"d"}],"mistakes":[{"title":"Arm mistake","error":"e","fix":"f"}],"decisions":[{"title":"Arm decision","decision":"d","why":"w"}]}'\n`,
+    SOCK_BASE,
   );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   // Both patterns get the same vector, so the second folds into the first through the in-run arm.
@@ -1540,6 +1544,7 @@ test('a second distil run folds a restatement of a first-run note', async (t) =>
     '#!/bin/sh\ncat > /dev/null\n' +
       'if [ "$(wc -l < "$(dirname "$0")/../calls")" -gt 1 ]; then t="Cross run lesson restated"; else t="Cross run lesson"; fi\n' +
       `printf '{"patterns":[{"title":"%s","description":"d"}],"mistakes":[],"decisions":[]}' "$t"\n`,
+    SOCK_BASE,
   );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const slug = projectKey(process.cwd());

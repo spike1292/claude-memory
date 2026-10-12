@@ -11,6 +11,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **A committed baseline for `bench-hooks.mjs` (#128).** `docs/hook-startup-baseline.md` holds
+  every hook row, the floor and the import costs, with date, machine, note count and local-disk
+  vault beside them, and the command that regenerates it.
 - **`/memory:health` warns on an `(as of YYYY-MM-DD)` stamp older than its freshness window
   (FRESH-2, #68).** Default 90 days, overridable per vault folder with `freshnessDays` in
   `config.json`; the warning names the window that applied. Audit-only: saving a note never warns,
@@ -23,6 +26,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   "Links to other projects", which names the link only, never the other project. A name found
   nowhere in the vault stays dangling. A `superseded_by:` that points into another project now
   counts as resolved too.
+- **The distill-session socket tests pass under a long `TMPDIR` (#171).** Their fake search server
+  now binds under `/tmp`, so its socket path stays under macOS's 104-byte limit inside
+  context-mode's sandbox. Test-only.
 - **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode
   exports its own `CLAUDE_PLUGIN_ROOT` there, so `$MEM` pointed at the wrong plugin and every step
   failed with `MODULE_NOT_FOUND`. The preamble now trusts that variable only when it holds
