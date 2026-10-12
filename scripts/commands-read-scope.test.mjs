@@ -14,9 +14,13 @@ test('health step 0 runs all four scans', () => {
     assert.ok(step0.includes(scan), `step 0 is missing ${scan}`);
 });
 
-test('neither command tells the agent to read every note', () => {
-  for (const f of ['health.md', 'prune.md'])
-    assert.doesNotMatch(read(f), /\bevery note under\b/i, f);
+// A whole-folder read has to name a folder glob, however it is worded.
+test('health step 1 names no folder glob to read', () => {
+  const step1 = read('health.md')
+    .split(/\n1\. \*\*Gather/)[1]
+    .split(/\n2\. \*\*/)[0];
+  assert.ok(step1.includes('REFLECTIONS.md'), 'step 1 not found');
+  assert.doesNotMatch(step1, /\/\*\.md|\{Patterns,Mistakes,Decisions\}/);
 });
 
 test('the --dupes header health tells the agent to read N from is the one the scan prints', () => {

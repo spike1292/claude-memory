@@ -47,8 +47,8 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
      so skip the sample and say so in the **Scope** line.
 
    **A full-corpus read is not the intended path.** The scans already name every candidate the
-   audit acts on, and reading every note re-derives them at an estimated ~150× the tokens, growing
-   with the vault. The measurements behind this, the band and the cap:
+   audit acts on, and reading every note re-derives them at a cost that grows with the vault. The
+   measurements behind this, the band and the cap:
    `docs/decisions/2026-10-12-health-read-scope.md`. Steps 2–6 work from the notes gathered here; a finding may still pull in a
    note that a gathered note links to — a targeted read, not a sweep. `ctx_execute_file` /
    `ctx_search` keep raw bytes out of context if you have them.
