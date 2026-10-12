@@ -17,12 +17,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { vault, projectKey, legacyKey } from './paths.mjs';
 
+// A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
+// link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
+// and inline code with them: a literal `[[wikilink]]` in REFLECTIONS.md false-positives otherwise.
+// ponytail: backtick fences only — 0 of 442 notes use `~~~`; add it when one does.
+export const FENCE = /^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm;
+export const INLINE_CODE = /`[^`\n]*`/g;
+/** @param {string} text @returns {string} */
+export function stripCodeBlocks(text) {
+  return text.replace(FENCE, '').replace(INLINE_CODE, '');
+}
+
 /**
- * Every wikilink target in one note's text.
+ * Every wikilink target in one note's text — the one wikilink-only parser (#99), code-aware.
  *
- * The shell matched the literal strings `[[n]]`, `[[n|` and `[[n#`, so a target ends at the first
- * `]`, `|` or `#` — and `[[foo bar]]` is a link to `foo bar`, not to `foo`. Extracting the target
- * and comparing it whole reproduces that exactly.
+ * A target ends at the first `]`, `|` or `#`, so `[[foo bar]]` links to `foo bar`, not to `foo`.
  *
  * @param {string} text
  * @returns {Set<string>}
@@ -30,7 +39,10 @@ import { vault, projectKey, legacyKey } from './paths.mjs';
 export function linkTargets(text) {
   /** @type {Set<string>} */
   const out = new Set();
-  for (const m of text.matchAll(/\[\[([^\]|#]*)/g)) out.add(m[1]);
+  for (const m of stripCodeBlocks(text).matchAll(/\[\[([^\]|#]*)/g)) {
+    const t = m[1].trim();
+    if (t) out.add(t);
+  }
   return out;
 }
 
@@ -56,8 +68,12 @@ export function noteTargets(text) {
   const out = [];
   // One pass, so the result is in DOCUMENT order — two passes put every wikilink before every
   // markdown link, and findDrift takes [0], so a bullet mixing both forms picked the wrong one.
-  for (const [, wiki, md] of text.matchAll(/\[\[([^\]|#]+)|\]\(([^)]+?)\.md(?:#[^)]*)?\)/g))
-    out.push(wiki !== undefined ? wiki.trim() : md.replace(/^\.\//, '').trim());
+  for (const [, wiki, md] of stripCodeBlocks(text).matchAll(
+    /\[\[([^\]|#]*)|\]\(([^)]+?)\.md(?:#[^)]*)?\)/g,
+  )) {
+    const t = wiki !== undefined ? wiki.trim() : md.replace(/^\.\//, '').trim();
+    if (t) out.push(t);
+  }
   return out;
 }
 

@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Distilled notes carry `confidence:` when the model gives one (#102).** The extractor asks for
+  `high`, `medium` or `low` per insight, defined by what the session verified. A missing or
+  unrecognised value writes no `confidence:` line; it is never defaulted. Existing notes are not
+  backfilled.
 - **A committed baseline for `bench-hooks.mjs` (#128).** `docs/hook-startup-baseline.md` holds
   every hook row, the floor and the import costs, with date, machine, note count and local-disk
   vault beside them, and the command that regenerates it.
@@ -31,6 +35,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **The Project status workflow adds the issue by node id.** `gh project item-add --owner` failed
   with `unknown owner type` on its first run; the GraphQL mutation needs no owner lookup.
+- **The SessionStart link lint and `/memory:health` now read links with one parser (#99).**
+  `linkTargets()` trims targets, drops empty ones and ignores links in fenced or inline code, so
+  `[[ foo ]]` no longer makes `foo` a false orphan and a bash `[[ -f x ]]` test is never a link.
+  `noteTargets()` (the MOC reader) ignores code too. The audit's private `linksIn` is gone.
 - **`/memory:health` no longer reports links to another project's notes as dangling (#172).**
   Obsidian resolves a wikilink vault-wide, so these links work. They now get their own section,
   "Links to other projects", which names the link only, never the other project. A name found
