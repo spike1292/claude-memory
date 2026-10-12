@@ -1755,6 +1755,16 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
   assert.strictEqual(failed.worker.judge, undefined, 'nothing measured, nothing logged');
   assert.deepStrictEqual(failed.judges, [], 'no envelope, no cost line');
 
+  const billed = run(
+    `printf '%s' '${JSON.stringify({ type: 'result', is_error: true, result: 'Error', total_cost_usd: 0.006 })}'; exit 1`,
+  );
+  assert.match(billed.old, /\*\*Also seen/, 'a billed failure merges as today');
+  assert.deepStrictEqual(
+    billed.judges.map((l) => [l.usd, l.outcome]),
+    [[0.006, 'error']],
+    'the money is recorded, marked error',
+  );
+
   const manual = run(envelope('{}'), 'reconcile: manual\n');
   assert.strictEqual(manual.calls, 1, 'no pair to merge, so no judge call');
   assert.deepStrictEqual(manual.judges, []);

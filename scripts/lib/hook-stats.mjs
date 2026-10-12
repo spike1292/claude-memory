@@ -626,7 +626,13 @@ function injectedSection(s, recall) {
  */
 function costSection(s) {
   return [
-    ...costTable(s.extracts, s.days, 'extract'),
+    ...(s.extracts.length
+      ? costTable(s.extracts, s.days, 'extract')
+      : [
+          '',
+          'distiller cost: not measured — no extract line in this window. A distillation that was',
+          'debounced, found no CLI, or failed before the call writes no cost at all, by design.',
+        ]),
     ...(s.judges.length
       ? costTable(s.judges, s.days, 'judge')
       : [
@@ -645,12 +651,6 @@ function costSection(s) {
  */
 function costTable(lines, days, kind) {
   const judge = kind === 'judge';
-  if (!lines.length)
-    return [
-      '',
-      'distiller cost: not measured — no extract line in this window. A distillation that was',
-      'debounced, found no CLI, or failed before the call writes no cost at all, by design.',
-    ];
 
   // PER FIELD, counting only the lines that carry it. parseEnvelope writes the finite figures it
   // found and omits the rest — the API drops `cache_creation_input_tokens` when nothing was cached
@@ -719,6 +719,9 @@ function costTable(lines, days, kind) {
       : []),
     ...(absent
       ? [`${absent} column(s) print "-": no run in this window reported that figure at all.`]
+      : []),
+    ...(errored && judge
+      ? ['The failed calls are included: they cost money, and their merge pairs were not judged.']
       : []),
     ...(errored && !judge
       ? [
