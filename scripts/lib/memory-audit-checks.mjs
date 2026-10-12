@@ -216,9 +216,8 @@ function* undatedLines(body) {
   }
 }
 
-// FRESH-2: an `as of` stamp older than its window. Audit-only — never from checkFile(), which the
-// write-time hook shares, because a stamp is not stale when it is written.
-const AS_OF = /\bas of (\d{4})-(\d{2})-(\d{2})\b/i;
+// FRESH-2: an `as of` stamp older than its window.
+const AS_OF = /\bas of (\d{4})-(\d{2})-(\d{2})\b/gi;
 /**
  * @param {string} body
  * @param {number} windowDays
@@ -231,15 +230,14 @@ export function staleStampFindings(body, windowDays, today) {
   const now = day(.../** @type {[string, string, string]} */ (today.split('-')));
   /** @type {{ line: number, date: string, age: number, text: string }[]} */
   const out = [];
-  let fenced = false;
-  for (const [line, i] of undatedLines(body)) {
-    if (/^\s*```/.test(line)) fenced = !fenced;
-    const m = !fenced && line.replace(/`[^`]*`/g, ' ').match(AS_OF);
-    if (!m) continue;
-    const age = now - day(m[1], m[2], m[3]);
-    if (age > windowDays)
-      out.push({ line: i + 1, date: `${m[1]}-${m[2]}-${m[3]}`, age, text: line.trim() });
-  }
+  const lines = body.split('\n');
+  const masked = body.replace(FENCE, (b) => b.replace(/[^\n]/g, '')).replace(INLINE_CODE, '');
+  for (const [line, i] of undatedLines(masked))
+    for (const m of line.matchAll(AS_OF)) {
+      const age = now - day(m[1], m[2], m[3]);
+      if (age > windowDays)
+        out.push({ line: i + 1, date: `${m[1]}-${m[2]}-${m[3]}`, age, text: lines[i].trim() });
+    }
   return out;
 }
 
@@ -327,9 +325,9 @@ export function checkFile(f) {
 // link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
 // and inline code with them: a literal `[[wikilink]]` in REFLECTIONS.md false-positives otherwise.
 // ponytail: backtick fences only — 0 of 442 notes use `~~~`; add it when one does.
+const FENCE = /^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm;
+const INLINE_CODE = /`[^`\n]*`/g;
 /** @param {string} text @returns {string} */
 export function stripCodeBlocks(text) {
-  return text
-    .replace(/^ {0,3}(`{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[^\n]*$/gm, '')
-    .replace(/`[^`\n]*`/g, '');
+  return text.replace(FENCE, '').replace(INLINE_CODE, '');
 }

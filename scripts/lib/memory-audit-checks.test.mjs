@@ -185,6 +185,23 @@ test('staleStampFindings: FRESH-2 warns one day past the window, never at it', (
     [],
     'dated heading region, bare dates, and code are snapshots or examples, not stamps',
   );
+  assert.deepEqual(
+    stale('a (as of 2026-10-01), b (as of 2026-01-01)').map((f) => f.date),
+    ['2026-01-01'],
+    'every stamp on a line, not the first',
+  );
+  assert.deepEqual(
+    stale(['```sh', '# Measured 2026-01-01', '```', '47 tasks (as of 2026-01-01)'].join('\n')).map(
+      (f) => f.line,
+    ),
+    [4],
+    'a shell comment in a fence is not a dated heading',
+  );
+  assert.deepEqual(
+    stale(['## Run 2026-01-01', '```', '## Now', '(as of 2026-01-01)', '```'].join('\n')),
+    [],
+    'a fence opened in a dated region still hides its body',
+  );
 });
 
 test('checkFile: the write-time path never reports FRESH-2', () => {
