@@ -18,6 +18,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`/memory:health` no longer reports links to another project's notes as dangling (#172).**
+  Obsidian resolves a wikilink vault-wide, so these links work. They now get their own section,
+  "Links to other projects", which names the link only, never the other project. A name found
+  nowhere in the vault stays dangling.
 - **`/memory:*` commands find this plugin when run inside `ctx_execute` (#170).** context-mode
   exports its own `CLAUDE_PLUGIN_ROOT` there, so `$MEM` pointed at the wrong plugin and every step
   failed with `MODULE_NOT_FOUND`. The preamble now trusts that variable only when it holds

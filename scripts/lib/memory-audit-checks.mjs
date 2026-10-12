@@ -331,3 +331,31 @@ const INLINE_CODE = /`[^`\n]*`/g;
 export function stripCodeBlocks(text) {
   return text.replace(FENCE, '').replace(INLINE_CODE, '');
 }
+
+/** @param {string} d @param {Set<string>} into @returns {Set<string>} */
+function noteNames(d, into = new Set()) {
+  if (!fs.existsSync(d)) return into;
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    if (e.isDirectory()) noteNames(path.join(d, e.name), into);
+    else if (e.name.endsWith('.md')) into.add(e.name.slice(0, -3));
+  }
+  return into;
+}
+
+// Obsidian resolves a wikilink vault-wide, so a link into another project's notes is not dangling.
+// It is reported apart from dangling links, by name only: the other project's slug stays out.
+/**
+ * @param {string} vault @param {string} slug @param {Set<string>} local this project's note names
+ * @returns {(name: string) => 'here' | 'elsewhere' | null}
+ */
+export function linkResolver(vault, slug, local) {
+  const permanent = noteNames(path.join(vault, 'permanent'));
+  const elsewhere = new Set();
+  for (const layer of ['Memory', 'Insights']) {
+    const root = path.join(vault, layer);
+    if (!fs.existsSync(root)) continue;
+    for (const e of fs.readdirSync(root, { withFileTypes: true }))
+      if (e.isDirectory() && e.name !== slug) noteNames(path.join(root, e.name), elsewhere);
+  }
+  return (n) => (local.has(n) || permanent.has(n) ? 'here' : elsewhere.has(n) ? 'elsewhere' : null);
+}

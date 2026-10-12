@@ -26,6 +26,7 @@ import {
   checkFile,
   stripCodeBlocks,
   pathFates,
+  linkResolver,
 } from './lib/memory-audit-checks.mjs';
 
 if (process.argv.includes('--check-file')) {
@@ -122,21 +123,11 @@ console.log(
   'NOTE: the distiller writes concurrently — re-run at the end and report both counts if they moved.',
 );
 
-// permanent/ notes resolve as wikilink targets too (they are in the same Obsidian vault)
-const permanent = new Set();
-(function walk(d) {
-  if (!fs.existsSync(d)) return;
-  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-    const f = path.join(d, e.name);
-    if (e.isDirectory()) walk(f);
-    else if (e.name.endsWith('.md')) permanent.add(e.name.slice(0, -3));
-  }
-})(path.join(VAULT, 'permanent'));
-
 /** @param {string} t @returns {string[]} */
 const linksIn = (t) => [...t.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim());
+const resolve = linkResolver(VAULT, SLUG, new Set(notes.keys()));
 /** @param {string} n @returns {boolean} */
-const resolves = (n) => notes.has(n) || permanent.has(n);
+const resolves = (n) => resolve(n) !== null;
 
 // ---------------------------------------------------------------- MOC + graph
 const mocPath = path.join(MEM, 'MEMORY.md');
@@ -150,11 +141,14 @@ section(
   'Not in the MOC',
   memNames.filter((n) => !mocLinks.has(n)).map((n) => `${n} — add a one-line pointer to MEMORY.md`),
 );
+const allLinks = [...new Set([...notes.values()].flatMap((v) => linksIn(stripCodeBlocks(v.body))))];
 section(
   'Dangling wikilinks',
-  [...new Set([...notes.values()].flatMap((v) => linksIn(stripCodeBlocks(v.body))))]
-    .filter((n) => !resolves(n))
-    .map((n) => `[[${n}]] — no such note in Memory, Insights or permanent/`),
+  allLinks.filter((n) => !resolves(n)).map((n) => `[[${n}]] — no such note anywhere in the vault`),
+);
+section(
+  'Links to other projects (resolve in Obsidian — not dangling)',
+  allLinks.filter((n) => resolve(n) === 'elsewhere').map((n) => `[[${n}]]`),
 );
 
 const inbound = new Map([...notes.keys()].map((k) => /** @type {[string, number]} */ ([k, 0])));
