@@ -23,9 +23,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`/memory:health` reads what the scans name, not every note (#95).** Step 0 now also runs
   `--dupes` and `--clusters`. Step 1 reads `REFLECTIONS.md`, `MEMORY.md`, the named notes in
-  claim-line form, and at most 15 below-threshold `--dupes` pairs (bge-m3 only). Reading every
-  note was an estimated ~237k tokens on a 1,056-note slug. `/memory:prune` step 2 points at the
-  same rule.
+  claim-line form, and at most 15 below-threshold `--dupes` pairs (bge-m3 only). `/memory:prune`
+  step 2 points at the same rule. Measurements:
+  `docs/decisions/2026-10-12-health-read-scope.md`.
 
 ### Fixed
 

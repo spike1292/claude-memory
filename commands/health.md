@@ -42,17 +42,14 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
      `N` from step 0's header (`same-folder pairs ≥ <dupeMin>: N`), run
      `--dupes --min <lower> --top <N + 15>`, and read only the pairs after the first `N` — at most
      **15 pairs**. None printed after them means the band is empty; write that in the **Scope**
-     line rather than reading it as clean. For `bge-m3`,
-     `<lower>` is **0.70**: the 2026-08-17 sweep (`/memory:prune` step 2b) put the first coincidental
-     pair at 0.714 with real duplicates from 0.75 up, so 0.70–0.75 is the measured boundary band.
-     Two real duplicates sat below 0.70, and no threshold reaches them. The cap is 30 notes, about
-     what the 2026-08-22 audit read beyond the scans (recorded in issue #95). The band is per-model: on any other profile no band is measured, so skip the
-     sample and say so in the **Scope** line.
+     line rather than reading it as clean. `<lower>` is **0.70** for `bge-m3`, set from the
+     `/memory:prune` step 2b sweep. The band is per-model: on any other profile none is measured,
+     so skip the sample and say so in the **Scope** line.
 
    **A full-corpus read is not the intended path.** The scans already name every candidate the
-   audit acts on, and reading every note re-derives them at a cost that grows with the vault — an
-   estimated ~237k tokens for 1,056 notes on 2026-10-12, against ~1.6k for the four scans' output
-   (bytes ÷ 4, #95). Steps 2–6 work from the notes gathered here; a finding may still pull in a
+   audit acts on, and reading every note re-derives them at an estimated ~150× the tokens, growing
+   with the vault. The measurements behind this, the band and the cap:
+   `docs/decisions/2026-10-12-health-read-scope.md`. Steps 2–6 work from the notes gathered here; a finding may still pull in a
    note that a gathered note links to — a targeted read, not a sweep. `ctx_execute_file` /
    `ctx_search` keep raw bytes out of context if you have them.
 
