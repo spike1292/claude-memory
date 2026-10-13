@@ -43,6 +43,8 @@ import {
   stripFrontmatter,
   consolidationGaps,
   crossFolderPairs,
+  vaultSources,
+  indexInput,
 } from './memory-semantic.mjs';
 import { CARD, bm25, lexTokens } from './lexical.mjs';
 
@@ -1220,4 +1222,29 @@ test('assertVectorWidth reports a missing vector instead of throwing', () => {
 
   assert.match(run('[{ vec: new Uint8Array(8) }]'), /1\/1 vectors are 8 bytes, expected 16/);
   assert.equal(run('[{ vec: new Uint8Array(16) }]').trim(), '');
+});
+
+test('vaultSources is the allow-list, unchanged (#113)', () => {
+  assert.deepStrictEqual(vaultSources('/v', 's'), [
+    { dir: '/v/Memory/s', layer: 'Memory' },
+    { dir: '/v/Insights/s/Patterns', layer: 'Patterns' },
+    { dir: '/v/Insights/s/Mistakes', layer: 'Mistakes' },
+    { dir: '/v/Insights/s/Decisions', layer: 'Decisions' },
+    { dir: '/v/permanent', layer: 'permanent' },
+    { dir: '/v/permanent/domain', layer: 'permanent' },
+    { dir: '/v/permanent/tools', layer: 'permanent' },
+  ]);
+});
+
+test('a Personal/ note never reaches the indexer input (#113)', (t) => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-'));
+  t.after(() => fs.rmSync(vault, { recursive: true, force: true }));
+  for (const rel of ['Memory/s/kept.md', 'Personal/Research/private.md', 'Personal/Wiki/page.md']) {
+    fs.mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true });
+    fs.writeFileSync(path.join(vault, rel), '---\n---\nx\n');
+  }
+  const files = indexInput(vault, 's').map((f) => f.full);
+  assert.ok(files.length > 0, 'the scan found nothing, so the exclusion below proves nothing');
+  assert.ok(files.includes(path.join(vault, 'Memory/s/kept.md')));
+  assert.ok(!files.some((f) => f.includes('/Personal/')), files.join('\n'));
 });

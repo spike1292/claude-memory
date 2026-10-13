@@ -52,6 +52,15 @@ test('Insights notes are exempt from name: and confidence:', () => {
   assert.deepStrictEqual(w2, []);
 });
 
+test('a Personal/Research note that follows the protocol warns about nothing (#113)', () => {
+  const file = `${V}/Personal/Research/rust-async-runtimes.md`;
+  assert.ok(isCheckable(file, V));
+  const note =
+    '---\ntitle: Rust async runtimes\nsource: https://example.com\n---\n\n' +
+    'tokio vs smol, see [[rust-ownership]].\n\n_Also asked as: which async executor? tokio or smol?_\n';
+  assert.deepStrictEqual(warnings(file, note, V), []);
+});
+
 test('missing fence and tabs in frontmatter warn', () => {
   assert.ok(
     warnings(`${V}/Memory/p/a.md`, 'no fence at all\n\n_Also asked as: q._\n', V).some((w) =>

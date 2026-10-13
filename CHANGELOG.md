@@ -11,6 +11,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **A `Personal/` layer for personal research and wiki pages (#113).** `/memory:protocol` lists
+  `Personal/{Research,Wiki}/` and gives its note rules. The layer stays out of the index, recall
+  and the connector; a test now proves the indexer never reads it. The allow-list is unchanged.
 - **`MEMORY_MACHINE_RUN` marks a scheduled run in the hook log (#112).** Set to any non-empty
   value, it stamps `machine: true` on each `hooks-<date>.jsonl` line. `/memory:doctor --hooks`
   counts those lines on their own line and leaves them out of the per-session figures and the

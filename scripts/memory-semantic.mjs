@@ -48,6 +48,8 @@ import {
   buildBundle,
   searchIn,
   QUIT,
+  vaultSources,
+  indexInput,
 } from './lib/memory-semantic.mjs';
 import { proposeStagingNotes } from './lib/memory-promote.mjs';
 import { isManual } from './lib/memory-mark.mjs';
@@ -261,25 +263,13 @@ if (modelChanged && !flag('--index') && !flag('--serve')) {
 
 // ---------------------------------------------------------------- coverage
 
-function vaultSources() {
-  const out = [{ dir: path.join(VAULT, 'Memory', SLUG), layer: 'Memory' }];
-  for (const f of ['Patterns', 'Mistakes', 'Decisions'])
-    out.push({ dir: path.join(VAULT, 'Insights', SLUG, f), layer: f });
-  // permanent/ is cross-project, not slug-scoped. Indexed here so --clusters can ask "is this topic
-  // already consolidated?", and so promoted knowledge is searchable at all.
-  out.push({ dir: path.join(VAULT, 'permanent'), layer: 'permanent' });
-  for (const sub of ['domain', 'tools'])
-    out.push({ dir: path.join(VAULT, 'permanent', sub), layer: 'permanent' });
-  return out;
-}
-
 // Is every note actually IN the index? Nobody had ever asked. A note missing from the index is
 // indistinguishable from a note that ranks badly — both just fail to appear — so the whole class
 // hides behind "retrieval is imperfect". obsidian-second-brain lists 100% index coverage as one of
 // its measured gains, which is what prompted checking ours: it was 1047 of 1048.
 if (flag('--coverage')) {
   const onDisk = new Map(); // stem -> [paths]
-  for (const { dir } of vaultSources()) {
+  for (const { dir } of vaultSources(VAULT, SLUG)) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md')))
       onDisk.set(f.slice(0, -3), [...(onDisk.get(f.slice(0, -3)) ?? []), path.join(dir, f)]);
@@ -403,22 +393,7 @@ if (flag('--index')) {
       process.exit(1);
     });
 
-  const sources = vaultSources();
-
-  const files = [];
-  for (const { dir, layer } of sources) {
-    if (!fs.existsSync(dir)) continue;
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
-      if (f === 'REFLECTIONS.md') continue; // an audit log, not a memory
-      const full = path.join(dir, f);
-      files.push({
-        full,
-        layer,
-        note: f.slice(0, -3),
-        mtime: Math.floor(fs.statSync(full).mtimeMs),
-      });
-    }
-  }
+  const files = indexInput(VAULT, SLUG);
 
   // --rebuild forces a full re-embed. Needed when the metadata cannot be trusted: a run that
   // recorded the model without re-embedding leaves the DB claiming one model while holding another
