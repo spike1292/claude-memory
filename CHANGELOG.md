@@ -11,6 +11,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`/memory:synthesize` asks first, drafts several, and offers adopt (#150).** With no argument it
+  lists the clusters and staged candidates and waits for the user's pick before it reads any note.
+  Each picked cluster gets its own draft and coverage report. At the end it states a floor (held-out
+  `recall@1`, rounded down) and offers `memory-adopt.mjs` per draft; a failed gate rolls back only
+  that draft. No held-out set means no adopt offer. `--clusters` and `--propose` now list clusters
+  with Mistakes first, then by size.
 - **A `Personal/` layer for personal research and wiki pages (#113).** `/memory:protocol` lists
   `Personal/{Research,Wiki}/` and gives its note rules. The layer stays out of the index, recall
   and the connector; a test now proves the indexer never reads it. The allow-list is unchanged.

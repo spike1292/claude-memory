@@ -34,6 +34,7 @@ import {
   assertVectorWidth,
   clusterNotes,
   consolidationGaps,
+  mistakesFirst,
   crossFolderPairs,
   samefolderPairs,
   reportPairs,
@@ -569,7 +570,7 @@ if (flag('--clusters') || flag('--propose')) {
 
   const permanent = cards.filter((c) => c.layer === 'permanent');
   const working = cards.filter((c) => c.layer !== 'permanent');
-  const gapList = consolidationGaps(working, permanent, min, minSize);
+  const gapList = mistakesFirst(consolidationGaps(working, permanent, min, minSize));
 
   if (flag('--propose')) {
     const top = Number(val('--top') || 8);
@@ -613,7 +614,7 @@ if (flag('--clusters') || flag('--propose')) {
   }
   console.log(
     gapList.length
-      ? `${gapList.length} topic(s) with no consolidated note${gapList.length > shown.length ? ` (showing the ${shown.length} largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
+      ? `${gapList.length} topic(s) with no consolidated note${gapList.length > shown.length ? ` (showing the first ${shown.length}: Mistakes first, then largest)` : ''}. Writing one is a judgement call — this only finds where it is missing.`
       : 'every cluster is covered by a permanent/ note.',
   );
   process.exit(0);
