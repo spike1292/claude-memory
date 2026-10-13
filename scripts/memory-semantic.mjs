@@ -51,6 +51,7 @@ import {
   QUIT,
   vaultSources,
   indexInput,
+  isIndexedSlug,
 } from './lib/memory-semantic.mjs';
 import { proposeStagingNotes } from './lib/memory-promote.mjs';
 import { linkTargets } from '../hooks/lib/memory-link-lint.mjs';
@@ -830,8 +831,8 @@ const LEX_MODE = process.env.MEMORY_FUSE_LEX ?? DEFAULT_FUSE_LEX;
  * @returns {import('./lib/memory-semantic.mjs').Bundle}
  */
 function loadIndex(slug) {
+  if (!isIndexedSlug(DB_DIR, slug)) throw new Error(`no index for ${slug} — run --index first`);
   const dbPath = path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`);
-  if (!fs.existsSync(dbPath)) throw new Error(`no index for ${slug} — run --index first`);
   // Closed in the finally: `.all()` materialises every row, so nothing below needs the handle, and
   // node:sqlite does NOT free it on GC. Measured 2026-08-17 — 200 unclosed DatabaseSync opens held
   // 201 fds, unchanged after an explicit global.gc(). In a 30-minute server that reopens on every
@@ -919,6 +920,7 @@ if (flag('--serve')) {
     return fresh;
   });
   function indexFor(/** @type {string} */ slug) {
+    if (!isIndexedSlug(DB_DIR, slug)) throw new Error(`no index for ${slug} — run --index first`);
     let mtime = NaN; // a failed stat must RELOAD, not serve a cached index forever
     try {
       mtime = fs.statSync(path.join(DB_DIR, `semantic-${slug}-${MODEL_KEY}.db`)).mtimeMs;

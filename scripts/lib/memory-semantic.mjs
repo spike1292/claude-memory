@@ -543,6 +543,38 @@ export function vaultSources(vault, slug) {
   return out;
 }
 
+// A slug or note name from a socket or HTTP client is a single path segment: no separator, no
+// leading dot (a slug of `..` would make vaultSources() the vault root).
+export const SAFE_NAME = /^[^./\\\0][^/\\\0]*$/;
+
+/**
+ * @param {string} dbDir
+ * @returns {string[]}
+ */
+export function indexedSlugs(dbDir) {
+  const suffix = `-${MODEL_KEY}.db`;
+  let names;
+  try {
+    names = fs.readdirSync(dbDir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.startsWith('semantic-') && n.endsWith(suffix))
+    .map((n) => n.slice('semantic-'.length, -suffix.length))
+    .filter((s) => SAFE_NAME.test(s))
+    .sort();
+}
+
+/**
+ * @param {string} dbDir
+ * @param {unknown} slug
+ * @returns {slug is string}
+ */
+export function isIndexedSlug(dbDir, slug) {
+  return typeof slug === 'string' && SAFE_NAME.test(slug) && indexedSlugs(dbDir).includes(slug);
+}
+
 /**
  * @param {string} vault
  * @param {string} slug
