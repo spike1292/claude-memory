@@ -371,6 +371,25 @@ test('a hook line fired inside a background claude run is flagged as one', () =>
   });
 });
 
+test('a hook line fired in a MEMORY_MACHINE_RUN run is marked machine, and only then', () => {
+  withState((logs) => {
+    const prev = process.env.MEMORY_MACHINE_RUN;
+    process.env.MEMORY_MACHINE_RUN = '1';
+    try {
+      logHook({ hook: 'insights-surface', cwd: process.cwd(), outcome: 'ran' });
+    } finally {
+      if (prev === undefined) delete process.env.MEMORY_MACHINE_RUN;
+      else process.env.MEMORY_MACHINE_RUN = prev;
+    }
+    logHook({ hook: 'insights-surface', cwd: process.cwd(), outcome: 'ran' });
+    const day = new Date().toISOString().slice(0, 10);
+    const [scheduled, person] = readJsonl(path.join(logs, `hooks-${day}.jsonl`));
+    assert.strictEqual(scheduled.machine, true);
+    assert.ok(!('child' in scheduled), 'a machine run is not a recursion child');
+    assert.ok(!('machine' in person), 'omitted, never false');
+  });
+});
+
 test('detach returns null when the command cannot start, and says so in the log file', async () => {
   const state = tmp();
   const logFile = path.join(state, 'graphgen.log');

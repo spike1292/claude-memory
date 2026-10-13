@@ -302,6 +302,25 @@ test('lines from a headless claude run never enter the injected figures', () => 
   assert.match(render(s, new Map()), /insights-surface\s+1\s+1\s+1000\s/);
 });
 
+test('a machine-marked run is not a session, and is counted on a line of its own', () => {
+  const s = summarize([
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'person' }),
+    line({ hook: 'insights-surface', ms: 40, bytes: 4000, session: 'cron', machine: true }),
+    line({
+      hook: 'insights-surface',
+      ms: 40,
+      bytes: 4000,
+      session: 'cron-child',
+      machine: true,
+      child: true,
+    }),
+  ]);
+  const out = render(s, new Map());
+  assert.match(out, /insights-surface\s+1\s+1\s+1000\s/);
+  assert.match(out, /2 of 3 were fired by a machine-driven run \(MEMORY_MACHINE_RUN\)/);
+  assert.match(out, /1 of 3 were fired by a background/, 'the child line keeps its own count');
+});
+
 test('the injected section labels itself an estimate and the cost section a measurement', () => {
   const out = render(
     summarize([
@@ -747,6 +766,20 @@ test('costReport does not count a headless child run as a session start', (t) =>
       'hooks-2026-10-01.jsonl': [
         { slug: 'mine', event: 'SessionStart', session: 'person' },
         { slug: 'mine', event: 'SessionStart', session: 'distiller', child: true },
+      ],
+    },
+  );
+  assert.match(costReport({ vaultDir: vault, slug: 'mine', logDir })[0], /1 start in 1 logged day/);
+});
+
+test('costReport does not count a machine-marked run as a session start', (t) => {
+  const { vault, logDir } = costFixture(
+    t,
+    { mine: 'x'.repeat(4000) },
+    {
+      'hooks-2026-10-01.jsonl': [
+        { slug: 'mine', event: 'SessionStart', session: 'person' },
+        { slug: 'mine', event: 'SessionStart', session: 'cron', machine: true },
       ],
     },
   );
