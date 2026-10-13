@@ -11,6 +11,7 @@ description: (Re)generate the codebase graph digest from codebase-memory-mcp int
 
 Generate a "God Nodes"-style codebase digest so future sessions read one summary instead of many files. Use the `codebase-memory-mcp` tools — do NOT read source files for this.
 
+0. If the text after the command already gives `slug`, `report path`, `date` and `commit`, use those four values, skip step 1, and run no shell to find them. The background regen passes them this way because its session has no Bash.
 1. Slug: `<slug>` = the project key: normalised git remote of `pwd` (e.g. `gitlab.example.com-teamname-frontend`), **NOT the checkout path** — run `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Vault root: `<vault>` = `. "$MEM/hooks/lib/vault-env.sh"; resolve_vault`. `hooks/graph-staleness-check.mjs` resolves the vault the same way (via `paths.mjs`, which is what `vault-env.sh` now asks); using anything else makes the background regen and a manual run write to two different files.
    Note the **MCP project name is not the slug** — `codebase-memory-mcp` keys on the cwd path *without* a leading dash (e.g. `Users-you-Development-Frontend`). Get it from `list_projects` rather than constructing it.
 2. Ensure the graph is fresh:
@@ -20,15 +21,15 @@ Generate a "God Nodes"-style codebase digest so future sessions read one summary
    - `get_architecture` — project structure / key aspects.
    - `query_graph` — top nodes by fan-in/fan-out (the "God Nodes": most-connected functions/classes/modules), plus likely refactor candidates.
    - Optionally `search_graph` to name the central entry points.
-4. Write `<vault>/Graph/<slug>/GRAPH_REPORT.md` using **sentinel blocks** so hand-written notes survive regeneration:
+4. Write the report path from step 0, else `<vault>/Graph/<slug>/GRAPH_REPORT.md`, using **sentinel blocks** so hand-written notes survive regeneration:
    - **Before writing, if the file exists, read it** and capture everything AFTER the `<!-- @generated:end -->` marker verbatim — that is the user's hand-maintained area. Never modify it.
    - Regenerate ONLY the frontmatter + the block between the markers. Preserve the trailing `## Notes` section (and anything past `@generated:end`) exactly as found.
 
 ```
 ---
 title: <repo name> — Graph Report
-date: <YYYY-MM-DD from `date +%Y-%m-%d`>
-commit: <short HEAD sha from `git rev-parse --short HEAD`>
+date: <date from step 0, else YYYY-MM-DD from `date +%Y-%m-%d`>
+commit: <commit from step 0, else short HEAD sha from `git rev-parse --short HEAD`>
 project: <slug>
 tags: [graph-report]
 type: graph
