@@ -24,7 +24,27 @@ import {
   appendJsonl,
   pruneDatedLogs,
   logHook,
+  headlessArgv,
 } from './hook-io.mjs';
+
+test('every headless `claude -p` argv is built by headlessArgv, which never persists the session', () => {
+  assert.ok(headlessArgv('--model', 'haiku').includes('--no-session-persistence'));
+  const root = path.join(path.dirname(new URL(import.meta.url).pathname), '../..');
+  const sources = ['hooks', 'scripts'].flatMap((d) =>
+    fs
+      .readdirSync(path.join(root, d), { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'))
+      .map((f) => path.join(d, f)),
+  );
+  const literal = /['"`](-p|--print)['"`]/;
+  const own = sources.filter((f) => literal.test(fs.readFileSync(path.join(root, f), 'utf8')));
+  assert.deepStrictEqual(own, [path.join('hooks', 'lib', 'hook-io.mjs')]);
+  const sites = sources
+    .filter((f) => !f.endsWith('hook-io.mjs'))
+    .flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').match(/headlessArgv\(/g) ?? []);
+  assert.ok(sites.length >= 3, `found ${sites.length} headless spawn sites, expected >= 3`);
+});
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
 
@@ -450,6 +470,7 @@ test('pruneDatedLogs deletes past the window and leaves everything else alone', 
       seed(logs, [
         'recall-2026-01-01.jsonl', // older than the window
         'hooks-2026-07-01.jsonl', // older than the window
+        'distill-2026-07-01.jsonl', // older than the window
         'hooks-2026-08-20.jsonl', // inside it
         'recall-2026-08-21.jsonl', // today
         'distill.log', // a free-form log; trimLog's job, not this one
@@ -462,7 +483,11 @@ test('pruneDatedLogs deletes past the window and leaves everything else alone', 
         '.retention-2099-01-01', // a claim from a clock that was wrong: kept until that day
       ]);
       const removed = pruneDatedLogs(new Date('2026-08-21T12:00:00Z'));
-      assert.deepStrictEqual(removed.sort(), ['hooks-2026-07-01.jsonl', 'recall-2026-01-01.jsonl']);
+      assert.deepStrictEqual(removed.sort(), [
+        'distill-2026-07-01.jsonl',
+        'hooks-2026-07-01.jsonl',
+        'recall-2026-01-01.jsonl',
+      ]);
       assert.deepStrictEqual(fs.readdirSync(logs).sort(), [
         '.retention-',
         '.retention-2099-01-01',

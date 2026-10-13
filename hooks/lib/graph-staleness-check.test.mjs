@@ -263,6 +263,7 @@ test('the regen argv is a closed tool list in dontAsk mode, never a permission b
     assert.ok(!argv.includes(bad), `no ${bad}`);
   assert.deepStrictEqual(argv, [
     '-p',
+    '--no-session-persistence',
     regenPrompt(p),
     '--permission-mode',
     'dontAsk',

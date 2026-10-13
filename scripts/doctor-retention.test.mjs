@@ -53,11 +53,12 @@ test('doctor reports the window and the oldest file, and only ours count as ours
     'my-notes-export-2019-01-01.jsonl',
     '2020-01-01.jsonl', // no family at all
     'recall-2026-08-19.jsonl',
+    'distill-2026-08-18.jsonl',
     'hooks-2026-08-20.jsonl',
   ]);
   // 2018 would be the answer if the pattern matched any prefix — and it would read as retention
   // being seven years overdue while working perfectly.
-  assert.match(line, /keep 30d, oldest 2026-08-19/);
+  assert.match(line, /keep 30d, oldest 2026-08-18/);
   // And with no dated file at all the line still prints, with `none` where a date would be.
   assert.match(retentionLine([]), /keep 30d, oldest none/);
 });

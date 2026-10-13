@@ -26,10 +26,12 @@ import * as paths from './paths.mjs';
 import { isManual } from '../../scripts/lib/memory-mark.mjs';
 import {
   COST_EVENT,
+  appendJsonl,
   countLines,
   detach,
   logHook,
   findClaude,
+  headlessArgv,
   markerPath,
   nowSeconds,
   readMarker,
@@ -464,6 +466,29 @@ export function projectKey(cwd) {
 }
 
 /**
+ * One `distill-<date>.jsonl` line per headless call: the only record of what the model saw and
+ * answered, since `distill.log` keeps counts and a rerun answers differently.
+ *
+ * @param {'extract' | 'judge'} call
+ * @param {string | undefined} cwd
+ * @param {string | undefined} slug
+ * @param {string | undefined} session
+ * @param {string} prompt the exact stdin
+ * @param {string} out raw stdout
+ */
+function recordCall(call, cwd, slug, session, prompt, out) {
+  const envelope = parseEnvelope(out);
+  appendJsonl('distill', cwd, {
+    ...(slug && { slug }),
+    session,
+    call,
+    prompt,
+    output: envelope ? envelope.text : out,
+    ...envelope?.usage,
+  });
+}
+
+/**
  * Run the headless extractor, and record what it cost.
  *
  * `--output-format json` is asked for so the usage figures exist at all; the model's own answer is
@@ -513,6 +538,7 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
    * @returns {Insights}
    */
   const readAttempt = (out, failed) => {
+    recordCall('extract', cwd, slug, session, input, out);
     const envelope = parseEnvelope(out);
     if (envelope?.usage)
       logHook({
@@ -529,11 +555,12 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
     return extractJson(envelope ? envelope.text : out);
   };
 
-  const args = ['-p', '--model', 'haiku'];
+  const args = headlessArgv('--model', 'haiku');
+  const input = EXTRACT_PROMPT + fence('transcript', convo);
   try {
     return readAttempt(
       execFileSync(claude, [...args, '--output-format', 'json'], {
-        input: EXTRACT_PROMPT + fence('transcript', convo),
+        input,
         encoding: 'utf8',
         timeout: 150_000,
         maxBuffer: 16 * 1024 * 1024,
@@ -570,16 +597,16 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
     if (err.code === 'ETIMEDOUT' || err.signal) return {};
     try {
       console.error('distill: retrying without --output-format (no cost figure for this run)');
-      return extractJson(
-        execFileSync(claude, args, {
-          input: EXTRACT_PROMPT + fence('transcript', convo),
-          encoding: 'utf8',
-          timeout: 150_000,
-          maxBuffer: 16 * 1024 * 1024,
-          cwd: os.tmpdir(),
-          env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' },
-        }),
-      );
+      const out = execFileSync(claude, args, {
+        input,
+        encoding: 'utf8',
+        timeout: 150_000,
+        maxBuffer: 16 * 1024 * 1024,
+        cwd: os.tmpdir(),
+        env: { ...process.env, CLAUDE_DISTILL_CHILD: '1' },
+      });
+      recordCall('extract', cwd, slug, session, input, out);
+      return extractJson(out);
     } catch (e2) {
       console.error(`distill: retry failed: ${/** @type {NodeJS.ErrnoException} */ (e2).message}`);
       return {};
@@ -601,11 +628,12 @@ function runJudge(pairs, cwd, slug) {
   const claude = findClaude();
   if (!claude) return null;
   const items = pairs.map((p, i) => `[${i}]\nEXISTING: ${p.old}\nNEW: ${p.new}`).join('\n\n');
+  const input = `${JUDGE_PROMPT}\n${fence('pairs', items)}`;
   let out;
   let failed = false;
   try {
-    out = execFileSync(claude, ['-p', '--model', 'haiku', '--output-format', 'json'], {
-      input: `${JUDGE_PROMPT}\n${fence('pairs', items)}`,
+    out = execFileSync(claude, headlessArgv('--model', 'haiku', '--output-format', 'json'), {
+      input,
       encoding: 'utf8',
       timeout: 150_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -617,6 +645,7 @@ function runJudge(pairs, cwd, slug) {
     out = String(/** @type {{ stdout?: string }} */ (e).stdout ?? '');
     failed = true;
   }
+  recordCall('judge', cwd, slug, process.env.MEMORY_HOOK_SESSION, input, out);
   const envelope = parseEnvelope(out);
   if (envelope?.usage)
     logHook({

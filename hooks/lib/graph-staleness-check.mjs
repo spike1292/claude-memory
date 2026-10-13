@@ -19,6 +19,7 @@ import { vault, projectKey, legacyKey, stateDir, libDir } from './paths.mjs';
 import {
   detach,
   findClaude,
+  headlessArgv,
   markerPath,
   readMarker,
   writeMarker,
@@ -160,8 +161,7 @@ export function regenPrompt(p) {
  */
 export function regenArgv(p) {
   const rulePath = `/${p.report.replace(/[\\*?[\]]/g, '\\$&')}`;
-  return [
-    '-p',
+  return headlessArgv(
     regenPrompt(p),
     '--permission-mode',
     'dontAsk',
@@ -179,7 +179,7 @@ export function regenArgv(p) {
     ...REGEN_MCP_TOOLS.map((t) => `mcp__codebase-memory-mcp__${t}`),
     `Read(${rulePath})`,
     `Edit(${rulePath})`,
-  ];
+  );
 }
 
 /**

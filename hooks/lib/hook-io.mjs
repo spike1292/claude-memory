@@ -312,6 +312,13 @@ export function findClaude() {
 }
 
 /**
+ * The argv of every headless `claude -p` this plugin spawns. Built in one place so no spawn site
+ * can forget `--no-session-persistence`: without it each run left a ~400 KB transcript (#201).
+ * @param {string[]} rest
+ */
+export const headlessArgv = (...rest) => ['-p', '--no-session-persistence', ...rest];
+
+/**
  * Append-open a log file, returning a writable fd or null. Detached children write straight to
  * the fd — piping would keep this process alive to shuttle bytes, the one thing a gate must not
  * do. Trims here too: distill.log/graphgen.log never go through `logBanner()`.
@@ -475,9 +482,9 @@ export function appendJsonl(family, cwd, record) {
 }
 
 // The dated families, and the only basenames retention may delete. `scripts/doctor.sh` names the
-// same two in a `sed -E` — a shell cannot import this, so keep them in step. A wildcard prefix
+// same families in a `sed -E` — a shell cannot import this, so keep them in step. A wildcard prefix
 // deleted `backup-2026-01-01.jsonl` here and misread one there (2026-08-21).
-const DATED_LOG = /^(recall|hooks)-(\d{4}-\d{2}-\d{2})\.jsonl$/;
+const DATED_LOG = /^(recall|hooks|distill)-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 /**
  * Retention for the dated JSONL families: keep `logRetentionDays()` days, delete the rest.
