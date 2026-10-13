@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`MEMORY_MACHINE_RUN` marks a scheduled run in the hook log (#112).** Set to any non-empty
+  value, it stamps `machine: true` on each `hooks-<date>.jsonl` line. `/memory:doctor --hooks`
+  counts those lines on their own line and leaves them out of the per-session figures and the
+  MOC session-start count. It changes the log only: every hook runs as before.
 - **`/memory:save` records dead ends, errors, current state and files to read (#90).** Four new
   sections beside the old four, an explicit leave-out list, and a verify step before the write.
   `/memory:resume` reports the new sections and reads older logs without them as before.

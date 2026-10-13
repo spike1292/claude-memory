@@ -21,7 +21,7 @@ export { DEFAULT_DAYS };
 /**
  * @typedef {{
  *   t?: string, slug?: string | null, hook?: string, event?: string,
- *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean,
+ *   ms?: number, outcome?: string, reason?: string, session?: string, child?: boolean, machine?: boolean,
  *   bytes?: number, pruned?: number,
  *   inTok?: number, cacheWriteTok?: number, cacheReadTok?: number, outTok?: number, usd?: number,
  * }} HookLine
@@ -149,6 +149,7 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
   const hooks = new Map();
   let untimed = 0;
   let childLines = 0;
+  let machineLines = 0;
   // Counted in the loop, not taken from `lines.length`: an extract line is a cost record for one
   // API call and is not an invocation of anything.
   let invocations = 0;
@@ -171,9 +172,11 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
 
   for (const l of lines) {
     if (l.child) childLines++;
-    // A headless run's session id is not a person's session, and counting it would inflate the
-    // denominator of every per-session figure below.
-    if (l.session && !l.child) sessions.add(l.session);
+    if (l.machine) machineLines++;
+    // A headless or scheduled run's session id is not a person's session, and counting it would
+    // inflate the denominator of every per-session figure below.
+    const notPerson = l.child || l.machine;
+    if (l.session && !notPerson) sessions.add(l.session);
     // NOT used as the per-day denominator any more — see `logDays`, which report() passes in from
     // the files it actually read. Kept only because a day with lines is still a day the log covers.
     if (l.t) days.add(l.t.slice(0, 10));
@@ -192,7 +195,7 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
     // indistinguishable, so a hook's older lines read as zeros until they age out of the window (a
     // week). Counted separately below as `unsized` rather than silently folded into the average.
     const cost = l.event === COST_EVENT.extract || l.event === COST_EVENT.judge;
-    if (!l.child && l.session && !worker && !cost) {
+    if (!notPerson && l.session && !worker && !cost) {
       const by = perSession.get(name) ?? new Map();
       by.set(l.session, (by.get(l.session) ?? 0) + (typeof l.bytes === 'number' ? l.bytes : 0));
       perSession.set(name, by);
@@ -243,6 +246,7 @@ export function summarize(lines, slug = null, logDays = 0, extraPruned = 0) {
     invocations,
     untimed,
     childLines,
+    machineLines,
     pruned,
     first: lines.find((l) => l.t)?.t ?? null,
     last: [...lines].reverse().find((l) => l.t)?.t ?? null,
@@ -464,6 +468,12 @@ export function render(s, limits, recall = []) {
       '',
       `${s.childLines} of ${s.invocations} were fired by a background \`claude\` run, not by a`,
       'session — one distillation or graph regen fires SessionStart again on its way through.',
+    );
+  if (s.machineLines)
+    out.push(
+      '',
+      `${s.machineLines} of ${s.invocations} were fired by a machine-driven run (MEMORY_MACHINE_RUN),`,
+      'not by a person — left out of every per-session figure.',
     );
 
   out.push(...prunedSection(s));
@@ -809,7 +819,7 @@ export function costReport({ vaultDir, slug, logDir }) {
   /** @type {Map<string, Set<string>>} */
   const starts = new Map();
   for (const l of /** @type {HookLine[]} */ (/** @type {unknown} */ (readLines(files)))) {
-    if (l.event !== 'SessionStart' || !l.session || !l.slug || l.child) continue;
+    if (l.event !== 'SessionStart' || !l.session || !l.slug || l.child || l.machine) continue;
     if (!starts.has(l.slug)) starts.set(l.slug, new Set());
     /** @type {Set<string>} */ (starts.get(l.slug)).add(l.session);
   }

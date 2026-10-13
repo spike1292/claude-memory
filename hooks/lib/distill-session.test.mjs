@@ -294,6 +294,22 @@ test('gatePlan needs cwd, not just a transcript — a payload missing it is trea
   );
 });
 
+test('MEMORY_MACHINE_RUN labels a run without switching the distiller off', () => {
+  const prev = process.env.MEMORY_MACHINE_RUN;
+  process.env.MEMORY_MACHINE_RUN = '1';
+  try {
+    const p = gatePlan({
+      hook_event_name: 'SessionEnd',
+      transcript_path: transcriptWith(500),
+      cwd: '/some/project',
+    });
+    assert.strictEqual(p.run, true);
+  } finally {
+    if (prev === undefined) delete process.env.MEMORY_MACHINE_RUN;
+    else process.env.MEMORY_MACHINE_RUN = prev;
+  }
+});
+
 test('distill(): a write path with no cwd throws before touching the vault', async () => {
   await assert.rejects(() => distill('/some/transcript.jsonl', ''), /cwd/);
   await assert.rejects(

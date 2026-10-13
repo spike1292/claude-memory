@@ -257,6 +257,11 @@ that cannot be written must never fail or delay a hook. Two families use it — 
 duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
+**`MEMORY_MACHINE_RUN` is a label, never a guard.** Set by an orchestrator on a scheduled run, it
+makes `logHook()` stamp `machine: true`, and `--hooks` leaves those lines out of every per-session
+figure, as it does `child` lines. No hook may read it to decide whether to run — that is what the
+`*_CHILD` recursion guards do, and why an orchestrator could not use them as a label.
+
 **One retention policy covers `logs/`, in two mechanisms because there are two kinds of file.** The
 free-form append logs (`distill.log`, `graphgen.log`, `semantic-index.log`) are capped by SIZE —
 `trimLog()` keeps the last 256 KB past 1 MB. The dated JSONL families are capped by AGE:
