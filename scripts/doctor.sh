@@ -310,6 +310,21 @@ fi
 # docs/decisions/2026-08-22-auto-memory.md
 echo
 echo "auto memory (Claude Code loads MEMORY.md; what does not fit is dropped silently)"
+# #199: the hook used to link in a `_` folder; Claude Code reads the `-` sibling. Counted, never
+# named (a slug is a local path) or removed.
+orph=0
+for m in "$HOME"/.claude/projects/*_*/memory; do
+  [ -L "$m" ] || continue
+  d=${m%/memory}; n=${d##*/}
+  compgen -G "$d/*.jsonl" >/dev/null && continue
+  compgen -G "${d%/*}/${n//_/-}/*.jsonl" >/dev/null && orph=$((orph+1))
+done
+if [ "$orph" -gt 0 ]; then
+  warn "$orph memory link(s) in a folder Claude Code never reads" \
+       "its sibling with \`-\` for \`_\` holds the transcripts, and the hook now links there. Remove the old folder by hand. List: ls -d ~/.claude/projects/*_*/memory"
+else
+  ok "every memory link sits where Claude Code reads"
+fi
 if command -v node >/dev/null 2>&1; then
   # The EXIT STATUS decides, not the output: an import error, a rejected promise or a bad $ROOT all
   # print nothing, and "nothing" is also what an empty vault prints. Reading emptiness as health is

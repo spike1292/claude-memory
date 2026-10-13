@@ -39,6 +39,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`--serve` refuses a slug that is not an indexed project.** A socket client could send a slug
   with `../` and `loadIndex()` built a file path from it unchecked (#111).
+- **The `memory` symlink lands in the `~/.claude/projects/` folder Claude Code reads when the
+  checkout path has a `_` (#199).** Claude Code turns `_` into `-`; the hook kept it, so that
+  project's `MEMORY.md` was never loaded. Vault folder names do not change. `/memory:doctor` counts
+  the old `_` links whose `-` sibling holds the transcripts; remove those by hand.
 
 ## [0.10.0] - 2026-10-13
 

@@ -31,7 +31,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { legacyKey } from './lib/paths.mjs';
+import { legacyKey, claudeProjectsKey } from './lib/paths.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./vault-memory-sync.sh', import.meta.url));
 const REAL_HOME = os.homedir();
@@ -111,6 +111,7 @@ function runSync(world, repo, pwd = repo) {
 }
 
 const slugOf = legacyKey;
+const projOf = claudeProjectsKey;
 const write = (/** @type {string} */ p, /** @type {string} */ s) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, s);
@@ -221,7 +222,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
 
     const stdout = runSync(w, repo);
 
-    const mem = path.join(w.home, '.claude', 'projects', slugOf(repo), 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     assert.ok(fs.lstatSync(mem).isSymbolicLink(), 'memory must be a symlink');
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', key));
     assert.ok(fs.existsSync(path.join(mem, '.')), 'the symlink must resolve to a real directory');
@@ -306,7 +307,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     }
 
     // 3. The symlink resolves at the new key.
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', key));
     assert.deepStrictEqual(fs.readdirSync(mem).sort(), ['note-0.md', 'note-1.md', 'note-2.md']);
   });
@@ -347,7 +348,6 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
   await t.test('repointing an existing symlink COPIES — the 2026-08-08 24-note guarantee', () => {
     const w = scratch('repoint');
     const repo = makeRepo(w, 'delta', 'https://github.com/Example/Delta.git');
-    const slug = slugOf(repo);
     const key = 'github.com-example-delta';
 
     // An already-populated memory dir under a DIFFERENT root — the exact shape of the incident:
@@ -355,8 +355,8 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     const otherRoot = path.join(w.tmp, 'other-vault', 'Memory', key);
     write(path.join(otherRoot, 'keep.md'), 'KEEP\n');
     write(path.join(otherRoot, 'clash.md'), 'FROM-OLD\n');
-    fs.mkdirSync(path.join(w.home, '.claude', 'projects', slug), { recursive: true });
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    fs.mkdirSync(path.join(w.home, '.claude', 'projects', projOf(repo)), { recursive: true });
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     fs.symlinkSync(otherRoot, mem);
 
     // The destination already holds a note of the same name with different content.
@@ -382,10 +382,9 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
   await t.test('a real memory DIR is migrated by move — and same-named notes are lost', () => {
     const w = scratch('realdir');
     const repo = makeRepo(w, 'epsilon', 'https://github.com/Example/Epsilon.git');
-    const slug = slugOf(repo);
     const key = 'github.com-example-epsilon';
 
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     write(path.join(mem, 'moved.md'), 'MOVED\n');
     write(path.join(mem, 'clash.md'), 'FROM-DIR\n');
     write(path.join(w.vault, 'Memory', key, 'clash.md'), 'FROM-VAULT\n');
@@ -417,9 +416,8 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
   await t.test('a subdirectory inside a real memory dir is DELETED, not migrated', () => {
     const w = scratch('subdir');
     const repo = makeRepo(w, 'zeta', 'https://github.com/Example/Zeta.git');
-    const slug = slugOf(repo);
 
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     write(path.join(mem, 'top.md'), 'TOP\n');
     write(path.join(mem, 'nested', 'deep.md'), 'DEEP\n');
 
@@ -468,7 +466,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     const repo = makeRepo(w, 'NoRemote.git', null);
     runSync(w, repo);
 
-    const mem = path.join(w.home, '.claude', 'projects', slugOf(repo), 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(repo), 'memory');
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', 'noremote.git'));
     assert.ok(
       !fs.existsSync(path.join(w.vault, 'Memory', 'noremote')),
@@ -488,8 +486,23 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
 
     // slug == key here, so the `if [ "$slug" != "$key" ]` migration block is skipped entirely.
     const slug = slugOf(dir);
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(dir), 'memory');
     assert.strictEqual(fs.readlinkSync(mem), path.join(w.vault, 'Memory', slug));
+  });
+
+  await t.test('a cwd with `_` links in the `-` folder Claude Code reads (#199)', () => {
+    const w = scratch('underscore');
+    const repo = makeRepo(w, 'my_repo.v2', 'https://github.com/Example/Under.git');
+    runSync(w, repo);
+
+    const projects = path.join(w.home, '.claude', 'projects');
+    const want = repo.replace(/[^A-Za-z0-9]/g, '-');
+    assert.ok(want.endsWith('-my-repo-v2'), want);
+    assert.strictEqual(
+      fs.readlinkSync(path.join(projects, want, 'memory')),
+      path.join(w.vault, 'Memory', 'github.com-example-under'),
+    );
+    assert.deepStrictEqual(fs.readdirSync(projects), [want]);
   });
 
   await t.test('a fallback key never repoints a symlink at a remote-keyed folder (#140)', () => {
@@ -500,7 +513,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     const real = path.join(w.vault, 'Memory', 'github.com-example-iota');
     write(path.join(real, 'a.md'), 'A\n');
     write(path.join(real, 'b.md'), 'B\n');
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(dir), 'memory');
     fs.mkdirSync(path.dirname(mem), { recursive: true });
     fs.symlinkSync(real, mem);
 
@@ -522,7 +535,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     const key = 'github.com-example-kappa';
     const old = path.join(w.tmp, 'other-vault', 'Memory', key);
     write(path.join(old, 'keep.md'), 'KEEP\n');
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(dir), 'memory');
     fs.mkdirSync(path.dirname(mem), { recursive: true });
     fs.symlinkSync(old, mem);
 
@@ -541,7 +554,7 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     const slug = slugOf(dir);
     const odd = path.join(w.tmp, 'somewhere', 'notes');
     write(path.join(odd, 'x.md'), 'X\n');
-    const mem = path.join(w.home, '.claude', 'projects', slug, 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(dir), 'memory');
     fs.mkdirSync(path.dirname(mem), { recursive: true });
     fs.symlinkSync(odd, mem);
 
@@ -596,13 +609,13 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
 
     runSync(w, payloadRepo, otherRepo);
 
-    const mem = path.join(w.home, '.claude', 'projects', slugOf(payloadRepo), 'memory');
+    const mem = path.join(w.home, '.claude', 'projects', projOf(payloadRepo), 'memory');
     assert.strictEqual(
       fs.readlinkSync(mem),
       path.join(w.vault, 'Memory', 'github.com-example-iota'),
     );
     assert.ok(
-      !fs.existsSync(path.join(w.home, '.claude', 'projects', slugOf(otherRepo))),
+      !fs.existsSync(path.join(w.home, '.claude', 'projects', projOf(otherRepo))),
       'the $PWD project must not be touched when the payload names another',
     );
     assert.ok(!fs.existsSync(path.join(w.vault, 'Memory', 'github.com-example-kappa')));
