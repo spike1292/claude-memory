@@ -16,6 +16,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **`docs/retrieval.md`, why retrieval works the way it does (#41).** The two arms, rank fusion,
   the two gates, chunking, model profiles, the duplicate predicate, the server and evaluation. Each
   number links to its decision record; architecture.md Flows 2 and 3 link here.
+- **`docs/comparison.md`, how this compares to other memory systems (#42).** One table against
+  Claude Code's auto memory and the other systems in the research notes, the three licences a reader would get wrong, and
+  where ours loses. Every claim links a dated research note. Linked from the README.
 
 ## [0.10.0] - 2026-10-13
 

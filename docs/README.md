@@ -38,6 +38,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Vision](vision.md) | What this is for, what it refuses to be, the principles behind the repeated decisions, the admitted gaps, and where the open issues point. Sourced; edited in place, not dated. |
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
 | [Retrieval](retrieval.md) | Why retrieval is shaped as it is: the two arms, rank fusion, the two gates, chunking and its silent traps, model profiles, the duplicate predicate, the server, and how it is evaluated. |
+| [Comparison](comparison.md) | Against Claude Code's auto memory and the systems in the research notes: store, write trigger, retrieval, locality, weight, licences, and where ours loses. Dated. |
 | [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
 | [Hook startup baseline](hook-startup-baseline.md) | What every hook costs at startup today, with its conditions and the command that regenerates it. Replaced in place. |
 | [CI, review, and releases](ci-and-releases.md) | Branch protection, the review workflows, the release flow. |
