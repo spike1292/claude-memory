@@ -495,6 +495,18 @@ export function consolidationGaps(working, permanent, minScore, minSize) {
   return gaps;
 }
 
+// A cluster that has cost something comes before a bigger one that has not. Stable, so size order
+// holds inside each group; applied before `--top`, so a Mistakes cluster is not cut off.
+/**
+ * @template {{ members: readonly { layer: string }[] }} G
+ * @param {readonly G[]} gaps
+ * @returns {G[]}
+ */
+export function mistakesFirst(gaps) {
+  const hasMistake = (/** @type {G} */ g) => g.members.some((x) => x.layer === 'Mistakes');
+  return [...gaps].sort((a, b) => Number(hasMistake(b)) - Number(hasMistake(a)));
+}
+
 /**
  * The index allow-list. A folder not named here — `Personal/` included — is never indexed.
  *

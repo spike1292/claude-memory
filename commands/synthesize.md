@@ -34,18 +34,23 @@ twice (an invented CLAUDE.md rule; an unrelated `httpOnly` lesson welded onto a 
 So the rule below is not advice, it is the format: **a claim without a source is deleted, not
 softened.**
 
-1. **Pick the target.** Either the user names a topic, an existing staged candidate is named
-   (`<vault>/Staging/<slug>/candidate-*.md` — check for one first, it already carries the cluster's
-   evidence in its frontmatter), or find one fresh:
+1. **Let the user pick, before you read any member note.** A named topic or a named staged candidate
+   skips the list. Otherwise list both sources:
 
    ```
    node "$MEM/scripts/memory-semantic.mjs" --clusters --top 8
+   ls "$V/Staging/$S/"
    ```
 
-   Prefer a cluster that has *cost something* — one whose members include Mistakes, or that a prune
-   or audit has already tripped over. Size alone is not value; most uncovered clusters do not need a
-   note. `--propose --top 8` writes the same clusters as staged skeletons instead of only printing
-   them, if you want the evidence captured before you start reading.
+   Show one numbered row per cluster: size, folder mix with its Mistakes count, and the best
+   `permanent/` note with its score. `--clusters` already puts clusters with Mistakes first — they
+   have *cost something* — then larger ones. Add a row for each file in `Staging/<slug>/`; a
+   `candidate-*.md` carries its cluster's evidence in its frontmatter. Ask which to synthesize; the
+   user may pick several. **Read no member note until the user answers** — size alone is not value,
+   and most uncovered clusters do not need a note. `--propose --top 8` writes the same clusters as
+   staged skeletons, if you want the evidence captured first.
+
+   **Steps 2–4 run once per selected target**, each with its own draft and its own coverage report.
 
 2. **Read every member note in full.** Not the card, not the search snippet — the note. A synthesis
    built from snippets is how contradictions get smoothed into a false consensus. If the cluster is
@@ -75,7 +80,9 @@ softened.**
    nothing. A member that contributed nothing is a signal: either the cluster is too loose, or that
    note says something the synthesis missed. Say which.
 
-5. **Show the draft and ask, then write it into Staging/, never into `permanent/`.** If a staged
+5. **Show the drafts and ask once, then write each into Staging/, never into `permanent/`.** When all
+   selected drafts are done, show them together and ask: stage all, or which. Each staged draft is
+   its own file. If a staged
    skeleton already exists for this cluster, write the draft there — replacing everything from its
    frontmatter through the `<!-- @generated:end -->` marker, and leaving whatever a human already
    wrote below that marker untouched (the same sentinel convention `GRAPH_REPORT.md` uses). **A
@@ -93,11 +100,22 @@ softened.**
    Promoting the draft into `permanent/` is `/memory:adopt`'s job, and it runs a held-out eval gate
    that this command does not — a synthesis that reads well is not evidence it helps retrieval.
 
-6. **Tell the user to adopt it:**
+6. **Offer to adopt each staged draft.** First get the floor from the current held-out score:
 
    ```
-   node "$MEM/scripts/memory-adopt.mjs" <topic-slug> --min-rank1 <percent>
+   node "$MEM/scripts/memory-eval.mjs" --run --kind held-out
    ```
+
+   Round its `recall@1` down to a whole percent and state it with its source ("floor 62: held-out
+   recall@1 62.5%, rounded down"). If that prints `no case set at …`, say there is no held-out set
+   and do not offer adopt — never invent a floor. Otherwise ask whether to run, per draft:
+
+   ```
+   node "$MEM/scripts/memory-adopt.mjs" <topic-slug> --min-rank1 <floor>
+   ```
+
+   Run each adopt on its own, one after the other. A failed gate rolls back only that draft; the
+   other drafts and adoptions stay as they are. Report each result by name.
 
    `--clusters` will keep reporting this topic as a gap until that command runs and the gate passes
    — that is correct, since nothing has been promoted yet. Do not claim the topic is consolidated
@@ -107,5 +125,5 @@ softened.**
    is project-scoped, and `[[wikilink]]` it from at least one sibling — a `permanent/` note reachable
    only by search is invisible to the note graph.
 
-**Output:** the coverage report, the draft, the Staging path it was written to, and the
-`/memory:adopt` command to run next.
+**Output:** per selected target, the coverage report, the draft and the Staging path it was written
+to; then the floor with its source, and each adopt result — or why adopt was not offered.

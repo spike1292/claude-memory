@@ -42,6 +42,7 @@ import {
   socketIsLive,
   stripFrontmatter,
   consolidationGaps,
+  mistakesFirst,
   crossFolderPairs,
   vaultSources,
   indexInput,
@@ -185,6 +186,14 @@ test('consolidationGaps: --clusters and --propose (#96) share one computation', 
 
   // below minSize, a real cluster is not reported as a gap at all
   assert.equal(consolidationGaps(topic, farPermanent, 0.95, 5).length, 0);
+});
+
+test('mistakesFirst: a cluster with a Mistake outranks a larger one without (#150)', () => {
+  const gap = (/** @type {string[]} */ layers) => ({ members: layers.map((layer) => ({ layer })) });
+  const big = gap(['Patterns', 'Patterns', 'Decisions', 'Patterns', 'Memory']);
+  const small = gap(['Patterns', 'Mistakes', 'Decisions', 'Patterns']);
+  const mid = gap(['Patterns', 'Patterns', 'Decisions', 'Memory']);
+  assert.deepEqual(mistakesFirst([big, mid, small]), [small, big, mid]);
 });
 
 test('crossFolderPairs: same lesson, different folder — a different question from dupeScore', () => {
