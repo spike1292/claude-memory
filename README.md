@@ -216,6 +216,20 @@ runs `git add -A`, never pushes, and silently does nothing if the vault isn't a 
 installed, no identity is configured, or there's nothing to commit — a session never fails because
 of it. `/memory:doctor` reports whether the resolved vault is git-backed or a plain directory.
 
+**Pushing a git-backed vault.** The plugin never pushes, so `/memory:doctor` warns when the vault
+is 20 or more commits ahead of its upstream (counted on the local tracking ref, no fetch). To push
+on every commit — the distiller's and your own — add a `post-commit` hook to the vault repo:
+
+```sh
+#!/bin/sh
+git push -q origin HEAD >/dev/null 2>&1 &
+```
+
+Save it as `<vault>/.git/hooks/post-commit` and `chmod +x` it. It uses your own git and SSH setup;
+a failed push (offline, a locked SSH agent) is silent and retried by the next commit. `.git/hooks`
+is not versioned, so each clone needs it again. It is push-only: pulling stays manual, because a
+merge conflict needs a human.
+
 **Never point a hook at a throwaway vault on a live machine.** `vault-memory-sync.sh` repoints the
 real `~/.claude/projects/*/memory` symlink to whatever `CLAUDE_VAULT` says. It copies rather than
 moves (it used to move, which cost 24 notes once), but you will still have to repoint it back.

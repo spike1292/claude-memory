@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`/memory:doctor` warns when a git-backed vault has gone unpushed (#116).** WARN at 20 or more
+  commits ahead of upstream, from the local tracking ref with no fetch; a vault with no upstream
+  gets an `ok` line saying so. The plugin still never pushes — the README documents a `post-commit`
+  push hook instead.
 - **`docs/usage.md`, a user guide (#39).** The layers from the user's side, one line per command on
   when to run it, how to turn recall on, and the failure modes a user hits. Linked from the README.
 - **`docs/retrieval.md`, why retrieval works the way it does (#41).** The two arms, rank fusion,
