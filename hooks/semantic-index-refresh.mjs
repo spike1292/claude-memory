@@ -2,10 +2,11 @@
 // SessionStart entry: refresh the semantic vault index in the background.
 //
 // Thin on purpose: stdin in, nothing out. Logic and tests live in lib/semantic-index-refresh.mjs.
-import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
 import { outcomeOf, refresh } from './lib/semantic-index-refresh.mjs';
 
 const p = payload(readStdin());
+if (standDown('semantic-index-refresh', p)) process.exit(0);
 const cwd = hookCwd(p);
 const session = /** @type {string|undefined} */ (p.session_id);
 

@@ -398,9 +398,10 @@ noticed afterwards.
 
 **Hooks are best-effort and must never block.** Every one degrades to a no-op when its dependency is
 missing, `validate-note.mjs` warns rather than blocking a write, and the heavy hooks
-(`distill-session`, `graph-staleness-check`, `semantic-index-refresh`) detach, debounce, and guard
-against recursing into themselves via a `*_CHILD` env var — they spawn headless `claude`, which
-fires SessionStart again.
+(`distill-session`, `graph-staleness-check`, `semantic-index-refresh`) detach and debounce. Two
+of them spawn headless `claude`, which fires every hook again from a `$TMPDIR` cwd, so **every hook
+stands down in a child run** — `isChildRun()` in `hook-io.mjs`, logged `child-guard`; Node entries
+call `standDown()`, `vault-memory-sync.sh` checks the same two `*_CHILD` variables (#200).
 
 **One deliberate, scoped exception: the actual write onto disk aborts rather than guessing.**
 `distill-session`'s gate half (fired by Claude Code, zero-arg, reads a hook payload) still never

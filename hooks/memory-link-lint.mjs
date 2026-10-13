@@ -3,7 +3,7 @@
 //
 // Thin on purpose: stdin, cwd, stdout, and the index handle. Logic and tests live in lib/.
 // hooks.json points at this path, so it is a contract — keep it.
-import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
 import { lint } from './lib/memory-link-lint.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { dupeReport } from './lib/dupe-report.mjs';
@@ -29,6 +29,7 @@ const readIndex = (dbPath) => {
 // readStdin() and not `new Response(process.stdin)` — the web-streams path costs ~18 ms of runtime
 // bootstrap per hook. See docs/decisions/2026-08-20-hook-startup-cost.md.
 const p = payload(readStdin());
+if (standDown('memory-link-lint', p)) process.exit(0);
 const cwd = hookCwd(p);
 
 // A SessionStart hook must never break a session.

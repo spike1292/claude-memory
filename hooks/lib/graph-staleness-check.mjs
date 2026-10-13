@@ -2,7 +2,7 @@
 // the background and tell the user — the logic half. The CLI entry is hooks/graph-staleness-check.mjs.
 //
 // Zero repo footprint: replaces per-repo git post-commit hooks. Guards, in order:
-//   - CBM_GRAPHGEN_CHILD set -> we ARE the background run; never recurse
+//   - a child run (isChildRun) -> never recurse
 //   - no report yet          -> stay silent (never auto-generate the first one)
 //   - not a git work tree    -> nothing to compare against
 //   - report >= HEAD         -> fresh
@@ -29,6 +29,8 @@ import {
   releaseLock,
   nowSeconds,
   systemMessage,
+  CHILD_RUN,
+  isChildRun,
 } from './hook-io.mjs';
 
 /**
@@ -59,7 +61,7 @@ import {
 // Constants because outcomeOf() decides on them. A reworded literal here and a stale literal there
 // silently turns a missing `claude` back into an indistinguishable "ran".
 export const REASONS = {
-  child: 'child run',
+  child: CHILD_RUN,
   debounced: 'debounced',
   noClaude: 'no claude CLI',
   noReport: 'no report yet',
@@ -250,7 +252,7 @@ export function reportFor(cwd, vaultRoot = vault()) {
  * @returns {GraphPlan}
  */
 export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
-  if (process.env.CBM_GRAPHGEN_CHILD) return { action: 'silent', reason: REASONS.child };
+  if (isChildRun()) return { action: 'silent', reason: REASONS.child };
 
   const { slug, report } = reportFor(cwd, vaultRoot);
   // Never auto-generate the FIRST report: that is a minutes-long unattended run the user never

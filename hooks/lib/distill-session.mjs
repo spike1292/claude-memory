@@ -37,6 +37,8 @@ import {
   which,
   withinDebounce,
   writeMarker,
+  CHILD_RUN,
+  isChildRun,
 } from './hook-io.mjs';
 
 // DISTILL_VAULT stays supported for dry runs against a throwaway vault; otherwise this is
@@ -1199,7 +1201,7 @@ export const STOP_DEBOUNCE_SECONDS = 7200;
 // mapper — drift apart silently: reword one and a recursion guard starts reporting as a hook that
 // ran, with every test still green.
 export const GATE_REASONS = {
-  child: 'child run',
+  child: CHILD_RUN,
   stopActive: 'stop_hook_active',
   debounced: 'stop: debounced',
   endCovered: 'session end: already distilled',
@@ -1226,7 +1228,7 @@ export const GATE_REASONS = {
 export function gatePlan(p, { now = nowSeconds() } = {}) {
   // The headless extractor runs as a `claude` session, whose Stop fires this hook again. Without
   // this the distiller distils its own distillation, recursively.
-  if (process.env.CLAUDE_DISTILL_CHILD) return { run: false, reason: GATE_REASONS.child };
+  if (isChildRun()) return { run: false, reason: GATE_REASONS.child };
   // Claude Code's own Stop-loop guard. Absent on SessionEnd, harmless there.
   if (p?.stop_hook_active === true) return { run: false, reason: GATE_REASONS.stopActive };
   // Same shape as a missing transcript: the payload is this hook's only source of scope, and
@@ -1320,8 +1322,8 @@ export function gate(p) {
 /**
  * The gate's outcome, for the hook log.
  *
- * `stop_hook_active` is Claude Code's own recursion guard and `child run` is this hook's, so both
- * are the same story: the hook fired inside work it had itself started.
+ * `stop_hook_active` is Claude Code's own recursion guard and `child run` is ours (`isChildRun()`,
+ * a headless `claude` any of our hooks started), so both are the same story: a recursion guard.
  *
  * Every value in GATE_REASONS is mapped, and a test proves gatePlan can emit nothing else — so the
  * trailing `ran` is unreachable for a skip today. It is the default for a reason ADDED without a

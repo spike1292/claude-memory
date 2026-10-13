@@ -4,7 +4,7 @@
 //
 // Thin on purpose: stdin, cwd, stdout only — see docs/architecture.md's "Entry files are thin
 // wrappers over lib/" invariant (and G1, where the pattern breaks elsewhere).
-import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
 import { surface } from './lib/insights-surface.mjs';
 
 // readStdin() and not `new Response(process.stdin)`: the web-streams path costs ~18 ms of runtime
@@ -12,6 +12,7 @@ import { surface } from './lib/insights-surface.mjs';
 // time, paid to parse a 100-byte payload. Measured 2026-08-20,
 // docs/decisions/2026-08-20-hook-startup-cost.md.
 const p = payload(readStdin());
+if (standDown('insights-surface', p)) process.exit(0);
 const cwd = hookCwd(p);
 
 // A SessionStart hook must never break a session.
