@@ -4,9 +4,9 @@ This page explains *why* retrieval is shaped as it is. The *how* — the request
 the timeouts — is in [architecture.md](architecture.md), Flow 2 (recall) and Flow 3 (the search
 daemon). The code is `scripts/lib/memory-semantic.mjs` and `hooks/lib/memory-recall.mjs`.
 
-Every number below links to the decision record that measured it and names its case set. The
-tables stay in those records; this page does not copy them. Read a small set honestly: on the
-real-vault sets one EN case is 3.6 points and one NL case 6.7.
+Measurements live in the linked decision records, each with its case set. This page states the
+mechanism and points there; it does not copy the figures. The real-vault sets are small, so read
+direction and MRR rather than single-point moves.
 
 ## The two arms
 
@@ -15,13 +15,13 @@ A query runs two searches over the same chunks and fuses the two rankings.
 **The vector arm** matches by meaning. It embeds the query and scores every chunk by cosine — a
 linear scan, no ANN index. It wins when the question and the note share no distinctive word:
 "which **firewall** rules apply here" reaches a note about `WAF`, and "a **short outage**" reaches
-one about a `cutover`. Keyword search scores those 0 of 8
+one about a `cutover`. Keyword search cannot match those at all
 ([model choice](decisions/2026-08-15-model-choice.md), "Why a vector search arm at all").
 
 **The BM25 arm** matches by words (`k1=1.2`, `b=0.75`, one score per chunk). It wins on
 identifier-shaped questions — a ticket key, a CLI name, a dated commit-style title — where an
-embedding sees one token among many. On the real-vault EN set it found 4 of the 7 notes the vector
-arm missed, all of that shape ([fusion tuning](decisions/2026-08-15-fusion-tuning.md), "Why fusion
+embedding sees one token among many. The notes the vector arm missed that keyword search found on
+the real-vault EN set were all of that shape ([fusion tuning](decisions/2026-08-15-fusion-tuning.md), "Why fusion
 exists at all").
 
 The two arms miss *different* notes. That is the whole reason to run both.
@@ -63,16 +63,14 @@ There are two gates, because the two paths produce two different kinds of score:
 
 - **Cosine `MIN_COS = 0.55`** — on the `--serve` path. The gate reads each hit's raw cosine, not
   the fused score; a keyword-only hit has cosine 0 and never passes. On-topic and off-topic prompts
-  *overlap* in cosine, so no threshold is clean. 0.55 rejects every off-topic prompt in its sample
-  and gives up one on-topic one. The sample is 10 prompts; the calibration and that warning sit
-  beside the constant in `hooks/lib/memory-recall.mjs`.
+  *overlap* in cosine, so no threshold is clean; 0.55 errs toward rejecting. Its calibration is
+  a small sample and sits beside the constant in `hooks/lib/memory-recall.mjs`.
 - **BM25 `MIN_SCORE = 6.0`** — on the fallback path, when the server is not up. It scores only the
-  card chunk. It is *low*: every on-topic prompt clears it by 2.5–3.4×, but it also lets through
-  much of the off-topic band. About 14 would halve false fires at no on-topic cost, and it still
+  card chunk. It is *low*: every on-topic prompt clears it with margin, but it also lets through
+  much of the off-topic band. A higher gate would cut false fires at no on-topic cost, and it still
   ships at 6.0, because absolute BM25 scales with the corpus and the sweep is a direction, not a
   value ([recall gate calibration](decisions/2026-08-19-recall-gate-calibration.md), synthetic
-  seed 7 at 120/300/1000 notes, `cases-paraphrase` + `cases-keyword`, plus a machine-local
-  off-topic control).
+  seed 7, `cases-paraphrase` + `cases-keyword`, plus a machine-local off-topic control).
 
 The two scales mean nothing to each other — do not compare 0.55 with 6.0. Both are starting points.
 `/memory:doctor --stats` shows the real answer/abstain rate from `logs/recall-<date>.jsonl`; read
@@ -86,7 +84,7 @@ that before you move either one.
   the whole note, and its text is what the recall brief shows, whichever chunk matched.
 - **The alias chunk** — the `_Also asked as:` lines, alone, led by the note name. Those lines are
   questions, which is what a query looks like. Left at the end of the last section, they were
-  diluted into that section's subject: a near-verbatim query missed its note in the top 40
+  diluted into that section's subject, and a near-verbatim query could not reach its note
   ([alias chunk](decisions/2026-08-15-alias-chunk-regex.md)).
 - **Sections** — each `##` section, cut at the profile's `maxChars`. Every chunk starts with the
   note's identity, so a mid-note section still belongs to its note.
@@ -94,14 +92,14 @@ that before you move either one.
 Two traps here are silent. Neither raises an error; both produce numbers that look like a verdict.
 
 **Batch size is 1.** Batching pads each text to the longest in its batch, and padding changes the
-vector: bge-m3 gives cosine 0.986 between the same string alone and batched. Competing notes sit
-~0.001 apart, so that shift does not perturb a ranking, it decides it. It showed up as two rebuilds
+vector. Competing notes sit closer together than that shift, so it does not perturb a ranking, it
+decides it. It showed up as two rebuilds
 of byte-identical notes scoring differently
 ([model choice](decisions/2026-08-15-model-choice.md), "Batch size and padding"). Check with
 `--check-embedding` before you touch it.
 
-**Wrong pooling looks like a bad model.** bge-m3 is trained for CLS pooling. Mean-pooled, it scored
-25.0% @5 on the real-vault EN set; CLS-pooled, 67.9%
+**Wrong pooling looks like a bad model.** bge-m3 is trained for CLS pooling. Mean-pooled, it looked
+like a weak model on the real-vault EN set until the pooling was fixed
 ([model choice](decisions/2026-08-15-model-choice.md), "Why bge-m3 was almost disqualified"). The
 mean-pooled rankings were confident, plausible and wrong. The synthetic EN paraphrase set exists to
 trip on exactly this ([synthetic baseline](decisions/2026-08-15-synth-vault-baseline.md)).
@@ -114,11 +112,11 @@ pooling, and the `dupeMin`/`clusterMin` thresholds. **None of them carries over 
 - Pooling: above.
 - Prefixes: `e5-multi` needs `query: ` / `passage: `; bge-m3 needs none. A wrong prefix is another
   silent shift.
-- Chunk length: bge-m3 was once judged "too slow" because only its profile carried 4000 characters
-  where the others had 1800 ([model choice](decisions/2026-08-15-model-choice.md)).
+- Chunk length: bge-m3 was once judged "too slow" because only its profile carried a longer
+  `maxChars` than the others ([model choice](decisions/2026-08-15-model-choice.md)).
 - Thresholds: bge-m3's similarities sit low and wide, e5-multi's high and narrow. e5-multi's
-  `dupeMin` 0.95, copied across, found 0 of 16 known duplicates (same record, "duplicate-threshold
-  calibration").
+  `dupeMin`, copied across, made both scans report a clean vault (same record,
+  "duplicate-threshold calibration").
 
 The fusion weight is per-setup too. Re-sweep it after a model change. Indexes are keyed per model
 (`db/semantic-<slug>-<model>.db`), so comparing two models costs an eval run, not a rebuild each way.
@@ -129,7 +127,7 @@ The fusion weight is per-setup too. Re-sweep it after a model change. Indexes ar
 `bestDupe()` — raw cosine between card chunks of the same layer, `>= PROFILE.dupeMin`. The
 distiller asks it before writing a new insight; `--dupes` asks it in an audit. One predicate is the
 point: an audit that defines duplicates differently from the writer cannot check the writer. The
-word-overlap arm it replaced caught 0 of 25 real duplicates on the 447-note Insights corpus
+word-overlap arm it replaced caught none of the real duplicates on the Insights corpus
 ([embedding reconcile](decisions/2026-08-23-embedding-reconcile.md)).
 
 This is not the query score. A query result is RRF-fused and is 0 for a keyword-only hit, so gating
@@ -145,7 +143,7 @@ Loading the model and an index takes seconds, too slow for a per-prompt hook. So
 process holds the model and answers over a socket.
 
 - **One server per machine, keyed by model.** The project slug is a field in each request, and
-  indexes load on demand and stay cached. One process per project would mean one ~1.3 GB model per
+  indexes load on demand and stay cached. One process per project would mean one resident model per
   indexed repo.
 - **Three memory bounds**, each covering what the others cannot:
   - `enableCpuMemArena: false` — onnxruntime's arena grows to the largest input it has seen and
@@ -162,9 +160,8 @@ Redundant spawns probe the socket and exit. Numbers and mechanics: architecture.
 
 `scripts/memory-eval.mjs` (`/memory:eval`) scores a case set — questions with a known gold note —
 and reports recall@k and MRR. **The case set is fixed, and every retrieval change is scored on the
-same file.** Writing fresh questions per run measures the questions: scores moved 0.60 → 1.00 while
-the question set moved under them
-([eval harness design](decisions/2026-08-24-eval-harness-design.md)).
+same file.** Writing fresh questions per run measures the questions: scores moved while the question set
+moved under them ([eval harness design](decisions/2026-08-24-eval-harness-design.md)).
 
 - **Synthetic vaults** (`scripts/memory-synth-vault.mjs`) hold the notes still too, and their gold is
   known by construction. Real prose, invented names. The EN set is at its ceiling — a tripwire for
