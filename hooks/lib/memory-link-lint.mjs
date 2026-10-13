@@ -15,7 +15,8 @@
 // sweep and the production timeout it fixed: docs/decisions/2026-08-17-shell-vs-node-hooks.md.
 import fs from 'node:fs';
 import path from 'node:path';
-import { vault, projectKey, legacyKey } from './paths.mjs';
+import { createHash } from 'node:crypto';
+import { vault, projectKey, legacyKey, memoryHome } from './paths.mjs';
 
 // A bash `[[ $var =~ re ]]` test inside a fenced block parses as a wikilink. Reported as a dangling
 // link on 2026-08-22 from a note about shell arithmetic. Fences are stripped before link scanning,
@@ -105,20 +106,20 @@ export function mdFiles(dir) {
 
 /**
  * L1 notes with no inbound wikilink from anywhere except the MOC and themselves.
- * `corpus` is [absolutePath, text] pairs across Memory/ and Insights/.
+ * `corpus` is [absolutePath, text or its linkTargets()] pairs across Memory/ and Insights/.
  *
  * @param {string} memDir
  * @param {readonly string[]} noteNames
- * @param {readonly (readonly [string, string])[]} corpus
+ * @param {readonly (readonly [string, string | ReadonlySet<string>])[]} corpus
  * @returns {string[]}
  */
 export function findOrphans(memDir, noteNames, corpus) {
   const moc = path.join(memDir, 'MEMORY.md');
   /** @type {Map<string, Set<string>>} */
   const inbound = new Map(); // target -> Set(linking file)
-  for (const [file, text] of corpus) {
+  for (const [file, body] of corpus) {
     if (file === moc) continue; // the MOC does not count as a sibling
-    for (const t of linkTargets(text)) {
+    for (const t of typeof body === 'string' ? linkTargets(body) : body) {
       if (!inbound.has(t)) inbound.set(t, new Set());
       /** @type {Set<string>} */ (inbound.get(t)).add(file);
     }
@@ -258,7 +259,9 @@ export function lint(cwd) {
     mem = path.join(vault(), 'Memory', slug);
   }
   if (!isDir(mem)) return '';
-  return reportFor(mem, path.join(vault(), 'Insights', slug));
+  const id = createHash('sha1').update(mem).digest('hex').slice(0, 12);
+  const cache = path.join(memoryHome(), 'cache', `link-targets-${id}.json`);
+  return reportFor(mem, path.join(vault(), 'Insights', slug), cache);
 }
 
 /**
@@ -282,16 +285,65 @@ export function readCorpus(mem, ins) {
 }
 
 /**
+ * [path, linkTargets()] for every readable note under `mem` and `ins`. With `cacheFile`, a note
+ * whose `mtimeMs:size:ino` stamp is unchanged is answered from the cache and never opened.
+ * Opening every note ran this hook into its timeout: docs/decisions/2026-10-13-link-lint-cache.md.
+ *
+ * @param {string} mem
+ * @param {string} ins
+ * @param {string} [cacheFile]
+ * @returns {[string, Set<string>][]}
+ */
+export function readLinks(mem, ins, cacheFile) {
+  /** @type {Record<string, { stamp: string, targets: string[] }>} */
+  let cache = {};
+  if (cacheFile)
+    try {
+      cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    } catch {
+      /* first run or unreadable: rebuild */
+    }
+  /** @type {typeof cache} */
+  const next = {};
+  /** @type {[string, Set<string>][]} */
+  const out = [];
+  for (const f of [...mdFiles(mem), ...mdFiles(ins)]) {
+    try {
+      const st = fs.statSync(f);
+      const stamp = `${st.mtimeMs}:${st.size}:${st.ino}`;
+      const hit = cache[f]?.stamp === stamp ? cache[f].targets : null;
+      const targets = hit ?? [...linkTargets(fs.readFileSync(f, 'utf8'))];
+      next[f] = { stamp, targets };
+      out.push([f, new Set(targets)]);
+    } catch {
+      /* unreadable - skip */
+    }
+  }
+  const json = JSON.stringify(next);
+  if (cacheFile && json !== JSON.stringify(cache))
+    try {
+      fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+      const tmp = `${cacheFile}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, json);
+      fs.renameSync(tmp, cacheFile);
+    } catch {
+      /* best effort: the next run reads the notes again */
+    }
+  return out;
+}
+
+/**
  * The report for one project's `Memory/` and `Insights/` directories, or '' when there is nothing
  * to say. Split out of `lint()` so the findings are testable against a directory, without a vault
  * and without the resolution that picks one.
  *
  * @param {string} mem
  * @param {string} ins
+ * @param {string} [cacheFile] see readLinks()
  * @returns {string}
  */
-export function reportFor(mem, ins) {
-  const corpus = readCorpus(mem, ins);
+export function reportFor(mem, ins, cacheFile) {
+  const corpus = readLinks(mem, ins, cacheFile);
 
   let names;
   try {
@@ -317,13 +369,16 @@ export function reportFor(mem, ins) {
     for (const n of orphans) out.push(`  - ${n}`);
   }
 
-  const moc = path.join(mem, 'MEMORY.md');
-  const byName = new Map(corpus.map(([f, t]) => [f, t]));
-  if (!byName.has(moc)) return out.join('\n');
-  const drift = findDrift(/** @type {string} */ (byName.get(moc)), (t) => {
-    const p = path.join(mem, `${t}.md`);
-    return byName.has(p) ? /** @type {string} */ (byName.get(p)) : null;
-  });
+  const read = (/** @type {string} */ p) => {
+    try {
+      return fs.readFileSync(p, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const mocText = read(path.join(mem, 'MEMORY.md'));
+  if (mocText === null) return out.join('\n');
+  const drift = findDrift(mocText, (t) => read(path.join(mem, `${t}.md`)));
   if (drift.length) {
     out.push('');
     out.push(
@@ -335,7 +390,7 @@ export function reportFor(mem, ins) {
     for (const d of drift) out.push(`  - [[${d.target}]] hook says ${d.n}, not found in the note`);
   }
 
-  const oversize = findOversize(/** @type {string} */ (byName.get(moc)));
+  const oversize = findOversize(mocText);
   if (oversize) {
     if (out.length) out.push('');
     out.push(oversize);

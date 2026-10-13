@@ -2,7 +2,7 @@
 // CLI entry for the hook-startup bench. Owns argv, the scratch dir and stdout; the logic is in
 // scripts/lib/bench-hooks.mjs.
 //
-//   node scripts/bench-hooks.mjs [-n 20] [--notes 50] [--cwd .] [--keep]
+//   node scripts/bench-hooks.mjs [-n 20] [--notes 50] [--insights N] [--cwd .] [--keep]
 //
 // It never touches the real vault: HOME, CLAUDE_MEMORY_HOME and CLAUDE_VAULT are all redirected
 // into a temp root that the lib refuses to run outside of. `--cwd` is the directory the hooks are
@@ -22,6 +22,7 @@ const val = (/** @type {string} */ name, /** @type {string} */ dflt) => {
 
 const n = Number(val('-n', '20'));
 const notes = Number(val('--notes', '50'));
+const insights = argv.includes('--insights') ? Number(val('--insights', '0')) : undefined;
 const cwd = path.resolve(val('--cwd', process.cwd()));
 const keep = argv.includes('--keep');
 const pluginRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -45,6 +46,7 @@ try {
     slug,
     n,
     notes,
+    insights,
     onRow: (r) => process.stderr.write(`  measured ${r.name}: ${ms(r.median)} ms\n`),
   });
   console.log(formatTable(rows));

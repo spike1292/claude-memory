@@ -94,9 +94,12 @@ const note = (title, links) =>
  * against memory-synth-vault's fixed corpus.
  *
  * @param {string} root
- * @param {{slug: string, notes?: number}} opts
+ * @param {{slug: string, notes?: number, insights?: number}} opts
  */
-export function makeFixture(root, { slug, notes = 50 }) {
+export function makeFixture(
+  root,
+  { slug, notes = 50, insights = Math.max(1, Math.round(notes / 5)) },
+) {
   const vault = path.join(root, 'vault');
   const memory = path.join(vault, 'Memory', slug);
   const mistakes = path.join(vault, 'Insights', slug, 'Mistakes');
@@ -111,7 +114,7 @@ export function makeFixture(root, { slug, notes = 50 }) {
     fs.writeFileSync(path.join(memory, `2026-08-20-${names[i]}.md`), note(names[i], linked));
   }
   fs.writeFileSync(path.join(memory, 'MEMORY.md'), note('Memory', names));
-  for (let i = 0; i < Math.max(1, Math.round(notes / 5)); i++)
+  for (let i = 0; i < insights; i++)
     fs.writeFileSync(
       path.join(mistakes, `2026-08-20-mistake-${i}.md`),
       note(`Mistake ${i}`, [names[i % names.length]]),
@@ -283,7 +286,7 @@ export function sample(node, args, opts, n) {
  * twenty seconds of silence.
  *
  * @param {{root: string, pluginRoot: string, cwd: string, slug: string, n?: number,
- *   notes?: number, node?: string, onRow?: (row: Row) => void}} opts
+ *   notes?: number, insights?: number, node?: string, onRow?: (row: Row) => void}} opts
  */
 export function bench({
   root,
@@ -292,10 +295,11 @@ export function bench({
   slug,
   n = 20,
   notes = 50,
+  insights,
   node = process.execPath,
   onRow = () => {},
 }) {
-  const fixture = makeFixture(root, { slug, notes });
+  const fixture = makeFixture(root, { slug, notes, insights });
   const env = benchEnv(root);
   assertIsolated(env, root);
 

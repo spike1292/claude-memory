@@ -30,6 +30,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [FRESH-2 window: 90 days](decisions/2026-10-12-freshness-window.md) | Stamps flagged at 7/30/60/90/180 days on the real vault, and why only `as of` stamps count. |
 | [`/memory:health` reads what the scans name](decisions/2026-10-12-health-read-scope.md) | Bytes for every note vs the scans' output, and where the below-threshold band and its 15-pair cap come from. |
 | [No fact-drift CI check](decisions/2026-10-13-fact-drift-scanner.md) | A second scanner for one figure stated two ways: what it caught, what it flagged on HEAD, and why it did not ship. |
+| [The link lint caches wikilink targets](decisions/2026-10-13-link-lint-cache.md) | Per-note `mtimeMs:size:ino` stamp; bench before/after at 1,100 Insights notes, and the cold-cache case it could not measure. |
 | [`vault-mcp`, a read-only MCP server](decisions/2026-10-13-vault-mcp.md) | Bearer token from a file, `Origin` refused, MCP `2026-07-28` only, project required, keyword fallback without recall's gates. |
 
 ## Guides
