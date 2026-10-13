@@ -11,6 +11,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`/memory:save` records dead ends, errors, current state and files to read (#90).** Four new
+  sections beside the old four, an explicit leave-out list, and a verify step before the write.
+  `/memory:resume` reports the new sections and reads older logs without them as before.
 - **Distilled notes carry `confidence:` when the model gives one (#102).** The extractor asks for
   `high`, `medium` or `low` per insight, defined by what the session verified. A missing or
   unrecognised value writes no `confidence:` line; it is never defaulted. Existing notes are not
