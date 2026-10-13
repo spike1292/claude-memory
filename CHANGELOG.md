@@ -31,6 +31,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `get_note` reads only the folders the indexer reads. No write path.
 - **`no-floating-promises` counted, and still no linter (#50).** The count and the reasons are an
   addendum to `docs/decisions/2026-08-20-types-and-linting.md`.
+- **No CI check for one figure stated two ways (#134).** A second scanner was measured against
+  three known drifts and today's tree, and did not ship; the result is in
+  `docs/decisions/2026-10-13-fact-drift-scanner.md`.
 
 ### Fixed
 
