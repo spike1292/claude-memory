@@ -11,6 +11,7 @@ replace Claude Code's memory and does not compete with it — it is the vault be
 
 For software engineers working in a codebase. Why it is shaped this way, and what it refuses to
 be: **[docs/vision.md](docs/vision.md)**. How to use it day to day: **[docs/usage.md](docs/usage.md)**.
+How it compares to other memory systems, and where it loses: **[docs/comparison.md](docs/comparison.md)**.
 
 Everything is plain Markdown on your disk. The embedding model runs locally via ONNX — **notes are
 never sent anywhere.**
