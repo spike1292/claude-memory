@@ -572,7 +572,6 @@ export function logHook({ hook, event = '', cwd, session, outcome, reason, extra
   // *_CHILD guards suppress only their OWN hook, so a heavy hook's headless `claude` re-firing
   // SessionStart is marked, not suppressed — its cost is real, just not a user session's.
   const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
-  // A label only: no hook may read MEMORY_MACHINE_RUN to decide whether to run.
   const machine = Boolean(process.env.MEMORY_MACHINE_RUN);
   appendJsonl('hooks', cwd, {
     // extra FIRST — spread last, a caller could overwrite the four fields the reader judges by.
