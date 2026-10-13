@@ -9,6 +9,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/usage.md`, a user guide (#39).** The layers from the user's side, one line per command on
+  when to run it, how to turn recall on, and the failure modes a user hits. Linked from the README.
+
 ## [0.10.0] - 2026-10-13
 
 ### Added

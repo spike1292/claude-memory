@@ -34,6 +34,7 @@ Dated, and superseded rather than edited when the answer changes.
 
 | | |
 | --- | --- |
+| [Usage](usage.md) | For a user, not a contributor: what lands in each layer, which command to run when, turning recall on, and the failures you will hit. |
 | [Vision](vision.md) | What this is for, what it refuses to be, the principles behind the repeated decisions, the admitted gaps, and where the open issues point. Sourced; edited in place, not dated. |
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
 | [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
