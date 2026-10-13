@@ -120,17 +120,24 @@ const isolated = (/** @type {(argvFile: string) => void} */ fn) => {
     path.join(state, '.claude.json'),
     JSON.stringify({ mcpServers: { 'codebase-memory-mcp': CBM } }),
   );
-  const prev = { home: process.env.CLAUDE_MEMORY_HOME, p: process.env.PATH, h: process.env.HOME };
-  process.env.CLAUDE_MEMORY_HOME = state;
-  process.env.HOME = state;
-  process.env.PATH = `${bin}${path.delimiter}${prev.p}`;
+  /** @type {Record<string, string | undefined>} */
+  const env = {
+    CLAUDE_MEMORY_HOME: state,
+    HOME: state,
+    CLAUDE_CONFIG_DIR: undefined,
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+  };
+  const prev = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  const set = (/** @type {Record<string, string | undefined>} */ vars) => {
+    for (const [k, v] of Object.entries(vars))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+  };
+  set(env);
   try {
     return fn(argvFile);
   } finally {
-    if (prev.home === undefined) delete process.env.CLAUDE_MEMORY_HOME;
-    else process.env.CLAUDE_MEMORY_HOME = prev.home;
-    process.env.PATH = prev.p;
-    process.env.HOME = prev.h;
+    set(prev);
   }
 };
 
@@ -349,5 +356,18 @@ test('no user-scope codebase-memory-mcp server: nudge as a missing dependency, n
     assert.strictEqual(p.action, 'nudge');
     assert.strictEqual(p.reason, REASONS.noMcp);
     assert.strictEqual(check(cwd, { vaultRoot }).outcome, 'noop-missing-dep');
+  });
+});
+
+test('CLAUDE_CONFIG_DIR relocates .claude.json, as it does for Claude Code', () => {
+  const cwd = staleRepo();
+  const vaultRoot = staleReport(cwd);
+  isolated(() => {
+    const home = process.env.HOME ?? '';
+    const dir = path.join(home, 'config');
+    fs.mkdirSync(dir);
+    fs.renameSync(path.join(home, '.claude.json'), path.join(dir, '.claude.json'));
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    assert.strictEqual(plan(cwd, { vaultRoot }).action, 'regen');
   });
 });

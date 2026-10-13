@@ -67,7 +67,7 @@ export const REASONS = {
   noCommit: 'no recorded commit',
   noHead: 'no HEAD',
   fresh: 'fresh',
-  noMcp: 'no user-scope codebase-memory-mcp server in ~/.claude.json',
+  noMcp: 'no user-scope codebase-memory-mcp server in .claude.json',
   unsafePath: 'report path holds a comma or control character — no permission rule can name it',
 };
 
@@ -110,7 +110,12 @@ const localDate = (s) => {
 /** @returns {object | null} */
 const cbmServer = () => {
   try {
-    const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    const c = JSON.parse(
+      fs.readFileSync(
+        path.join(process.env.CLAUDE_CONFIG_DIR || os.homedir(), '.claude.json'),
+        'utf8',
+      ),
+    );
     return c.mcpServers?.['codebase-memory-mcp'] ?? null;
   } catch {
     return null;
@@ -140,7 +145,7 @@ export function regenPrompt(p) {
 
 /**
  * This session reads text the user never saw, unattended, so it gets a closed tool list: no Bash
- * or other code-running tool, seven MCP tools, and Read/Edit on the one report file. `dontAsk`
+ * or other code-running tool, the `REGEN_MCP_TOOLS`, and Read/Edit on the one report file. `dontAsk`
  * denies everything else. `--restricted` drops the user's and the project's allow rules, which
  * would otherwise let in any MCP tool they allow (ctx_execute runs code); it also unloads plugins
  * enabled there, so this one returns through `--plugin-dir` for its command, and drops the user's
