@@ -85,6 +85,42 @@ test('doctor reports an oversize MEMORY.md through capReport', () => {
   }
 });
 
+test('doctor warns when a git-backed vault is 20+ commits ahead of its upstream', () => {
+  const world = scratch();
+  /** @param {string[]} args */
+  const git = (...args) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args],
+      { cwd: world.vault, env: world.env, stdio: 'pipe' },
+    );
+  const vaultSection = () => {
+    const out = run(world);
+    return out.slice(out.indexOf('\nvault\n'), out.indexOf('vault writable'));
+  };
+  /** @param {number} n */
+  const commits = (n) => {
+    for (let i = 0; i < n; i++) git('commit', '-q', '--allow-empty', '-m', `c${i}`);
+  };
+  try {
+    git('init', '-q', '-b', 'main');
+    commits(1);
+    assert.match(vaultSection(), /ok\s+vault git: no upstream, not pushed anywhere/);
+
+    const remote = path.join(world.tmp, 'remote.git');
+    execFileSync('git', ['init', '-q', '--bare', remote], { env: world.env, stdio: 'pipe' });
+    git('remote', 'add', 'origin', remote);
+    git('push', '-q', '-u', 'origin', 'main');
+    commits(19);
+    assert.match(vaultSection(), /ok\s+vault git: 19 commits ahead of upstream/);
+
+    commits(1);
+    assert.match(vaultSection(), /WARN vault git: 20 commits ahead of upstream/);
+  } finally {
+    fs.rmSync(world.tmp, { recursive: true, force: true });
+  }
+});
+
 test('doctor warns on CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, a third memory system', () => {
   const world = scratch();
   try {

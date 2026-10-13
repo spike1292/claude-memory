@@ -236,6 +236,17 @@ if [ -d "$VAULT" ]; then
   # will ever commit, so a vault nested in an unrelated repo never gets written to.
   if command -v git >/dev/null 2>&1 && git -C "$VAULT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     ok "vault kind: git-backed"
+    # #116: the local tracking ref only — no fetch, so it works offline and never touches auth.
+    if ahead=$(git -C "$VAULT" rev-list --count '@{u}..HEAD' 2>/dev/null); then
+      if [ "$ahead" -ge 20 ]; then
+        warn "vault git: $ahead commits ahead of upstream" \
+          "the plugin never pushes, so these notes exist on this machine only. Push the vault, or add a post-commit push hook (README, \"Pushing a git-backed vault\")."
+      else
+        ok "vault git: $ahead commits ahead of upstream"
+      fi
+    else
+      ok "vault git: no upstream, not pushed anywhere"
+    fi
   else
     ok "vault kind: plain directory"
   fi
