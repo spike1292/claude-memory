@@ -334,6 +334,7 @@ test('reportFor with a link cache: an edited note is read again, an unchanged on
 
   fs.writeFileSync(b, 'see [[a]]');
   reportFor(mem, ins, cache);
+  if (process.getuid?.() === 0) return t.skip('root reads a mode-000 file');
   fs.chmodSync(b, 0o000);
   assert.doesNotMatch(
     reportFor(mem, ins, cache),

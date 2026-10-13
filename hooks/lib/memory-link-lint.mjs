@@ -286,8 +286,8 @@ export function readCorpus(mem, ins) {
 
 /**
  * [path, linkTargets()] for every readable note under `mem` and `ins`. With `cacheFile`, a note
- * whose `mtimeMs:size:ino` stamp is unchanged is answered from the cache and never opened: opening
- * 1,120 notes on a cold file cache is what ran this hook into its timeout (#202).
+ * whose `mtimeMs:size:ino` stamp is unchanged is answered from the cache and never opened.
+ * Opening every note ran this hook into its timeout: docs/decisions/2026-10-13-link-lint-cache.md.
  *
  * @param {string} mem
  * @param {string} ins
