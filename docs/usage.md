@@ -59,8 +59,8 @@ silent.
 
 - **Empty vault after a config change mid-session.** A setting added to `settings.json` does not
   reach a session already running, and the vault falls back to the default path. Put settings in
-  `config.json` — see [Configuration](../README.md#configuration). `/memory:doctor` fails loudly when
-  this happens.
+  `config.json` — see [Configuration](../README.md#configuration). `/memory:doctor` prints a FAIL
+  line when the vault is empty while a populated one exists.
 - **A note written on another device is not found here.** The vault syncs by whatever you use
   (git push/pull, a cloud client); until that has run, the note is not on this disk. Once it is,
   the next session start re-indexes it.
