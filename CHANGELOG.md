@@ -44,6 +44,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Changed
 
+- **The background graph regen no longer skips permissions (#177).** It ran with
+  `--dangerously-skip-permissions` while reading repo text. It now runs in `dontAsk` mode with no
+  Bash, seven named codebase-memory-mcp tools, and Read/Edit on its one `GRAPH_REPORT.md`. The
+  prompt passes slug, report path, date and short commit as data, and `/memory:graph-report` uses
+  them when given. A report path with a comma or control character nudges instead of spawning.
+  An MCP server registered under another name now fails closed.
 - **`/memory:health` reads what the scans name, not every note (#95).** Step 0 now also runs
   `--dupes` and `--clusters`. Step 1 reads `REFLECTIONS.md`, `MEMORY.md`, the named notes in
   claim-line form, and a capped sample just below the dupe threshold. `/memory:prune` step 2
