@@ -1,5 +1,5 @@
 // Tests for scripts/lib/vault-mcp.mjs. Synthetic vault, isolated HOME and CLAUDE_MEMORY_HOME, a
-// hand-built CARD index and a fake --serve socket: the embedding model is never loaded.
+// stubbed CARD reader over an empty index file and a fake --serve socket: the embedding model is never loaded.
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
@@ -10,7 +10,6 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vmcp-'));
@@ -34,19 +33,18 @@ execFileSync(process.execPath, [
 ]);
 
 const { MODEL_KEY, isIndexedSlug, indexedSlugs } = await import('./memory-semantic.mjs');
-const { CARD } = await import('./lexical.mjs');
 const { createHandler, readToken, startServer, PROTOCOL } = await import('./vault-mcp.mjs');
 
 const DB_DIR = path.join(MEM, 'db');
 fs.mkdirSync(DB_DIR, { recursive: true });
 const memDir = path.join(VAULT, 'Memory', 'bench');
 const notes = fs.readdirSync(memDir).filter((f) => f.endsWith('.md'));
-const db = new DatabaseSync(path.join(DB_DIR, `semantic-bench-${MODEL_KEY}.db`));
-db.exec('CREATE TABLE chunks (note TEXT, layer TEXT, heading TEXT, text TEXT, vec BLOB)');
-const ins = db.prepare('INSERT INTO chunks (note, layer, heading, text) VALUES (?, ?, ?, ?)');
-for (const f of notes)
-  ins.run(f.slice(0, -3), 'Memory', CARD, fs.readFileSync(path.join(memDir, f), 'utf8'));
-db.close();
+const cards = notes.map((f) => ({
+  note: f.slice(0, -3),
+  layer: 'Memory',
+  text: fs.readFileSync(path.join(memDir, f), 'utf8'),
+}));
+fs.writeFileSync(path.join(DB_DIR, `semantic-bench-${MODEL_KEY}.db`), '');
 fs.writeFileSync(path.join(DB_DIR, `semantic-..-${MODEL_KEY}.db`), '');
 fs.writeFileSync(path.join(DB_DIR, `semantic-other-not-this-model.db`), '');
 
@@ -85,6 +83,8 @@ test.after(() => {
 });
 const SOCK = path.join(sockDir, 's.sock');
 let spawns = 0;
+/** @type {string[]} */
+const cardReads = [];
 let sockHits = 0;
 /** @type {any[]} */
 const sockRequests = [];
@@ -93,6 +93,10 @@ const sockRequests = [];
 const handler = (opts = {}) =>
   createHandler({
     token: TOKEN,
+    readCards: (/** @type {string} */ f) => {
+      cardReads.push(f);
+      return cards;
+    },
     sockPath: SOCK,
     spawn: () => {
       spawns++;
@@ -294,6 +298,7 @@ test('search: bad project is refused before any socket or spawn', async () => {
     assert.equal(body.error.code, -32602, project);
   }
   assert.equal(spawns, 0);
+  assert.deepEqual(cardReads, []);
   const badK = await tool('search', { query: 'x y z', project: 'bench', k: 11 });
   assert.equal(badK.body.error.code, -32602);
 });
@@ -309,6 +314,7 @@ test('search: no socket answers from the keyword arm and spawns once', async () 
   assert.ok(out.results.length > 0);
   assert.match(out.results[0].note, /heap-cap/);
   assert.equal(spawns, 1);
+  assert.deepEqual(cardReads, [path.join(DB_DIR, `semantic-bench-${MODEL_KEY}.db`)]);
 });
 
 test('search: a live --serve socket answers with arm semantic', async () => {
@@ -367,7 +373,13 @@ test('get_note reads a Memory note and refuses everything outside the sources', 
 });
 
 test('startServer: a real request without the token gets 401', async () => {
-  const srv = startServer({ host: '127.0.0.1', port: 0, token: TOKEN, log: () => {} });
+  const srv = startServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: TOKEN,
+    readCards: () => [],
+    log: () => {},
+  });
   await new Promise((r) => srv.once('listening', () => r(null)));
   try {
     const port = /** @type {import('node:net').AddressInfo} */ (srv.address()).port;

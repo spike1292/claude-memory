@@ -6,10 +6,9 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import * as paths from '../../hooks/lib/paths.mjs';
 import { detach } from '../../hooks/lib/hook-io.mjs';
-import { CARD, bm25, lexTokens } from './lexical.mjs';
+import { bm25, lexTokens } from './lexical.mjs';
 import { MODEL_KEY, indexedSlugs, isIndexedSlug, vaultSources } from './memory-semantic.mjs';
 
 export const PROTOCOL = '2026-07-28';
@@ -141,25 +140,16 @@ function askServe(sockPath, msg, timeoutMs) {
   });
 }
 
+/** @typedef {{ note: string, layer: string, text: string | null }} Card */
+
 // Same BM25 over the same CARD rows as recall's keywordArm(), without its prompt-injection gates:
 // a search tool returns a ranking and lets the caller judge it.
 /**
- * @param {string} dbFile
+ * @param {readonly Card[]} cards
  * @param {string} query
  * @param {number} k
  */
-function keywordSearch(dbFile, query, k) {
-  const db = new DatabaseSync(dbFile, { readOnly: true });
-  let cards;
-  try {
-    cards = /** @type {{ note: string, layer: string, text: string | null }[]} */ (
-      /** @type {unknown} */ (
-        db.prepare('SELECT note, layer, text FROM chunks WHERE heading = ?').all(CARD)
-      )
-    );
-  } finally {
-    db.close();
-  }
+function keywordSearch(cards, query, k) {
   const qt = [...new Set(lexTokens(query))];
   if (!qt.length) return [];
   const docs = cards.map((c) => ({ ...c, toks: lexTokens(c.text ?? '') }));
@@ -203,6 +193,7 @@ function readNote(vault, project, note) {
 /**
  * @typedef {{
  *   token: string,
+ *   readCards: (dbFile: string) => Card[],
  *   vault?: string,
  *   dbDir?: string,
  *   sockPath?: string,
@@ -218,6 +209,7 @@ function readNote(vault, project, note) {
  */
 export function createHandler({
   token,
+  readCards,
   vault = paths.vault(),
   dbDir = paths.stateDir('db'),
   sockPath = path.join(paths.stateDir('run'), `search-${MODEL_KEY}.sock`),
@@ -262,7 +254,7 @@ export function createHandler({
       }
       spawn();
       const dbFile = path.join(dbDir, `semantic-${slug}-${MODEL_KEY}.db`);
-      return { arm: 'keyword', results: keywordSearch(dbFile, query, n) };
+      return { arm: 'keyword', results: keywordSearch(readCards(dbFile), query, n) };
     }
     if (name === 'get_note') {
       const text = readNote(vault, project(args.project), args.note);
