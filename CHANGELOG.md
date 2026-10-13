@@ -19,8 +19,19 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **`docs/comparison.md`, how this compares to other memory systems (#42).** One table against
   Claude Code's auto memory and the other systems in the research notes, the three licences a reader would get wrong, and
   where ours loses. Every claim links a dated research note. Linked from the README.
+- **`vault-mcp`, a read-only MCP server over the vault (#111).** `node scripts/vault-mcp.mjs --port
+  <n> [--host <addr>] [--token-file <path>]` serves `list_projects`, `search` and `get_note` over
+  Streamable HTTP, MCP `2026-07-28` only, for a claude.ai custom connector. Bearer token from a file
+  or `$CREDENTIALS_DIRECTORY/vault-mcp-token`, never env; binds `127.0.0.1` by default. `search`
+  asks the resident `--serve` socket and falls back to keyword search, saying which arm answered.
+  `get_note` reads only the folders the indexer reads. No write path.
 - **`no-floating-promises` counted, and still no linter (#50).** The count and the reasons are an
   addendum to `docs/decisions/2026-08-20-types-and-linting.md`.
+
+### Fixed
+
+- **`--serve` refuses a slug that is not an indexed project.** A socket client could send a slug
+  with `../` and `loadIndex()` built a file path from it unchecked (#111).
 
 ## [0.10.0] - 2026-10-13
 
