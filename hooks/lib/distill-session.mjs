@@ -1277,7 +1277,10 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
     if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };
   } catch (e) {
     // Claude Code writes no transcript until the first prompt, so an empty session ends without one.
-    if (p?.hook_event_name === 'SessionEnd' && /** @type {any} */ (e)?.code === 'ENOENT')
+    if (
+      p?.hook_event_name === 'SessionEnd' &&
+      /** @type {NodeJS.ErrnoException} */ (e)?.code === 'ENOENT'
+    )
       return { run: false, reason: GATE_REASONS.noPrompt };
     return { run: false, reason: GATE_REASONS.badTranscript };
   }
