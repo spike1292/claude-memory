@@ -15,6 +15,7 @@ Restore context — do NOT start work, just load state and confirm where we left
 2. List `<vault>/Logs/<slug>/` and pick the most recent file (names are `YYYY-MM-DD-HHMMSS-<focus>.md` since 2026-08-10, `YYYY-MM-DD-HHMM.md` before that; both lead with a sortable timestamp, so lexical sort = chronological). **Sessions run concurrently**, so the newest log may describe a different strand of work — if it does not match the repo's current branch or open MRs, read the next one back as well before summarising.
    If that folder is missing or empty, check for a legacy cwd-slug folder (`printf '%s' "$PWD" | sed 's#/#-#g'`) before concluding there is no history — logs written before 2026-08-08 may still be there.
 3. Read that log AND `Memory/<slug>/MEMORY.md` (the MOC).
-4. Summarize in a few lines: what was done last, open decisions, and the next concrete step from `## Open / next`.
+4. Summarize in a few lines: what was done last, open decisions, and the next concrete step from `## Open / next`. Also give `## Current state`, the `## Dead ends` and the unresolved `## Errors`, so they are not retried, and the `## Files to read` — read those before starting work.
+   An older log may not have these sections. Continue with the sections it has; a missing section is not an error.
 
 If no log exists, say so and fall back to just the MOC.

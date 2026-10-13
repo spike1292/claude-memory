@@ -19,7 +19,7 @@ Write a session summary to the vault so a future session can resume.
 
    **Never overwrite an existing log.** Run `test -e "<path>" && echo EXISTS` first; if it exists, another session won the race — append `-2` and write that instead. A clobbered log is another session's memory and is **unrecoverable**: the vault is not version-controlled, and Synology writes `_Conflict` copies only for sync races, not for a local overwrite.
 
-   Write it with this frontmatter, then the sections below:
+   The log has this frontmatter, then the sections below:
 
 ```
 ---
@@ -35,5 +35,14 @@ type: log
 - `## Decisions` — choices made and why (link `[[notes]]` where they exist).
 - `## Open / next` — what's unfinished, the next concrete step.
 - `## Files touched` — paths.
+- `## Current state` — the branch, and the uncommitted changes, if any.
+- `## Dead ends` — approaches tried that did not work, and why.
+- `## Errors` — each error hit, marked resolved or unresolved.
+- `## Files to read` — what a new session must read to continue. Not the same list as `## Files touched`.
 
-Keep it tight: what future-me needs to resume, not a transcript. If `$ARGUMENTS` is given, use it as the title/focus.
+A section with no content keeps its heading and says `None` in one line. If `$ARGUMENTS` is given, use it as the title/focus.
+
+**Leave out:** verbose tool output, intermediate reasoning that reached a conclusion, repeated operations, and facts the code already makes clear.
+
+4. **Verify before writing.** The log must be self-contained: no reference a reader cannot resolve without this session ("the bug above", "that approach"). The next step in `## Open / next` must be concrete. Fix the draft until both hold.
+5. **Write it** to the path from step 3.
