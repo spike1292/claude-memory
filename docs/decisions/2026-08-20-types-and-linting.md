@@ -1,6 +1,6 @@
 # JSDoc types with `checkJs --strict`, checked in CI; no linter
 
-**Date:** 2026-08-20 · **Status:** shipped · **Amended the same day: TypeScript 7** · **Closes [#35](https://github.com/spike1292/claude-memory/issues/35)**
+**Date:** 2026-08-20 · **Status:** shipped · **Amended the same day: TypeScript 7** · **Closes [#35](https://github.com/spike1292/claude-memory/issues/35)** · **Addendum 2026-10-13: `no-floating-promises`, [#50](https://github.com/spike1292/claude-memory/issues/50)**
 
 ## Question
 
@@ -209,3 +209,34 @@ breakdown, which sums to 34 and not to 33.
 
 The decision rests on the shape rather than the digits — bare `checkJs` finds no real bug, and a
 staged path exists and was declined — and that shape holds on both compilers.
+
+## Addendum 2026-10-13: `no-floating-promises` counted ([#50](https://github.com/spike1292/claude-memory/issues/50))
+
+**Answer: still no linter. Zero real violations.**
+
+`@typescript-eslint/no-floating-promises` was run with type information over everything `tsc`
+checks — the 93 tracked `.mjs` under `hooks/`, `scripts/` and `stubs/`, tests included — against this
+repo's own `tsconfig.json`. Toolchain: eslint 9.39.5, typescript-eslint 8.71.2, typescript 5.9.3
+(typescript-eslint needs the TypeScript 5 compiler API; 7.0.2 exports only `unstable/*` entry points), installed in a throwaway
+directory with a throwaway flat config. Nothing was added to `package.json`. A planted
+`work();` on an `async function` in `hooks/lib/` was flagged first, so the run checked something.
+
+| Rule | Hits | Real |
+| --- | --- | --- |
+| `no-floating-promises`, source files | 0 | 0 |
+| `no-floating-promises`, `*.test.mjs` | 538 | 0 |
+| `no-misused-promises` (run alongside), source files | 3 | 0 |
+
+- **All 538 test hits are top-level `test(...)`/`describe(...)` calls.** `node:test` owns those
+  promises: a failure reports through the runner and the promise does not reject. The rule cannot
+  know that without an allow-list, which is configuration written to silence the rule's whole output.
+- **The 3 `no-misused-promises` hits are async callbacks in `memory-semantic.mjs --serve`** — the
+  model-idle `setTimeout`, the socket `data` handler, and the `listen` callback. The first two cannot
+  reject: `unloadEmbedder()` catches its own `dispose()` failure, and the `data` body is one
+  `try/catch`. The `listen` callback's only unguarded call is `fs.readdirSync()` on the directory
+  the socket was just bound in.
+
+The risk the issue named — a detached hook whose unawaited promise fails in silence — is not
+present in the tree. It stays prospective, and one rule with zero findings does not pay for
+`typescript-eslint`, a flat config and a second type-checked CI invocation. Re-open this with a
+non-zero count.

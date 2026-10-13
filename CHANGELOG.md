@@ -19,6 +19,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - **`docs/comparison.md`, how this compares to other memory systems (#42).** One table against
   Claude Code's auto memory and the other systems in the research notes, the three licences a reader would get wrong, and
   where ours loses. Every claim links a dated research note. Linked from the README.
+- **`no-floating-promises` counted, and still no linter (#50).** The count and the reasons are an
+  addendum to `docs/decisions/2026-08-20-types-and-linting.md`.
 
 ## [0.10.0] - 2026-10-13
 
