@@ -461,25 +461,42 @@ export function centroid(vecs) {
   return out;
 }
 
-// The gap `--clusters` reports and the candidate rule for promotion (#96) both read: a cluster
-// whose centroid sits further from its best permanent/ match than a typical member does. ONE
-// computation for both callers — a second scoring path here is the same failure CLAUDE.md names
-// for dupeScore() below. Bar = 25th percentile of member distances, not the median or an absolute
-// threshold — a synthesis note only needs to be as central as a typical member; calibration in
-// docs/decisions/2026-08-31-consolidation-gap-percentile.md.
+/** A permanent/ note that wikilinks this share of a cluster's members covers it, whatever its cosine (#188). */
+export const LINK_COVERAGE = 0.6;
+
+// The gap `--clusters` reports and the candidate rule for promotion (#96) both read: a cluster no
+// permanent/ note links to LINK_COVERAGE, whose centroid sits further from its best permanent/
+// match than a typical member does. Links come first because a broad note covering two topics sits
+// far from each in embedding space. ONE computation for both callers — a second scoring path here
+// is the same failure CLAUDE.md names for dupeScore() below. Bar = 25th percentile of member
+// distances, not the median or an absolute threshold — a synthesis note only needs to be as
+// central as a typical member; calibration in docs/decisions/2026-08-31-consolidation-gap-percentile.md.
+
 /**
  * @template {{ note: string, layer: string, vec: ArrayLike<number> }} T
  * @param {readonly T[]} working
- * @param {readonly T[]} permanent
+ * @param {readonly (T & { links?: ReadonlySet<string> })[]} permanent
  * @param {number} minScore cluster linkage threshold
  * @param {number} minSize
- * @returns {{ members: T[], best: { note: string | null, s: number }, typical: number, borderline: boolean }[]}
  */
 export function consolidationGaps(working, permanent, minScore, minSize) {
   const clusters = clusterNotes(working, minScore).filter((g) => g.length >= minSize);
   /** @type {{ members: T[], best: { note: string | null, s: number }, typical: number, borderline: boolean }[]} */
   const gaps = [];
+  /** @type {{ members: T[], by: string, linked: number }[]} */
+  const covered = [];
   for (const g of clusters) {
+    /** @type {{ by: string, linked: number } | null} */
+    let byLinks = null;
+    for (const p of permanent) {
+      const linked = p.links ? g.filter((x) => p.links?.has(x.note)).length : 0;
+      if (linked >= LINK_COVERAGE * g.length && (!byLinks || linked > byLinks.linked))
+        byLinks = { by: p.note, linked };
+    }
+    if (byLinks) {
+      covered.push({ members: g, ...byLinks });
+      continue;
+    }
     const c = centroid(g.map((x) => x.vec));
     /** @type {{ note: string | null, s: number }} */
     let best = { note: null, s: 0 };
@@ -492,7 +509,7 @@ export function consolidationGaps(working, permanent, minScore, minSize) {
     if (best.s >= typical) continue; // a permanent/ note sits inside the topic's own spread
     gaps.push({ members: g, best, typical, borderline: best.s >= typical - 0.02 });
   }
-  return gaps;
+  return { gaps, covered };
 }
 
 // A cluster that has cost something comes before a bigger one that has not. Stable, so size order

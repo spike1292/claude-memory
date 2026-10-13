@@ -173,7 +173,7 @@ test('consolidationGaps: --clusters and --propose (#96) share one computation', 
   ];
   // no permanent/ note anywhere near this topic — a real gap
   const farPermanent = [{ note: 'unrelated', layer: 'permanent', vec: new Float32Array([0, 1]) }];
-  const gaps = consolidationGaps(topic, farPermanent, 0.95, 4);
+  const { gaps } = consolidationGaps(topic, farPermanent, 0.95, 4);
   assert.equal(gaps.length, 1);
   assert.equal(gaps[0].members.length, 4);
   assert.equal(gaps[0].best.note, 'unrelated');
@@ -182,10 +182,48 @@ test('consolidationGaps: --clusters and --propose (#96) share one computation', 
 
   // a permanent/ note that sits INSIDE the cluster's own spread closes the gap
   const coveringPermanent = [{ note: 'already-covered', layer: 'permanent', vec: c1 }];
-  assert.equal(consolidationGaps(topic, coveringPermanent, 0.95, 4).length, 0);
+  assert.equal(consolidationGaps(topic, coveringPermanent, 0.95, 4).gaps.length, 0);
 
   // below minSize, a real cluster is not reported as a gap at all
-  assert.equal(consolidationGaps(topic, farPermanent, 0.95, 5).length, 0);
+  assert.equal(consolidationGaps(topic, farPermanent, 0.95, 5).gaps.length, 0);
+});
+
+test('consolidationGaps: a permanent/ note linking ≥60% of members covers the cluster (#188)', () => {
+  const c1 = new Float32Array([1, 0]),
+    c2 = new Float32Array([0.99, 0.141]),
+    c3 = new Float32Array([0.97, 0.24]);
+  const topic = ['a', 'b', 'c', 'd', 'e'].map((note, i) => ({
+    note,
+    layer: 'Patterns',
+    vec: [c1, c2, c3][i % 3],
+  }));
+  const far = new Float32Array([0, 1]);
+  const linking = (/** @type {string[]} */ links) => [
+    { note: 'broad', layer: 'permanent', vec: far, links: new Set(links) },
+  ];
+
+  const all = consolidationGaps(topic, linking(['a', 'b', 'c', 'd', 'e']), 0.95, 4);
+  assert.equal(all.gaps.length, 0, 'far by cosine, but it links every member');
+  assert.deepEqual(
+    all.covered.map((c) => [c.by, c.linked, c.members.length]),
+    [['broad', 5, 5]],
+  );
+
+  const three = consolidationGaps(topic, linking(['a', 'b', 'c', 'unrelated']), 0.95, 4);
+  assert.equal(three.gaps.length, 0, '3/5 is exactly 60%');
+
+  const two = consolidationGaps(topic, linking(['a', 'b']), 0.95, 4);
+  assert.equal(two.gaps.length, 1, '2/5 falls back to cosine, which says gap');
+  assert.equal(two.covered.length, 0);
+
+  const nearNoLinks = consolidationGaps(
+    topic,
+    [{ note: 'p', layer: 'permanent', vec: c1 }],
+    0.95,
+    4,
+  );
+  assert.equal(nearNoLinks.gaps.length, 0, 'no links: cosine still decides');
+  assert.equal(nearNoLinks.covered.length, 0, 'cosine coverage is not link coverage');
 });
 
 test('mistakesFirst: a cluster with a Mistake outranks a larger one without (#150)', () => {
