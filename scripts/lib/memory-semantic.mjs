@@ -21,6 +21,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { activeModel } from './model-default.mjs';
 // The profiles moved out on 2026-08-20 so a caller wanting only the key list is not taken down by
 // this module's exit-on-unknown-model. Their comments went with them — the batch-size-is-1 finding
@@ -494,8 +495,50 @@ export function consolidationGaps(working, permanent, minScore, minSize) {
   return gaps;
 }
 
+/**
+ * The index allow-list. A folder not named here — `Personal/` included — is never indexed.
+ *
+ * @param {string} vault
+ * @param {string} slug
+ * @returns {{ dir: string, layer: string }[]}
+ */
+export function vaultSources(vault, slug) {
+  const out = [{ dir: path.join(vault, 'Memory', slug), layer: 'Memory' }];
+  for (const f of ['Patterns', 'Mistakes', 'Decisions'])
+    out.push({ dir: path.join(vault, 'Insights', slug, f), layer: f });
+  // permanent/ is cross-project, not slug-scoped. Indexed here so --clusters can ask "is this topic
+  // already consolidated?", and so promoted knowledge is searchable at all.
+  out.push({ dir: path.join(vault, 'permanent'), layer: 'permanent' });
+  for (const sub of ['domain', 'tools'])
+    out.push({ dir: path.join(vault, 'permanent', sub), layer: 'permanent' });
+  return out;
+}
+
+/**
+ * @param {string} vault
+ * @param {string} slug
+ * @returns {{ full: string, layer: string, note: string, mtime: number }[]}
+ */
+export function indexInput(vault, slug) {
+  const files = [];
+  for (const { dir, layer } of vaultSources(vault, slug)) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.md'))) {
+      if (f === 'REFLECTIONS.md') continue; // an audit log, not a memory
+      const full = path.join(dir, f);
+      files.push({
+        full,
+        layer,
+        note: f.slice(0, -3),
+        mtime: Math.floor(fs.statSync(full).mtimeMs),
+      });
+    }
+  }
+  return files;
+}
+
 // Cross-layer pairs score 0 by construction: a Pattern and a Mistake on one topic are
-// complementary by design. `layer` IS the folder — see vaultSources() in the entry.
+// complementary by design. `layer` IS the folder — see vaultSources().
 // The single shared duplicate predicate (write-time reconcile and --dupes both call this) and
 // why searchIn()'s fused score is NOT this quantity: CLAUDE.md "Architecture" § Retrieval,
 // docs/decisions/2026-08-23-embedding-reconcile.md.

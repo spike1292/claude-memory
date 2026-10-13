@@ -18,6 +18,7 @@ hedged prose.
 | L3 lessons | `Insights/<slug>/{Patterns,Mistakes,Decisions}/` | auto-distilled once per session |
 | L4 graph | `Graph/<slug>/GRAPH_REPORT.md` | codebase graph digest |
 | global | `permanent/{domain,tools}/` | cross-project consolidated notes |
+| personal | `Personal/{Research,Wiki}/` | personal research and wiki pages — **not indexed, not recalled, not exposed by the connector**, on purpose |
 
 `<slug>` is the **project key** — the normalised git remote, not the checkout path. Get it with
 `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Deriving it from `pwd` forks a second
@@ -138,6 +139,23 @@ superseded on a lesson that came from a fetched page (#70).
 
 Wrap secrets or sensitive text in `<private>…</private>`. The distiller redacts these blocks
 before extraction, so they never reach `Insights/`.
+
+## Personal notes
+
+`Personal/Research/` holds what a research session found; `Personal/Wiki/` holds pages kept
+current over time. Both are flat, with kebab-case stems. Nothing creates the folders ahead of time
+— the first note written makes its folder.
+
+- **Outside the index on purpose.** The indexer reads an allow-list of layers and `Personal/` is
+  not on it, so neither recall arm nor the connector can return these notes. Do not add it.
+- **Same note rules as every other note:** frontmatter on line 1, an `_Also asked as:` line, and
+  `[[wikilinks]]` only. `validate-note` checks them. `name:` and `confidence:` are not required.
+- **The distiller is not fenced off.** A session that copies personal source text ends in some
+  project directory and is distilled into that project's `Insights/`. Wrap copied source text in
+  `<private>…</private>` while you work.
+- **Wiki pages:** one page per topic you come back to, not per source. Link a page to the
+  research notes it cites and to related pages. Prune a page when its topic is gone or another page
+  covers it — fold what is still true into the survivor first, and ask before you delete.
 
 ## Knowledge lifecycle: graduate, don't scatter
 
