@@ -1,6 +1,7 @@
 // Read-only MCP server over the vault, for a claude.ai custom connector. MCP 2026-07-28 only,
 // Streamable HTTP with JSON responses, hand-rolled JSON-RPC: no SDK, no new dependency.
-// Decisions behind every rule here: issue #111 (brief, "Decisions accepted", protocol amendment).
+// Why bearer-only, Origin refused, one protocol version and an ungated keyword fallback:
+// docs/decisions/2026-10-13-vault-mcp.md.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -9,7 +10,13 @@ import path from 'node:path';
 import * as paths from '../../hooks/lib/paths.mjs';
 import { detach } from '../../hooks/lib/hook-io.mjs';
 import { bm25, lexTokens } from './lexical.mjs';
-import { MODEL_KEY, indexedSlugs, isIndexedSlug, vaultSources } from './memory-semantic.mjs';
+import {
+  MODEL_KEY,
+  SAFE_NAME,
+  indexedSlugs,
+  isIndexedSlug,
+  vaultSources,
+} from './memory-semantic.mjs';
 
 export const PROTOCOL = '2026-07-28';
 export const BODY_CAP = 64 * 1024;
@@ -170,7 +177,7 @@ function keywordSearch(cards, query, k) {
  * @returns {string | null}
  */
 function readNote(vault, project, note) {
-  if (typeof note !== 'string' || !/^[^./\\\0][^/\\\0]*$/.test(note)) return null;
+  if (typeof note !== 'string' || !SAFE_NAME.test(note)) return null;
   const file = note.endsWith('.md') ? note : `${note}.md`;
   const real = (/** @type {string} */ p) => {
     try {

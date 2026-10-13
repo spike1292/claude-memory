@@ -264,6 +264,13 @@ path's 0.547 on the same case set. Holding both in a resident process turns that
 round-trip. The process idle-exits (`serveIdleMs`) so it cannot become a daemon nobody remembers
 starting; the hook respawns it on demand.
 
+**`scripts/vault-mcp.mjs` is the daemon's second client.** A read-only HTTP + MCP server for a
+claude.ai custom connector: it asks the same socket, spawns `--serve` on a miss and answers that
+request from BM25 over the slug's CARD rows, like the recall hook. It never writes to the vault
+or an index. The slug guard it shares with `loadIndex()` is `isIndexedSlug()` in
+`scripts/lib/memory-semantic.mjs`. Rules and reasons:
+[decision record](decisions/2026-10-13-vault-mcp.md).
+
 ### Flow 4 — session end (distillation)
 
 ```

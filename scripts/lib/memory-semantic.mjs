@@ -543,9 +543,9 @@ export function vaultSources(vault, slug) {
   return out;
 }
 
-// A slug reaches loadIndex() and vault-mcp from a socket or HTTP client, so it must name an index
-// that exists, never a path: no separator, no leading dot (`..` would make vaultSources() the vault root).
-const SAFE_SLUG = /^[^./\\\0][^/\\\0]*$/;
+// A slug or note name from a socket or HTTP client is a single path segment: no separator, no
+// leading dot (a slug of `..` would make vaultSources() the vault root).
+export const SAFE_NAME = /^[^./\\\0][^/\\\0]*$/;
 
 /**
  * @param {string} dbDir
@@ -562,7 +562,7 @@ export function indexedSlugs(dbDir) {
   return names
     .filter((n) => n.startsWith('semantic-') && n.endsWith(suffix))
     .map((n) => n.slice('semantic-'.length, -suffix.length))
-    .filter((s) => SAFE_SLUG.test(s))
+    .filter((s) => SAFE_NAME.test(s))
     .sort();
 }
 
@@ -572,7 +572,7 @@ export function indexedSlugs(dbDir) {
  * @returns {slug is string}
  */
 export function isIndexedSlug(dbDir, slug) {
-  return typeof slug === 'string' && SAFE_SLUG.test(slug) && indexedSlugs(dbDir).includes(slug);
+  return typeof slug === 'string' && SAFE_NAME.test(slug) && indexedSlugs(dbDir).includes(slug);
 }
 
 /**
