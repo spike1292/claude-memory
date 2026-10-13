@@ -308,3 +308,37 @@ test('capReport names only this project, and gives every other MOC its percentag
   assert.strictEqual(missing.length, 2, 'and the others are still reported');
   assert.deepStrictEqual(capReport(path.join(vault, 'nope'), 'mine'), [], 'no vault, no report');
 });
+
+test('reportFor with a link cache: an edited note is read again, an unchanged one is not (#202)', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'linkcache-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const mem = path.join(dir, 'Memory', 'p');
+  const ins = path.join(dir, 'Insights', 'p');
+  fs.mkdirSync(mem, { recursive: true });
+  fs.mkdirSync(ins, { recursive: true });
+  const cache = path.join(dir, 'state', 'cache', 'links.json');
+  fs.writeFileSync(path.join(mem, 'MEMORY.md'), '- [[a]]\n');
+  fs.writeFileSync(path.join(mem, 'a.md'), 'lonely');
+  const b = path.join(ins, 'b.md');
+  fs.writeFileSync(b, 'nothing yet');
+
+  assert.match(reportFor(mem, ins, cache), / {2}- a/, 'cold cache: a is an orphan');
+  assert.ok(fs.existsSync(cache), 'the cache was written');
+
+  fs.writeFileSync(b, 'see [[a]]');
+  assert.doesNotMatch(reportFor(mem, ins, cache), /MOC-only/, 'the edit is seen, no stale orphan');
+
+  fs.writeFileSync(b, 'see [[x]]');
+  fs.utimesSync(b, new Date(), new Date(Date.now() + 5000));
+  assert.match(reportFor(mem, ins, cache), / {2}- a/, 'a same-size edit is seen through mtime');
+
+  fs.writeFileSync(b, 'see [[a]]');
+  reportFor(mem, ins, cache);
+  fs.chmodSync(b, 0o000);
+  assert.doesNotMatch(
+    reportFor(mem, ins, cache),
+    /MOC-only/,
+    'an unchanged note is answered from the cache without being opened',
+  );
+  assert.match(reportFor(mem, ins), / {2}- a/, 'and without a cache it is opened, and fails');
+});

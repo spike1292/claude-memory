@@ -37,6 +37,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`memory-link-lint` no longer opens every project note at SessionStart (#202).** It caches each
+  note's wikilink targets under `$CLAUDE_MEMORY_HOME/cache/`, keyed by `mtimeMs:size:ino`, and
+  opens only the notes that changed. Same findings. `bench-hooks.mjs` gets `--insights N`.
+  Numbers: `docs/decisions/2026-10-13-link-lint-cache.md`.
 - **Headless `claude -p` runs no longer keep full transcripts (#201).** The distiller, the reversal
   judge and graph regen now pass `--no-session-persistence`. Instead, each extract and judge call
   writes its prompt, raw answer and cost to `$CLAUDE_MEMORY_HOME/logs/distill-<date>.jsonl`, deleted
