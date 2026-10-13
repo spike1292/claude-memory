@@ -253,9 +253,11 @@ own copy of all four, already drifted.
 **There is exactly one JSONL appender, and it is `appendJsonl()` in `hook-io.mjs`.** It stamps `t`
 and the project slug, writes the caller's record verbatim after them, and swallows every error:
 these lines are written from the per-prompt recall path and from every SessionStart hook, so a log
-that cannot be written must never fail or delay a hook. Two families use it — `recall-<date>.jsonl`
-(what recall decided) and `hooks-<date>.jsonl` (`logHook()`, one line per hook invocation with a
-duration and an outcome from a closed set). **Dated filenames are the rotation; do not add a size
+that cannot be written must never fail or delay a hook. Three families use it — `recall-<date>.jsonl`
+(what recall decided), `hooks-<date>.jsonl` (`logHook()`, one line per hook invocation with a
+duration and an outcome from a closed set) and `distill-<date>.jsonl` (each distiller extract and
+judge call's exact prompt and raw answer). Every headless `claude -p` argv comes from
+`headlessArgv()`, which adds `--no-session-persistence`. **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
 **`MEMORY_MACHINE_RUN` is a label, never a guard.** Set by an orchestrator on a scheduled run, it

@@ -1681,7 +1681,7 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
    */
   const run = (judge, fm = '') => {
     const root = withStubClaude(
-      '#!/bin/sh\nin=$(cat)\ncase "$in" in\n' +
+      '#!/bin/sh\nf="$(dirname "$0")/../stdin.$$"\ncat > "$f"\nin=$(cat "$f")\ncase "$in" in\n' +
         `"Each item pairs"*) ${judge} ;;\n` +
         `*) printf '%s' '{"patterns":[{"title":"Cache TTL is ten minutes","description":"The cache TTL is now ten minutes."}],"mistakes":[],"decisions":[]}' ;;\nesac\n`,
     );
@@ -1704,6 +1704,26 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
     ),
   );
   assert.strictEqual(proved.calls, 2, 'one extractor call, one judge call');
+  const logDir = path.join(proved.root, 'state', 'logs');
+  const records = fs
+    .readdirSync(logDir)
+    .filter((f) => /^distill-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+    .flatMap((f) => fs.readFileSync(path.join(logDir, f), 'utf8').trim().split('\n'))
+    .map((l) => JSON.parse(l));
+  assert.deepStrictEqual(
+    records.map((r) => [r.call, r.session]),
+    [
+      ['extract', 'sess-cli'],
+      ['judge', 'sess-cli'],
+    ],
+  );
+  const stdins = fs
+    .readdirSync(proved.root)
+    .filter((f) => f.startsWith('stdin.'))
+    .map((f) => fs.readFileSync(path.join(proved.root, f), 'utf8'));
+  assert.deepStrictEqual(records.map((r) => r.prompt).sort(), stdins.sort());
+  assert.match(records[1].output, /"reverses"/);
+  assert.strictEqual(records[1].usd, 0.01);
   assert.strictEqual(proved.notes.length, 2, 'the reversal is its own note');
   const [fresh] = fs.readdirSync(proved.dir).filter((f) => !f.startsWith('2026-01-01'));
   assert.match(

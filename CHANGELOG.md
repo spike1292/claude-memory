@@ -37,6 +37,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **Headless `claude -p` runs no longer keep full transcripts (#201).** The distiller, the reversal
+  judge and graph regen now pass `--no-session-persistence`. Instead, each extract and judge call
+  writes its prompt, raw answer and cost to `$CLAUDE_MEMORY_HOME/logs/distill-<date>.jsonl`, deleted
+  after `logRetentionDays()` like the other dated logs; `/memory:doctor` counts it. Transcripts
+  already written are not removed: delete
+  `~/.claude/projects/-private-var-folders-*-T/` (the folder named after `$TMPDIR`) by hand.
 - **Headless child runs no longer fire the hooks against `$TMPDIR` (#200).** The distiller's and
   the graph regeneration's `claude -p` re-fired every hook; only two stood down. Now every hook
   logs `child-guard` and exits, and `vault-memory-sync.sh` exits too, so no vault folder, index or
