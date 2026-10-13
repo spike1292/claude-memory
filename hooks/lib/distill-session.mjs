@@ -1239,6 +1239,7 @@ export const GATE_REASONS = {
   notAFile: 'transcript not a file',
   noTranscript: 'no transcript path',
   badTranscript: 'transcript missing',
+  noPrompt: 'session end: no transcript (no prompt)',
   noCwd: 'no cwd',
 };
 
@@ -1274,7 +1275,10 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
     if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };
-  } catch {
+  } catch (e) {
+    // Claude Code writes no transcript until the first prompt, so an empty session ends without one.
+    if (p?.hook_event_name === 'SessionEnd' && /** @type {any} */ (e)?.code === 'ENOENT')
+      return { run: false, reason: GATE_REASONS.noPrompt };
     return { run: false, reason: GATE_REASONS.badTranscript };
   }
 
@@ -1376,7 +1380,8 @@ export function gateOutcome(plan) {
     plan.reason === GATE_REASONS.debounced ||
     plan.reason === GATE_REASONS.endCovered ||
     plan.reason === GATE_REASONS.stopShort ||
-    plan.reason === GATE_REASONS.trivial
+    plan.reason === GATE_REASONS.trivial ||
+    plan.reason === GATE_REASONS.noPrompt
   )
     return 'debounced';
   // A transcript that is absent or unreadable is this hook's missing dependency: Claude Code hands

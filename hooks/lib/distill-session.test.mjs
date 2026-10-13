@@ -276,7 +276,42 @@ test('gatePlan needs a transcript that exists', () => {
         transcript_path: '/nope/nope.jsonl',
       })
     ).reason,
-    'transcript missing',
+    GATE_REASONS.noPrompt,
+    'Claude Code writes no transcript before the first prompt, so an empty session has none',
+  );
+  assert.strictEqual(
+    /** @type {import('./distill-session.mjs').SkipGate} */ (
+      gatePlan({ hook_event_name: 'Stop', cwd: '/some/project', transcript_path: '/nope/n.jsonl' })
+    ).reason,
+    GATE_REASONS.badTranscript,
+    'Stop fires after a turn, so its transcript must exist',
+  );
+});
+
+test('a SessionEnd before the first prompt reaches --hooks as debounced, not a missing dep (#203)', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distillgate-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../distill-session.mjs');
+  const { CLAUDE_DISTILL_CHILD: _c, CBM_GRAPHGEN_CHILD: _g, ...env } = process.env;
+  execFileSync(process.execPath, [entry], {
+    input: JSON.stringify({
+      hook_event_name: 'SessionEnd',
+      session_id: 'sess-empty',
+      cwd: root,
+      transcript_path: path.join(root, 'never-written.jsonl'),
+    }),
+    stdio: 'pipe',
+    env: { ...env, HOME: root, CLAUDE_MEMORY_HOME: path.join(root, 'state') },
+  });
+  const { report } = await import('../../scripts/lib/hook-stats.mjs');
+  const out = report({
+    logDir: path.join(root, 'state', 'logs'),
+    manifest: path.join(path.dirname(fileURLToPath(import.meta.url)), '../hooks.json'),
+  });
+  const rows = out.split('\n').filter((l) => l.includes('distill-session · SessionEnd'));
+  assert.ok(
+    rows.some((l) => /\sdebounced\s+1\s/.test(l) && l.includes(GATE_REASONS.noPrompt)),
+    rows.join('\n'),
   );
 });
 
@@ -1010,6 +1045,7 @@ test('every reason gatePlan can return is one gateOutcome actually recognises', 
     GATE_REASONS.trivial,
     GATE_REASONS.debounced,
     GATE_REASONS.endCovered,
+    GATE_REASONS.noPrompt,
   ])
     assert.strictEqual(gateOutcome({ run: false, reason: r }), 'debounced', r);
   // A transcript that is absent, unreadable, or not a file at all is the same outage — and so is a

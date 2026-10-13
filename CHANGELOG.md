@@ -37,6 +37,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **A session that ends before its first prompt is no longer logged as a missing dependency
+  (#203).** Claude Code writes no transcript until then, so `distill-session · SessionEnd` with no
+  file at the payload path now logs `debounced`, reason `session end: no transcript (no prompt)`. A
+  payload with no `transcript_path` or no `cwd`, and a missing transcript on Stop, stay
+  `noop-missing-dep`.
 - **`memory-link-lint` no longer opens every project note at SessionStart (#202).** It caches each
   note's wikilink targets under `$CLAUDE_MEMORY_HOME/cache/`, keyed by `mtimeMs:size:ino`, and
   opens only the notes that changed. Same findings. `bench-hooks.mjs` gets `--insights N`.
