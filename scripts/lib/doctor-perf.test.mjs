@@ -19,7 +19,9 @@ import {
   readPs,
 } from './doctor-perf.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'perf-'));
+const tmp = (base = os.tmpdir()) => fs.mkdtempSync(path.join(base, 'perf-'));
+// macOS caps a socket path at 104 bytes; a long TMPDIR overruns it.
+const SOCK_BASE = '/tmp';
 const MODELS = ['bge-small-en', 'bge-m3', 'e5-multi'];
 
 test('formatBytes scales, and never prints a misleading round number', () => {
@@ -241,8 +243,9 @@ test('report says so when there is no server at all', async () => {
 // The three tests above cover only the branches that decline to probe. This one drives the whole
 // assembly through the OTHER side of the gate: a warm ps listing, a real listening socket at the
 // path report() computes, and both probes answering.
-test('report measures the round trip when every server is warm', async () => {
-  const state = tmp();
+test('report measures the round trip when every server is warm', async (t) => {
+  const state = tmp(SOCK_BASE);
+  t.after(() => fs.rmSync(state, { recursive: true, force: true }));
   fs.mkdirSync(path.join(state, 'run'), { recursive: true });
   const server = net.createServer((c) =>
     c.on('data', () => c.end(JSON.stringify({ slug: 'x', results: [1, 2] }) + '\n')),
@@ -264,8 +267,9 @@ test('report measures the round trip when every server is warm', async () => {
 // socket is evicted, between the two. Before this, the report cast the second result to the success
 // shape and `undefined.toFixed()` ended the whole thing with a stack trace. The server here answers
 // once and then closes, which is the cheapest way to make the second call fail for real.
-test('report survives a second probe that fails after the first succeeded', async () => {
-  const state = tmp();
+test('report survives a second probe that fails after the first succeeded', async (t) => {
+  const state = tmp(SOCK_BASE);
+  t.after(() => fs.rmSync(state, { recursive: true, force: true }));
   const sock = path.join(state, 'run', 'search-bge-m3.sock');
   fs.mkdirSync(path.join(state, 'run'), { recursive: true });
   let answered = 0;

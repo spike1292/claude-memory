@@ -62,6 +62,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **`--clusters` no longer reports a gap for a cluster a `permanent/` note already links (#188).**
+  A `permanent/` note that wikilinks at least 60% of a cluster's members covers it, whatever its
+  cosine; `--clusters` prints `covered by <note> (links N/M)` for it and `--propose` writes no
+  skeleton. A broad note covering two topics sits far from each in embedding space, so cosine alone
+  called its topics gaps. Clusters no note links that well still use the cosine test.
 - **The Project status workflow adds the issue by node id.** `gh project item-add --owner` failed
   with `unknown owner type` on its first run; the GraphQL mutation needs no owner lookup.
 - **The SessionStart link lint and `/memory:health` now read links with one parser (#99).**

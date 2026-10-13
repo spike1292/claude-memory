@@ -53,6 +53,7 @@ import {
   indexInput,
 } from './lib/memory-semantic.mjs';
 import { proposeStagingNotes } from './lib/memory-promote.mjs';
+import { linkTargets } from '../hooks/lib/memory-link-lint.mjs';
 import { isManual } from './lib/memory-mark.mjs';
 
 /** @typedef {import('./lib/memory-semantic.mjs').ChunkRow} ChunkRow */
@@ -552,9 +553,9 @@ if (flag('--clusters') || flag('--propose')) {
   // --size revives the flag deleted 2026-08-19 (no caller had ever set it) — --propose (#96) needs
   // its candidate rule to be configuration, not a literal, so the default it inherits must be one.
   const minSize = Number(val('--size') || 4);
-  const cards = /** @type {(CardRow & { mtime: number })[]} */ (
+  const cards = /** @type {(CardRow & { mtime: number, file: string })[]} */ (
     /** @type {DatabaseSync} */ (db)
-      .prepare('SELECT note, layer, text, vec, mtime FROM chunks WHERE heading = ?')
+      .prepare('SELECT note, layer, text, vec, mtime, file FROM chunks WHERE heading = ?')
       .all(CARD)
   ).map((r) => ({
     note: r.note,
@@ -562,15 +563,25 @@ if (flag('--clusters') || flag('--propose')) {
     text: r.text,
     vec: new Float32Array(r.vec.buffer, r.vec.byteOffset, DIM),
     mtime: r.mtime,
+    file: r.file,
   }));
   if (!cards.length) {
     console.log('empty index — run --index first');
     process.exit(1);
   }
 
-  const permanent = cards.filter((c) => c.layer === 'permanent');
+  const permanent = cards
+    .filter((c) => c.layer === 'permanent')
+    .map((c) => {
+      try {
+        return { ...c, links: linkTargets(fs.readFileSync(c.file, 'utf8')) };
+      } catch {
+        return c;
+      }
+    });
   const working = cards.filter((c) => c.layer !== 'permanent');
-  const gapList = mistakesFirst(consolidationGaps(working, permanent, min, minSize));
+  const { gaps, covered } = consolidationGaps(working, permanent, min, minSize);
+  const gapList = mistakesFirst(gaps);
 
   if (flag('--propose')) {
     const top = Number(val('--top') || 8);
@@ -588,6 +599,9 @@ if (flag('--clusters') || flag('--propose')) {
   console.log(
     `${working.length} notes · ${permanent.length} permanent/ notes · clusters ≥${minSize} at ≥${min}: ${gapList.length}\n`,
   );
+  for (const c of covered)
+    console.log(`covered by ${c.by} (links ${c.linked}/${c.members.length})`);
+  if (covered.length) console.log('');
   const top = Number(val('--top') || 8);
   const shown = gapList.slice(0, top);
   for (const { members: g, best, typical, borderline } of shown) {
