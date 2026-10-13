@@ -102,6 +102,8 @@ const staleReport = (/** @type {string} */ cwd, vaultRoot = emptyVault()) => {
   return vaultRoot;
 };
 
+const CBM = { command: '/bin/cbm' };
+
 /** Run `fn` with a scratch state dir and a `claude` that records its argv, then sleeps. */
 const isolated = (/** @type {(argvFile: string) => void} */ fn) => {
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-state-'));
@@ -114,8 +116,13 @@ const isolated = (/** @type {(argvFile: string) => void} */ fn) => {
     `#!/bin/sh\nprintf '%s\\0' "$@" > '${argvFile}.tmp' && mv '${argvFile}.tmp' '${argvFile}'\nsleep 30\n`,
   );
   fs.chmodSync(claude, 0o755);
-  const prev = { home: process.env.CLAUDE_MEMORY_HOME, p: process.env.PATH };
+  fs.writeFileSync(
+    path.join(state, '.claude.json'),
+    JSON.stringify({ mcpServers: { 'codebase-memory-mcp': CBM } }),
+  );
+  const prev = { home: process.env.CLAUDE_MEMORY_HOME, p: process.env.PATH, h: process.env.HOME };
   process.env.CLAUDE_MEMORY_HOME = state;
+  process.env.HOME = state;
   process.env.PATH = `${bin}${path.delimiter}${prev.p}`;
   try {
     return fn(argvFile);
@@ -123,6 +130,7 @@ const isolated = (/** @type {(argvFile: string) => void} */ fn) => {
     if (prev.home === undefined) delete process.env.CLAUDE_MEMORY_HOME;
     else process.env.CLAUDE_MEMORY_HOME = prev.home;
     process.env.PATH = prev.p;
+    process.env.HOME = prev.h;
   }
 };
 
@@ -238,6 +246,7 @@ const fixedPlan = (report = '/v/Graph/host-me-repo/GRAPH_REPORT.md') => ({
   logFile: '/log',
   report,
   head: 'abcdef1234567890',
+  mcp: CBM,
 });
 
 test('the regen argv is a closed tool list in dontAsk mode, never a permission bypass', () => {
@@ -253,6 +262,11 @@ test('the regen argv is a closed tool list in dontAsk mode, never a permission b
     '--restricted',
     '--plugin-dir',
     PLUGIN_ROOT,
+    '--add-dir',
+    '/v/Graph/host-me-repo',
+    '--strict-mcp-config',
+    '--mcp-config',
+    '{"mcpServers":{"codebase-memory-mcp":{"command":"/bin/cbm"}}}',
     '--tools',
     'Read,Write',
     '--allowedTools',
@@ -323,5 +337,17 @@ test('a report path a rule list could split is refused: nudge, no spawn', () => 
     assert.strictEqual(p.action, 'nudge');
     assert.strictEqual(p.reason, REASONS.unsafePath);
     assert.strictEqual(check(cwd, { vaultRoot }).outcome, 'error');
+  });
+});
+
+test('no user-scope codebase-memory-mcp server: nudge as a missing dependency, no spawn', () => {
+  const cwd = staleRepo();
+  const vaultRoot = staleReport(cwd);
+  isolated(() => {
+    fs.writeFileSync(path.join(process.env.HOME ?? '', '.claude.json'), '{}');
+    const p = plan(cwd, { vaultRoot });
+    assert.strictEqual(p.action, 'nudge');
+    assert.strictEqual(p.reason, REASONS.noMcp);
+    assert.strictEqual(check(cwd, { vaultRoot }).outcome, 'noop-missing-dep');
   });
 });

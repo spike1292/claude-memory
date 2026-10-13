@@ -50,7 +50,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
   codebase-memory-mcp tools, and Read/Edit on its one `GRAPH_REPORT.md`. The
   prompt passes slug, report path, date and short commit as data, and `/memory:graph-report` uses
   them when given. A report path with a comma or control character nudges instead of spawning.
-  An MCP server registered under another name now fails closed.
+  An MCP server registered under another name now fails closed. `--restricted` drops user MCP
+  servers and confines file tools to the cwd, so codebase-memory-mcp is passed back from the
+  user-scope entry in `~/.claude.json` via `--strict-mcp-config --mcp-config`, and the report's
+  folder via `--add-dir`. No such entry nudges instead of spawning.
 - **`/memory:health` reads what the scans name, not every note (#95).** Step 0 now also runs
   `--dupes` and `--clusters`. Step 1 reads `REFLECTIONS.md`, `MEMORY.md`, the named notes in
   claim-line form, and a capped sample just below the dupe threshold. `/memory:prune` step 2

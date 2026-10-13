@@ -8,9 +8,11 @@
 //   - report >= HEAD         -> fresh
 //   - debounced (24h/repo)   -> nudge, don't respawn while stale
 //   - claude CLI missing     -> nudge
+//   - no codebase-memory-mcp -> nudge
 // then check() claims the machine-wide lock, or nudges: the debounce above is only per-repo.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { vault, projectKey, legacyKey, stateDir, libDir } from './paths.mjs';
@@ -44,6 +46,7 @@ import {
  *   logFile: string,
  *   report: string,
  *   head: string,
+ *   mcp: object,
  * }} RegenPlan
  * @typedef {SilentPlan | NudgePlan | RegenPlan} GraphPlan
  * @typedef {{
@@ -64,6 +67,7 @@ export const REASONS = {
   noCommit: 'no recorded commit',
   noHead: 'no HEAD',
   fresh: 'fresh',
+  noMcp: 'no user-scope codebase-memory-mcp server in ~/.claude.json',
   unsafePath: 'report path holds a comma or control character — no permission rule can name it',
 };
 
@@ -102,6 +106,17 @@ const localDate = (s) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+// ponytail: user scope only; a project's .mcp.json is repo text, a local-scope entry is not read.
+/** @returns {object | null} */
+const cbmServer = () => {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    return c.mcpServers?.['codebase-memory-mcp'] ?? null;
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Full index mode preserves clone/semantic edges, which an incremental pass drops.
  *
@@ -128,7 +143,9 @@ export function regenPrompt(p) {
  * or other code-running tool, seven MCP tools, and Read/Edit on the one report file. `dontAsk`
  * denies everything else. `--restricted` drops the user's and the project's allow rules, which
  * would otherwise let in any MCP tool they allow (ctx_execute runs code); it also unloads plugins
- * enabled there, so this one returns through `--plugin-dir` for its command. Path rules are
+ * enabled there, so this one returns through `--plugin-dir` for its command, and drops the user's
+ * MCP servers, so codebase-memory-mcp returns through `--mcp-config` — strict, so no other server
+ * does. It confines file tools to the cwd, so the report's folder is added. Path rules are
  * gitignore patterns, so glob characters are escaped; Write is checked against `Edit` rules.
  *
  * @param {RegenPlan} p
@@ -144,6 +161,11 @@ export function regenArgv(p) {
     '--restricted',
     '--plugin-dir',
     PLUGIN_ROOT,
+    '--add-dir',
+    path.dirname(p.report),
+    '--strict-mcp-config',
+    '--mcp-config',
+    JSON.stringify({ mcpServers: { 'codebase-memory-mcp': p.mcp } }),
     '--tools',
     'Read,Write',
     '--allowedTools',
@@ -253,6 +275,8 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
 
   const claude = findClaude();
   if (!claude) return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.noClaude, slug };
+  const mcp = cbmServer();
+  if (!mcp) return { action: 'nudge', message: NUDGE_MESSAGE, reason: REASONS.noMcp, slug };
 
   return {
     action: 'regen',
@@ -265,6 +289,7 @@ export function plan(cwd, { vaultRoot = vault(), now = nowSeconds() } = {}) {
     logFile: path.join(stateDir('logs'), 'graphgen.log'),
     report,
     head,
+    mcp,
   };
 }
 
@@ -349,7 +374,7 @@ function outcomeOf(p) {
   if (p.reason === REASONS.debounced) return 'debounced';
   // A missing `claude` CLI is the one dependency this hook has, and losing it is invisible from
   // outside: the nudge it prints instead is the same nudge a debounced run prints.
-  if (p.reason === REASONS.noClaude) return 'noop-missing-dep';
+  if (p.reason === REASONS.noClaude || p.reason === REASONS.noMcp) return 'noop-missing-dep';
   if (p.reason === REASONS.unsafePath) return 'error';
   // The L4 graph layer is optional and most installs never set it up, so on those machines this
   // hook does nothing forever. As `ran` — "did its work" — that is a permanently dead hook
