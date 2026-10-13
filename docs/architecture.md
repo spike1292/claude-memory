@@ -183,6 +183,8 @@ session picks up everything the previous one wrote, whatever order it landed in.
 
 ### Flow 2 — a prompt (recall)
 
+Why the two gates sit where they do: [retrieval.md](retrieval.md#gating-and-abstention).
+
 ```
 UserPromptSubmit  ──▶  hooks/memory-recall.mjs
                           │
@@ -221,6 +223,8 @@ UserPromptSubmit  ──▶  hooks/memory-recall.mjs
 ```
 
 ### Flow 3 — the search daemon
+
+Why two arms, RRF, and three memory bounds: [retrieval.md](retrieval.md).
 
 ```
   ONE server per MACHINE, keyed by MODEL. The slug is a REQUEST FIELD.

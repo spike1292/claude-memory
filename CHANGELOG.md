@@ -13,6 +13,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`docs/usage.md`, a user guide (#39).** The layers from the user's side, one line per command on
   when to run it, how to turn recall on, and the failure modes a user hits. Linked from the README.
+- **`docs/retrieval.md`, why retrieval works the way it does (#41).** The two arms, rank fusion,
+  the two gates, chunking, model profiles, the duplicate predicate, the server and evaluation. Each
+  number links to its decision record; architecture.md Flows 2 and 3 link here.
 
 ## [0.10.0] - 2026-10-13
 
