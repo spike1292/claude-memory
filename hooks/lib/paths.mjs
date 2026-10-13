@@ -383,16 +383,24 @@ export function projectKey(dir = process.cwd()) {
 }
 
 /**
- * Pre-2026-08-08 naming, still what Claude Code names ~/.claude/projects/<slug>/ after.
- * Every character outside `[A-Za-z0-9_-]`, not just `/` — a `/`-only replace left a dotted-path
- * checkout's `memory` symlink pointing at a slug Claude Code never wrote transcripts into
- * (CHANGELOG.md, fixed alongside #125).
+ * Pre-2026-08-08 vault naming, and the vault key of a non-git dir. Keeps `_`, unlike
+ * `claudeProjectsKey()`; changing it would rename vault folders (#199).
  *
  * @param {string} [dir]
  * @returns {string}
  */
 export function legacyKey(dir = process.cwd()) {
   return dir.replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
+/**
+ * What Claude Code names ~/.claude/projects/<slug>/ after: every non-alphanumeric char is `-`.
+ *
+ * @param {string} [dir]
+ * @returns {string}
+ */
+export function claudeProjectsKey(dir = process.cwd()) {
+  return dir.replace(/[^A-Za-z0-9]/g, '-');
 }
 
 /**

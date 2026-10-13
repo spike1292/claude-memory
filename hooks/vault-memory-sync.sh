@@ -33,16 +33,17 @@ fi
 cwd=$(cat | jq -r '.cwd // empty' 2>/dev/null || true)
 [ -z "${cwd:-}" ] && cwd="$PWD"
 
-# Two different names, deliberately:
-#   slug = cwd with / -> -   : Claude Code owns ~/.claude/projects/<slug>/, we can't rename it.
+# Three different names, deliberately:
+#   slug = legacy cwd slug   : the pre-2026-08-08 vault folder name; keeps `_`.
 #   key  = git remote ident  : the vault folder, stable across machines and checkout paths.
+#   ccp  = Claude Code's ~/.claude/projects/<ccp>/ name; `_` becomes `-` too (#199).
 # One load, in THIS shell: the accessors below run in $(...) subshells, where a load would not
 # survive. cwd comes from the hook payload and is not necessarily $PWD.
 _memory_env_load "$cwd"
 slug=$(legacy_key "$cwd")
 key=$(project_key "$cwd")
 
-mem="$HOME/.claude/projects/$slug/memory"
+mem="$HOME/.claude/projects/$(claude_projects_key "$cwd")/memory"
 # key==slug: git gave no answer. Keep the Memory/<key> the link already names rather than fork it (#140).
 if [ "$key" = "$slug" ] && [ -L "$mem" ]; then
   linked=$(readlink "$mem"); linked=${linked%/}

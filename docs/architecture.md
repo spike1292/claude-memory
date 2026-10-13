@@ -81,8 +81,9 @@ makes sense without it.
 ```
 
 **Project identity is the normalised git remote** (`project_key`), not the checkout path — one repo
-maps to one vault folder from any machine or subdirectory. `legacy_key` (the cwd slug) still exists
-because Claude Code names `~/.claude/projects/<slug>/` after it. Both live in
+maps to one vault folder from any machine or subdirectory. `legacy_key` (the cwd slug, keeps `_`)
+is the pre-migration and non-git vault folder name. `claude_projects_key` is what Claude Code names
+`~/.claude/projects/<slug>/` after: `_` becomes `-` too (#199). All three live in
 [`hooks/lib/paths.mjs`](../hooks/lib/paths.mjs).
 
 ## Module map

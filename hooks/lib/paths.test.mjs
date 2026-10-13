@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync as run } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { normaliseRemote, legacyKey, requireProjectKey } from './paths.mjs';
+import { normaliseRemote, legacyKey, claudeProjectsKey, requireProjectKey } from './paths.mjs';
 
 const MODULE = fileURLToPath(new URL('./paths.mjs', import.meta.url));
 
@@ -101,12 +101,28 @@ test('paths', async (t) => {
     assert.strictEqual(fresh(plain), legacyKey(plain), 'non-git dir falls back to the path slug');
   });
 
-  await t.test("legacyKey() matches Claude Code's own ~/.claude/projects/<slug>/ naming", () => {
-    // Pinned against real folder names on disk, not against legacyKey() itself — every other
-    // caller in this suite uses legacyKey() as its own oracle, which can't catch a regression
-    // in the regex. `/.` -> `--` and the version-number case are what broke a dotted worktree
-    // path's `memory` symlink before this fix; the underscore case is what a naive
-    // "replace every non-alnum char" regex would have broken instead.
+  await t.test(
+    "claudeProjectsKey() matches Claude Code's ~/.claude/projects/<slug>/ naming",
+    () => {
+      // Pinned against real folder names on disk (#199): Claude Code turns `_` into `-` as well.
+      const cases = /** @type {const} */ ([
+        [
+          '/Users/bob/.some-tool/worktrees/1mjlho15/mindless-jaguar',
+          '-Users-bob--some-tool-worktrees-1mjlho15-mindless-jaguar',
+        ],
+        [
+          '/private/var/folders/4c/1pby5bdx06zf7j_50pp8w1700000gp-T',
+          '-private-var-folders-4c-1pby5bdx06zf7j-50pp8w1700000gp-T',
+        ],
+        ['/Users/bob/My Projects/a_b.c', '-Users-bob-My-Projects-a-b-c'],
+      ]);
+      for (const [input, expected] of cases) {
+        assert.strictEqual(claudeProjectsKey(input), expected, input);
+      }
+    },
+  );
+
+  await t.test('legacyKey() keeps `_`: it names vault folders, which are never renamed', () => {
     const cases = /** @type {const} */ ([
       [
         '/Users/bob/.some-tool/worktrees/1mjlho15/mindless-jaguar',

@@ -66,6 +66,7 @@ _memory_env_load() {
   # lands somewhere vault-memory-sync.sh already knows how to migrate rather than on a new name.
   MEMORY_ENV_LEGACY_KEY=$(printf '%s' "$_d" | sed 's#/#-#g')
   MEMORY_ENV_PROJECT_KEY="$MEMORY_ENV_LEGACY_KEY"
+  MEMORY_ENV_CLAUDE_PROJECTS_KEY=$(printf '%s' "$_d" | sed 's#[^A-Za-z0-9]#-#g')
   MEMORY_ENV_RECALL=$([ "${MEMORY_RECALL_ENABLED:-}" = "1" ] && printf 1 || printf 0)
   MEMORY_ENV_RECALL_CONFIG=""
   MEMORY_ENV_MODEL=""
@@ -87,6 +88,7 @@ vault_source()  { _memory_env_load "$PWD"; printf '%s' "$MEMORY_ENV_VAULT_SOURCE
 memory_home()   { _memory_env_load "$PWD"; printf '%s' "$MEMORY_ENV_HOME"; }
 project_key()   { _memory_env_load "${1:-$PWD}"; printf '%s' "$MEMORY_ENV_PROJECT_KEY"; }
 legacy_key()    { _memory_env_load "${1:-$PWD}"; printf '%s' "$MEMORY_ENV_LEGACY_KEY"; }
+claude_projects_key() { _memory_env_load "${1:-$PWD}"; printf '%s' "$MEMORY_ENV_CLAUDE_PROJECTS_KEY"; }
 
 # Off unless explicitly armed: injecting into every prompt changes how every session reads, so it
 # is the user's call, not a default. Exit status, not output — callers use it in `if`.

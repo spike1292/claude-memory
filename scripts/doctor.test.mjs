@@ -163,3 +163,28 @@ test('doctor counts path-shaped project folders without naming them, and moves n
     fs.rmSync(world.tmp, { recursive: true, force: true });
   }
 });
+
+test('doctor counts memory links in a `_` folder Claude Code never reads (#199)', () => {
+  const world = scratch();
+  try {
+    const projects = path.join(world.env.HOME, '.claude', 'projects');
+    const section = () => {
+      const out = run(world);
+      return out.slice(out.indexOf('auto memory'), out.indexOf('\ncowork auto memory'));
+    };
+    const ours = path.join(projects, '-tmp-a_b');
+    const theirs = path.join(projects, '-tmp-a-b');
+    fs.mkdirSync(ours, { recursive: true });
+    fs.symlinkSync(world.vault, path.join(ours, 'memory'));
+    assert.match(section(), /ok\s+every memory link sits where Claude Code reads/);
+
+    fs.mkdirSync(theirs, { recursive: true });
+    fs.writeFileSync(path.join(theirs, 's.jsonl'), '{}\n');
+    const out = section();
+    assert.match(out, /WARN\s+1 memory link\(s\) in a folder Claude Code never reads/, out);
+    assert.doesNotMatch(out, /-tmp-a/, 'a slug is a local path; this report is pasted into issues');
+    assert.ok(fs.lstatSync(path.join(ours, 'memory')).isSymbolicLink(), 'nothing removed');
+  } finally {
+    fs.rmSync(world.tmp, { recursive: true, force: true });
+  }
+});

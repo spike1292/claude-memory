@@ -166,7 +166,8 @@ trust it only when it holds `scripts/memory-semantic.mjs`, else read the
 
 **Project identity is the normalised git remote**, not the checkout path (`project_key` in
 `vault-env.sh`), so one repo maps to one vault folder from any machine or subdirectory. `legacy_key`
-(cwd-slug) still exists because Claude Code names `~/.claude/projects/<slug>/` after it.
+(cwd-slug, keeps `_`) is the pre-migration and non-git vault folder name. Claude Code names
+`~/.claude/projects/<slug>/` after `claude_projects_key`, which turns `_` into `-` too (#199).
 
 **Retrieval** (`scripts/memory-semantic.mjs`) is a vector arm plus a BM25 keyword arm, rank-fused.
 Two facts that bite:
