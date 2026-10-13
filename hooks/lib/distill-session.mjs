@@ -1322,8 +1322,8 @@ export function gate(p) {
 /**
  * The gate's outcome, for the hook log.
  *
- * `stop_hook_active` is Claude Code's own recursion guard and `child run` is this hook's, so both
- * are the same story: the hook fired inside work it had itself started.
+ * `stop_hook_active` is Claude Code's own recursion guard and `child run` is ours (`isChildRun()`,
+ * a headless `claude` any of our hooks started), so both are the same story: a recursion guard.
  *
  * Every value in GATE_REASONS is mapped, and a test proves gatePlan can emit nothing else — so the
  * trailing `ran` is unreachable for a skip today. It is the default for a reason ADDED without a
