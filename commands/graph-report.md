@@ -21,15 +21,15 @@ Generate a "God Nodes"-style codebase digest so future sessions read one summary
    - `get_architecture` — project structure / key aspects.
    - `query_graph` — top nodes by fan-in/fan-out (the "God Nodes": most-connected functions/classes/modules), plus likely refactor candidates.
    - Optionally `search_graph` to name the central entry points.
-4. Write `<vault>/Graph/<slug>/GRAPH_REPORT.md` using **sentinel blocks** so hand-written notes survive regeneration:
+4. Write the report path from step 0, else `<vault>/Graph/<slug>/GRAPH_REPORT.md`, using **sentinel blocks** so hand-written notes survive regeneration:
    - **Before writing, if the file exists, read it** and capture everything AFTER the `<!-- @generated:end -->` marker verbatim — that is the user's hand-maintained area. Never modify it.
    - Regenerate ONLY the frontmatter + the block between the markers. Preserve the trailing `## Notes` section (and anything past `@generated:end`) exactly as found.
 
 ```
 ---
 title: <repo name> — Graph Report
-date: <YYYY-MM-DD from `date +%Y-%m-%d`>
-commit: <short HEAD sha from `git rev-parse --short HEAD`>
+date: <date from step 0, else YYYY-MM-DD from `date +%Y-%m-%d`>
+commit: <commit from step 0, else short HEAD sha from `git rev-parse --short HEAD`>
 project: <slug>
 tags: [graph-report]
 type: graph

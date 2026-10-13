@@ -134,8 +134,9 @@ text, and recall injects those notes into later prompts. So an instruction that 
 replayed in every later session. The distiller's prompts fence the transcript as data for the same
 reason. They do not yet enforce the evidence rule: the reversal judge can still mark a claim
 superseded on a lesson that came from a fetched page (#70). A headless `claude` that reads outside
-text gets a closed tool list and never skips permissions: the graph regen runs in `dontAsk` mode
-with seven MCP tools and Read/Edit on its one report file.
+text gets a closed tool list and never skips permissions: the graph regen runs in `dontAsk` and
+`--restricted` mode, so no user or project allow rule widens it, with seven MCP tools and Read/Edit
+on its one report file.
 
 ## Private content
 

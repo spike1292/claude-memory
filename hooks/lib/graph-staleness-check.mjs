@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { vault, projectKey, legacyKey, stateDir } from './paths.mjs';
+import { vault, projectKey, legacyKey, stateDir, libDir } from './paths.mjs';
 import {
   detach,
   findClaude,
@@ -83,6 +83,8 @@ export const BUSY_MESSAGE =
   'Graph report is stale — a background regeneration is already running for another repo. ' +
   'It will pick this one up on a later session, or run /memory:graph-report to refresh now.';
 
+export const PLUGIN_ROOT = path.resolve(libDir, '..', '..');
+
 export const REGEN_MCP_TOOLS = [
   'list_projects',
   'index_status',
@@ -124,8 +126,10 @@ export function regenPrompt(p) {
 /**
  * This session reads text the user never saw, unattended, so it gets a closed tool list: no Bash
  * or other code-running tool, seven MCP tools, and Read/Edit on the one report file. `dontAsk`
- * denies everything else. Path rules are gitignore patterns, so glob characters are escaped;
- * `Edit` is the rule Write is checked against.
+ * denies everything else. `--restricted` drops the user's and the project's allow rules, which
+ * would otherwise let in any MCP tool they allow (ctx_execute runs code); it also unloads plugins
+ * enabled there, so this one returns through `--plugin-dir` for its command. Path rules are
+ * gitignore patterns, so glob characters are escaped; Write is checked against `Edit` rules.
  *
  * @param {RegenPlan} p
  * @returns {string[]}
@@ -137,6 +141,9 @@ export function regenArgv(p) {
     regenPrompt(p),
     '--permission-mode',
     'dontAsk',
+    '--restricted',
+    '--plugin-dir',
+    PLUGIN_ROOT,
     '--tools',
     'Read,Write',
     '--allowedTools',

@@ -45,8 +45,9 @@ what a user's setup depends on: config keys, command names, vault layout, and
 ### Changed
 
 - **The background graph regen no longer skips permissions (#177).** It ran with
-  `--dangerously-skip-permissions` while reading repo text. It now runs in `dontAsk` mode with no
-  Bash, seven named codebase-memory-mcp tools, and Read/Edit on its one `GRAPH_REPORT.md`. The
+  `--dangerously-skip-permissions` while reading repo text. It now runs in `dontAsk` and
+  `--restricted` mode, so user and project allow rules do not apply, with no Bash, seven named
+  codebase-memory-mcp tools, and Read/Edit on its one `GRAPH_REPORT.md`. The
   prompt passes slug, report path, date and short commit as data, and `/memory:graph-report` uses
   them when given. A report path with a comma or control character nudges instead of spawning.
   An MCP server registered under another name now fails closed.

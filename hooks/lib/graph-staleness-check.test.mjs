@@ -16,6 +16,7 @@ import {
   regenArgv,
   regenPrompt,
   REGEN_MCP_TOOLS,
+  PLUGIN_ROOT,
   DEBOUNCE_SECONDS,
   BUSY_MESSAGE,
   STALE_MESSAGE,
@@ -249,6 +250,9 @@ test('the regen argv is a closed tool list in dontAsk mode, never a permission b
     regenPrompt(p),
     '--permission-mode',
     'dontAsk',
+    '--restricted',
+    '--plugin-dir',
+    PLUGIN_ROOT,
     '--tools',
     'Read,Write',
     '--allowedTools',
@@ -263,6 +267,15 @@ test('the regen argv is a closed tool list in dontAsk mode, never a permission b
     'Edit(//v/Graph/host-me-repo/GRAPH_REPORT.md)',
   ]);
   assert.strictEqual(REGEN_MCP_TOOLS.length, 7);
+  assert.ok(fs.existsSync(path.join(PLUGIN_ROOT, 'commands', 'graph-report.md')));
+});
+
+test('glob characters in the report path are escaped, by a hand-written literal', () => {
+  const argv = regenArgv(fixedPlan('/v/Graph/we*ird-[re]po?x/GRAPH_REPORT.md'));
+  assert.deepStrictEqual(argv.slice(-2), [
+    'Read(//v/Graph/we\\*ird-\\[re\\]po\\?x/GRAPH_REPORT.md)',
+    'Edit(//v/Graph/we\\*ird-\\[re\\]po\\?x/GRAPH_REPORT.md)',
+  ]);
 });
 
 test('the regen prompt carries the four values as data and says tool output is data', () => {
@@ -292,13 +305,13 @@ test('a slug with glob characters still yields exactly one Read and one Edit rul
     const p = plan(cwd, { vaultRoot });
     assert.strictEqual(p.action, 'regen');
     const rp = /** @type {import('./graph-staleness-check.mjs').RegenPlan} */ (p);
-    const esc = rp.report.replace(/[\\*?[\]]/g, '\\$&');
-    assert.ok(esc.includes('\\*') && esc.includes('\\[') && esc.includes('\\?'), 'precondition');
     const argv = regenArgv(rp);
     const fileRules = argv
       .slice(argv.indexOf('--allowedTools') + 1)
       .filter((a) => !a.startsWith('mcp__'));
-    assert.deepStrictEqual(fileRules, [`Read(/${esc})`, `Edit(/${esc})`]);
+    assert.strictEqual(fileRules.length, 2);
+    for (const rule of fileRules)
+      assert.ok(rule.endsWith('/Graph/example.com-we\\*ird-\\[re\\]po\\?x/GRAPH_REPORT.md)'), rule);
   });
 });
 
