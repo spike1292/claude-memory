@@ -540,6 +540,36 @@ export function pruneDatedLogs(now = new Date()) {
   return removed;
 }
 
+/** The reason every hook logs when it stands down inside a headless child run. */
+export const CHILD_RUN = 'child run';
+
+/**
+ * True inside a headless `claude` that one of our heavy hooks spawned. vault-memory-sync.sh reads
+ * the same two variables; child-guard.test.mjs runs every entry under each.
+ */
+export const isChildRun = () =>
+  Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
+
+/**
+ * Log `child-guard` and return true when this is a child run; the entry then exits before any
+ * output (#200).
+ *
+ * @param {string} hook
+ * @param {HookPayload} p
+ */
+export function standDown(hook, p) {
+  if (!isChildRun()) return false;
+  logHook({
+    hook,
+    event: String(p.hook_event_name ?? ''),
+    cwd: hookCwd(p),
+    session: /** @type {string|undefined} */ (p.session_id),
+    outcome: 'child-guard',
+    reason: CHILD_RUN,
+  });
+  return true;
+}
+
 /** Events that are a cost record for one paid API call, never a hook invocation. */
 export const COST_EVENT = /** @type {const} */ ({ extract: 'extract', judge: 'judge' });
 
@@ -569,9 +599,7 @@ export const COST_EVENT = /** @type {const} */ ({ extract: 'extract', judge: 'ju
  * @param {HookLogInput} input
  */
 export function logHook({ hook, event = '', cwd, session, outcome, reason, extra }) {
-  // *_CHILD guards suppress only their OWN hook, so a heavy hook's headless `claude` re-firing
-  // SessionStart is marked, not suppressed — its cost is real, just not a user session's.
-  const child = Boolean(process.env.CLAUDE_DISTILL_CHILD || process.env.CBM_GRAPHGEN_CHILD);
+  const child = isChildRun();
   const machine = Boolean(process.env.MEMORY_MACHINE_RUN);
   appendJsonl('hooks', cwd, {
     // extra FIRST — spread last, a caller could overwrite the four fields the reader judges by.

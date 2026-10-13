@@ -33,7 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { appendJsonl, detach, logHook } from './lib/hook-io.mjs';
+import { CHILD_RUN, appendJsonl, detach, isChildRun, logHook } from './lib/hook-io.mjs';
 import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
 import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memory-recall.mjs';
 
@@ -75,6 +75,11 @@ try {
   ctx.cwd = cwd;
   ctx.session = payload.session_id;
   ctx.event = payload.hook_event_name;
+  if (isChildRun()) {
+    outcome = 'child-guard';
+    hookReason = CHILD_RUN;
+    process.exit(0);
+  }
   if (prompt.length < MIN_PROMPT) {
     hookReason = 'prompt shorter than MIN_PROMPT';
     process.exit(0);

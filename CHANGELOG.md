@@ -37,6 +37,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Fixed
 
+- **Headless child runs no longer fire the hooks against `$TMPDIR` (#200).** The distiller's and
+  the graph regeneration's `claude -p` re-fired every hook; only two stood down. Now every hook
+  logs `child-guard` and exits, and `vault-memory-sync.sh` exits too, so no vault folder, index or
+  injected note is made for the temp dir. Existing `$TMPDIR` folders stay; `/memory:doctor` names them.
 - **`--serve` refuses a slug that is not an indexed project.** A socket client could send a slug
   with `../` and `loadIndex()` built a file path from it unchecked (#111).
 - **The `memory` symlink lands in the `~/.claude/projects/` folder Claude Code reads when the

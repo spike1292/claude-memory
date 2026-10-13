@@ -4,6 +4,10 @@
 # ponytail: only moves regular files when repointing — memory dirs hold .md files, not subdirs.
 set -euo pipefail
 
+# A headless child run has a $TMPDIR cwd; syncing it makes vault folders for no project (#200).
+# Same two variables as isChildRun() in lib/hook-io.mjs.
+[ -n "${CLAUDE_DISTILL_CHILD:-}${CBM_GRAPHGEN_CHILD:-}" ] && exit 0
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib/vault-env.sh"
 VAULT=$(resolve_vault)

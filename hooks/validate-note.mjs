@@ -3,7 +3,7 @@
 //
 // Thin on purpose: stdin, file path, stdout. Logic and tests live in lib/validate-note.mjs.
 // hooks.json points at this path, so it is a contract — keep it.
-import { readStdin, payload, hookCwd, logHook } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
 import { report } from './lib/validate-note.mjs';
 
 // readStdin() and not `new Response(process.stdin)`. This is the hottest hook in the system — it
@@ -11,6 +11,7 @@ import { report } from './lib/validate-note.mjs';
 // it had even looked at the payload, against ~0.5 ms for one readFileSync(0). Measured
 // 2026-08-20, docs/decisions/2026-08-20-hook-startup-cost.md.
 const j = payload(readStdin());
+if (standDown('validate-note', j)) process.exit(0);
 const file = String(j?.tool_input?.file_path || j?.tool_input?.path || '');
 
 // A hook must never fail a write.

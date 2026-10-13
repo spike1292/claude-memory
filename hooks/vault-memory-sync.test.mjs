@@ -621,6 +621,17 @@ test('vault-memory-sync.sh (characterisation)', async (t) => {
     assert.ok(!fs.existsSync(path.join(w.vault, 'Memory', 'github.com-example-kappa')));
   });
 
+  for (const flag of ['CLAUDE_DISTILL_CHILD', 'CBM_GRAPHGEN_CHILD']) {
+    await t.test(`a headless child run (${flag}) makes no folder and no symlink (#200)`, () => {
+      const w = scratch('child');
+      const repo = makeRepo(w, 'lambda', 'git@github.com:example/lambda.git');
+      Object.assign(w.env, { [flag]: '1' });
+      runSync(w, repo);
+      assert.deepStrictEqual(fs.readdirSync(w.vault), []);
+      assert.deepStrictEqual(fs.readdirSync(path.join(w.home, '.claude', 'projects')), []);
+    });
+  }
+
   await t.test('the real $HOME was never touched', () => {
     // The proof. Every run above got a built env whose HOME pointed into a mkdtemp dir; if any of
     // them had leaked, the real ~/.claude/projects/*/memory symlinks would now point at a scratch

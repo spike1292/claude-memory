@@ -278,7 +278,7 @@ or an index. The slug guard it shares with `loadIndex()` is `isIndexedSlug()` in
 SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                             │
                             ├─ no argv ─▶ GATE: gatePlan(payload)
-                            │    CLAUDE_DISTILL_CHILD set        -> skip
+                            │    isChildRun()                    -> skip
                             │    stop_hook_active                -> skip
                             │    < 15 messages                   -> skip
                             │    not SessionEnd and < 400        -> skip
@@ -692,7 +692,7 @@ These are the paths where a fault produces no error — ranked by expected cost.
 | R6 | **Weights re-downloaded per version** | H2 breaks on a transformers rename | ~700 MB × versions |
 | R7 | **Slimming prunes nothing** | `slim-install.mjs` walks a hardcoded upstream layout and *fails safe* | 380 MB/version; only the `install` CI job notices |
 | R8 | **Symlink-dereference bugs** | the class, not an instance: two found so far (`du` without `-L`; the runtime probe in `semantic-index-refresh`). Both fixed, the second now pinned by a test that symlinks `node_modules` and asserts `runtimeInstalled()` sees through it. Every new check against `$CLAUDE_MEMORY_HOME` is another draw — `dirUsage()` in `doctor-perf.mjs` is the third, and skips symlinks rather than dereferencing them; none of the six directories it scans is a link today, so that is a standing precaution against this row, not a fix for a known instance | a check that measures nothing |
-| — | **Runaway `claude` recursion** | `CLAUDE_DISTILL_CHILD` is the only guard, on a hook registered for both `SessionEnd` **and** `Stop` | low probability, **unbounded** cost |
+| — | **Runaway `claude` recursion** | `isChildRun()` (`CLAUDE_DISTILL_CHILD` or `CBM_GRAPHGEN_CHILD`) is the only guard, on a hook registered for both `SessionEnd` **and** `Stop`; every other hook stands down on it too (#200) | low probability, **unbounded** cost |
 
 There is **no auth and no billing surface** — single user, one unix socket. The nearest analogues:
 the slug is a request field, so one connection to the socket can query *every* indexed project, not

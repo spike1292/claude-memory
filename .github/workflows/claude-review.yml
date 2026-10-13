@@ -98,8 +98,10 @@ jobs:
                `scripts/memory-semantic.mjs` picks up another plugin's root (#170).
             4. A hook that can block, hang, or fail a session. Hooks degrade to a no-op when
                a dependency is missing; `validate-note.sh` warns and never blocks; heavy
-               hooks detach, debounce, and guard against recursing into themselves via a
-               `*_CHILD` variable. `MEMORY_MACHINE_RUN` is a log label only (`machine: true`
+               hooks detach and debounce. EVERY hook stands down in a headless child run
+               via `isChildRun()`/`standDown()` in `hooks/lib/hook-io.mjs` (the shell sync
+               script checks the same `*_CHILD` variables); flag a hook entry without it,
+               or a second copy of the predicate. `MEMORY_MACHINE_RUN` is a log label only (`machine: true`
                from `logHook()`); flag any hook that reads it to decide whether to run.
                Hooks log what they did through `logHook()`, over `appendJsonl()` in
                `hooks/lib/hook-io.mjs` — the ONLY JSONL appender in the repo. Flag a
