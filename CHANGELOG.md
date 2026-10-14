@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-14
+
 ### Added
 
 - **`/memory:doctor` warns when a git-backed vault has gone unpushed (#116).** WARN at 20 or more
@@ -1647,7 +1649,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/spike1292/claude-memory/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/spike1292/claude-memory/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/spike1292/claude-memory/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/spike1292/claude-memory/compare/v0.8.1...v0.8.2
