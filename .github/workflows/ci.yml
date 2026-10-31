@@ -169,6 +169,8 @@ jobs:
               # hooks/lib/env-shell.mjs beside paths.mjs. A scripts/lib/env.mjs would file
               # hook-resolution infra under scripts/, split from the module it exists to serve.
               scripts/env.mjs) continue ;;
+              # A two-line pipe filter; its one function is sessionContext() in hook-io.mjs.
+              hooks/session-context.mjs) continue ;;
             esac
             echo "::error file=$f::no lib/ twin — move the logic into $d/lib/$b and leave argv/stdin/stdout in the entry, or allowlist $f in this step with a stated reason"
             rc=1
