@@ -206,7 +206,7 @@ export function planMerge(vault, groups, today) {
       }
       const rel = path.relative(vault, path.dirname(r.file));
       const to = path.join(vault, '.trash', `pruned-${today}`, rel, `${r.name}.md`);
-      if (fs.existsSync(to)) errors.push(`already in the trash: ${to}`);
+      if (fs.existsSync(to)) errors.push(`already in the trash, move it out first: ${to}`);
       moves.push({ from: r.file, to });
     }
     out.push({ survivor, redundant: notes });
