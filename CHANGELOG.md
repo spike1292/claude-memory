@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-31
+
 ### Added
 
 - **GitHub Copilot CLI support: session-start context, recall and distill (#217).** Copilot CLI
@@ -1661,7 +1663,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/spike1292/claude-memory/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/spike1292/claude-memory/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/spike1292/claude-memory/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/spike1292/claude-memory/compare/v0.8.2...v0.9.0
