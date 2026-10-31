@@ -6,7 +6,7 @@
 // Tests: node --test scripts/lib/memory-merge.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
-import { linkTargets } from '../../hooks/lib/memory-link-lint.mjs';
+import { FENCE, INLINE_CODE, linkTargets } from '../../hooks/lib/memory-link-lint.mjs';
 import { frontmatter } from './memory-mark.mjs';
 
 const SKIP = new Set(['.git', '.trash']);
@@ -14,6 +14,12 @@ const ALIAS = /^_Also asked as: (.*?)\.?_[ \t]*$/m;
 
 /** @param {string} s */
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** How Obsidian resolves a link target: `[[ Folder/Name.md ]]` is `name`. @param {string} t */
+export const linkKey = (t) => path.basename(t.trim()).replace(/\.md$/i, '').toLowerCase();
+
+/** `[[target`, in any form Obsidian resolves to `name`. @param {string} name */
+const linkHead = (name) => `\\[\\[\\s*(?:[^\\]|#\\n]*/)?${esc(name)}(?:\\.md)?\\s*(?=[\\]|#])`;
 
 /**
  * Every note under the vault, by name. `.git` and `.trash` are not the vault.
@@ -76,16 +82,23 @@ function split(raw) {
 }
 
 /**
- * `[[from]]`, `[[from|…]]` and `[[from#…]]` pointed at `to`.
+ * Every link to a `rename` key (lowercased) pointed at its value. Code is left alone, as Obsidian
+ * leaves it: a `[[x]]` inside backticks is not a link.
  *
  * @param {string} text
  * @param {Map<string, string>} rename
  * @returns {string}
  */
 export function rewriteLinks(text, rename) {
-  for (const [from, to] of rename)
-    text = text.replace(new RegExp(`\\[\\[${esc(from)}(?=[\\]|#])`, 'g'), `[[${to}`);
-  return text;
+  /** @type {[number, number][]} */
+  const code = [...text.matchAll(FENCE), ...text.matchAll(INLINE_CODE)].map((m) => [
+    /** @type {number} */ (m.index),
+    /** @type {number} */ (m.index) + m[0].length,
+  ]);
+  const re = new RegExp([...rename.keys()].map(linkHead).join('|'), 'gi');
+  return text.replace(re, (m, /** @type {number} */ at) =>
+    code.some(([a, b]) => at >= a && at < b) ? m : `[[${rename.get(linkKey(m.slice(2)))}`,
+  );
 }
 
 /**
@@ -103,7 +116,7 @@ export function dropSelfLinks(text, self) {
     .replace(new RegExp(` ?Supersedes a claim in \\[\\[${s}\\]\\]\\.`, 'g'), '')
     .replace(new RegExp(` by \\[\\[${s}\\]\\]`, 'g'), '')
     .replace(
-      new RegExp(`\\[\\[${s}(?:#[^\\]|]*)?(?:\\|([^\\]]*))?\\]\\]`, 'g'),
+      new RegExp(`${linkHead(self)}(?:#[^\\]|]*)?(?:\\|([^\\]]*))?\\]\\]`, 'gi'),
       (_, label) => label ?? self,
     )
     .replace(/\n{3,}/g, '\n\n');
@@ -200,7 +213,7 @@ export function planMerge(vault, groups, today) {
   }
   if (errors.length) throw new Error(errors.join('\n'));
 
-  const names = new Set(out.flatMap((g) => g.redundant.map((r) => r.name)));
+  const names = new Set(out.flatMap((g) => g.redundant.map((r) => r.name.toLowerCase())));
   const gone = new Set(moves.map((m) => m.from));
   const edits = new Set(out.map((g) => g.survivor.file));
   for (const files of index.values())
@@ -210,7 +223,7 @@ export function planMerge(vault, groups, today) {
 
 /** @param {string} file @param {Set<string>} names */
 const linksTo = (file, names) =>
-  [...linkTargets(fs.readFileSync(file, 'utf8'))].some((t) => names.has(t));
+  [...linkTargets(fs.readFileSync(file, 'utf8'))].some((t) => names.has(linkKey(t)));
 
 /**
  * Write the plan: fold each group into its survivor, point every inbound link at the survivor,
@@ -229,7 +242,7 @@ export function applyMerge(vault, plan) {
       g.survivor.file,
       mergeText(fs.readFileSync(g.survivor.file, 'utf8'), redundant),
     );
-    for (const r of g.redundant) rename.set(r.name, g.survivor.name);
+    for (const r of g.redundant) rename.set(r.name.toLowerCase(), g.survivor.name);
   }
   const survivors = new Map(plan.groups.map((g) => [g.survivor.file, g.survivor.name]));
   for (const f of plan.edits) {

@@ -182,3 +182,27 @@ test('link rewriting matches whole names only', () => {
     'a keep b c [[keep-2]]',
   );
 });
+
+test('every link form Obsidian resolves to a note is rewritten, and code is left alone', () => {
+  const rename = new Map([['dup', 'keep']]);
+  assert.equal(
+    rewriteLinks(
+      '![[dup]] [[ dup ]] [[Dup]] [[dup.md]] [[Insights/p/dup|x]] [[dup#^blk]] `[[dup]]`\n```\n[[dup]]\n```\n',
+      rename,
+    ),
+    '![[keep]] [[keep]] [[keep]] [[keep]] [[keep|x]] [[keep#^blk]] `[[dup]]`\n```\n[[dup]]\n```\n',
+  );
+  assert.equal(dropSelfLinks('a [[ Keep ]] b [[P/keep.md|c]]', 'keep'), 'a keep b c');
+});
+
+test('a link written in another form still counts as inbound, and none is left dangling', (t) => {
+  const vault = fixture(t);
+  fs.writeFileSync(
+    path.join(vault, 'Memory', 'proj', 'odd.md'),
+    '[[ DUP-A ]] and [[Insights/proj/Patterns/dup-b.md]]\n',
+  );
+  const plan = planMerge(vault, [['keep', 'dup-a', 'dup-b']], TODAY);
+  assert.ok(plan.edits.includes(path.join(vault, 'Memory', 'proj', 'odd.md')));
+  assert.deepEqual(applyMerge(vault, plan), []);
+  assert.equal(read(vault, path.join('Memory', 'proj', 'odd.md')), '[[keep]] and [[keep]]\n');
+});

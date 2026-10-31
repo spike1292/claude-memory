@@ -13,7 +13,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 - **`scripts/memory-merge.mjs`, the merge step of `/memory:prune`.** Every prune used to hand-write
   its own merge. The script folds redundant notes into a survivor, unions their aliases, rewrites
-  inbound `[[links]]` across the vault, and moves the redundant notes to
+  inbound `[[links]]` across the vault in every form Obsidian resolves (`[[ name ]]`, `[[Name]]`,
+  `[[folder/name.md|x]]`, `![[name]]`; code is left alone, as in Obsidian), and moves the redundant notes to
   `<vault>/.trash/pruned-<date>/` instead of deleting them. It checks the whole plan before it
   writes, refuses cross-folder groups, and has `--dry-run`.
 
