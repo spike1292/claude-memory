@@ -190,6 +190,9 @@ Why the two gates sit where they do: [retrieval.md](retrieval.md#gating-and-abst
 
 ```
 UserPromptSubmit  ──▶  hooks/memory-recall.mjs
+userPromptTransformed     (Copilot CLI only: it drops UserPromptSubmit output, so recall
+                          skips that event there and prepends the brief to the
+                          transformed prompt instead; Claude Code ignores the event, #217)
                           │
                           ├─ recallEnabled()? ────────── no ──▶ exit 0   (SHIPS INERT)
                           ├─ prompt.length >= 25? ────── no ──▶ exit 0

@@ -33,9 +33,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { CHILD_RUN, appendJsonl, detach, isChildRun, logHook } from './lib/hook-io.mjs';
+import {
+  CHILD_RUN,
+  appendJsonl,
+  detach,
+  harness,
+  isChildRun,
+  logHook,
+  setHarness,
+} from './lib/hook-io.mjs';
 import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
-import { CARD, MAX_NOTES, MIN_PROMPT, keywordArm, semanticArm } from './lib/memory-recall.mjs';
+import {
+  CARD,
+  MAX_NOTES,
+  MIN_PROMPT,
+  keywordArm,
+  recallOutput,
+  semanticArm,
+} from './lib/memory-recall.mjs';
 
 // Ships INERT. Injecting into every prompt changes how every session reads, so arming it is the
 // user's call:  {"recall": true} in $CLAUDE_MEMORY_HOME/config.json, or MEMORY_RECALL_ENABLED=1.
@@ -70,14 +85,21 @@ process.on('exit', () =>
 try {
   const raw = fs.readFileSync(0, 'utf8');
   const payload = JSON.parse(raw || '{}');
+  setHarness(payload);
   const prompt = (payload.prompt || '').trim();
   const cwd = payload.cwd || process.cwd();
+  const transformed = typeof payload.transformedPrompt === 'string';
   ctx.cwd = cwd;
-  ctx.session = payload.session_id;
-  ctx.event = payload.hook_event_name;
+  ctx.session = payload.session_id ?? payload.sessionId;
+  ctx.event = payload.hook_event_name ?? (transformed ? 'userPromptTransformed' : undefined);
   if (isChildRun()) {
     outcome = 'child-guard';
     hookReason = CHILD_RUN;
+    process.exit(0);
+  }
+  if (harness() === 'copilot' && !transformed) {
+    outcome = 'debounced';
+    hookReason = 'copilot: recall runs on userPromptTransformed';
     process.exit(0);
   }
   if (prompt.length < MIN_PROMPT) {
@@ -175,7 +197,7 @@ try {
   const fromServer = semanticArm(semantic?.results);
   if (fromServer) {
     log(fromServer.entry);
-    if (fromServer.output) console.log(fromServer.output);
+    if (fromServer.output) console.log(recallOutput(payload, fromServer.output));
   } else {
     // Opened only once the server has failed to answer, and never closed — process exit collects it.
     const db = new DatabaseSync(dbPath);
@@ -187,7 +209,7 @@ try {
 
     const fromKeyword = keywordArm(cards, prompt);
     log(fromKeyword.entry);
-    if (fromKeyword.output) console.log(fromKeyword.output);
+    if (fromKeyword.output) console.log(recallOutput(payload, fromKeyword.output));
   }
 } catch (e) {
   outcome = 'error';

@@ -20,6 +20,7 @@ import {
   MIN_PROMPT,
   MIN_SCORE,
   brief,
+  recallOutput,
   keywordArm,
   renderLines,
   semanticArm,
@@ -377,4 +378,11 @@ test('both arms omit k and notes where there were no candidates', () => {
 
   const empty = keywordArm([], 'what did we decide about the cutover and the rollback plan');
   assert.equal(JSON.stringify(empty.entry), '{"abstained":true,"reason":"empty index"}');
+});
+
+test('recallOutput: stdout for Claude Code, a rewritten prompt for Copilot CLI (#217)', () => {
+  assert.equal(recallOutput({ prompt: 'q' }, 'BRIEF'), 'BRIEF');
+  assert.deepEqual(JSON.parse(recallOutput({ prompt: 'q', transformedPrompt: 'T' }, 'BRIEF')), {
+    modifiedTransformedPrompt: 'BRIEF\n\nT',
+  });
 });

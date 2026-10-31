@@ -37,12 +37,39 @@ export function readStdin() {
  * @returns {HookPayload}
  */
 export function payload(raw) {
+  /** @type {HookPayload} */
+  let v = {};
   try {
-    const v = JSON.parse(raw || '{}');
-    return v && typeof v === 'object' ? v : {};
-  } catch {
-    return {};
+    const parsed = JSON.parse(raw || '{}');
+    if (parsed && typeof parsed === 'object') v = parsed;
+  } catch {}
+  setHarness(v);
+  return v;
+}
+
+/**
+ * Copilot CLI stamps `timestamp` on every payload and names fields in camelCase for its own event
+ * names; Claude Code sends neither. Read from the payload, not the env, because both CLIs leak their
+ * env vars into anything started from their shell tool.
+ *
+ * @param {HookPayload} p
+ */
+export function setHarness(p) {
+  process.env.MEMORY_HARNESS =
+    p.timestamp !== undefined || p.sessionId !== undefined ? 'copilot' : 'claude';
+}
+
+/** Which CLI fired this hook; a detached worker inherits it from its gate. */
+export const harness = () => (process.env.MEMORY_HARNESS === 'copilot' ? 'copilot' : 'claude');
+
+export const copilotHome = () => process.env.COPILOT_HOME || path.join(os.homedir(), '.copilot');
+
+/** Locate the `copilot` CLI, as findClaude() does `claude`. */
+export function findCopilot() {
+  for (const cand of [which('copilot'), '/opt/homebrew/bin/copilot', '/usr/local/bin/copilot']) {
+    if (cand && fs.existsSync(cand)) return cand;
   }
+  return null;
 }
 
 /**
@@ -474,7 +501,7 @@ export function appendJsonl(family, cwd, record) {
     // deleted anything reports it" note) — omitted when nothing was deleted, never zero.
     fs.appendFileSync(
       file,
-      JSON.stringify({ t, slug, ...record, ...(pruned && { pruned }) }) + '\n',
+      JSON.stringify({ t, slug, ...record, harness: harness(), ...(pruned && { pruned }) }) + '\n',
     );
   } catch {
     /* a log that cannot be written must never fail or delay a hook */

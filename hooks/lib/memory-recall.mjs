@@ -80,6 +80,18 @@ export const defuse = (s) => s.replace(INVISIBLE, '').replace(HARNESS_TAG, '‹'
 /** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;
 
+/**
+ * Claude Code injects stdout. Copilot CLI drops every prompt hook's output except a rewritten
+ * `userPromptTransformed` prompt, so there the brief goes in front of it (#217).
+ *
+ * @param {Record<string, unknown>} p
+ * @param {string} out
+ */
+export const recallOutput = (p, out) =>
+  typeof p.transformedPrompt === 'string'
+    ? JSON.stringify({ modifiedTransformedPrompt: `${out}\n\n${p.transformedPrompt}` })
+    : out;
+
 // Both arms render identically; only the trailing-weak-hit floor differs, so it is the one
 // parameter. `floor` is BM25-scaled for the keyword arm and absent for the semantic one.
 /**

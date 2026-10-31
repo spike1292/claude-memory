@@ -256,8 +256,11 @@ these lines are written from the per-prompt recall path and from every SessionSt
 that cannot be written must never fail or delay a hook. Three families use it — `recall-<date>.jsonl`
 (what recall decided), `hooks-<date>.jsonl` (`logHook()`, one line per hook invocation with a
 duration and an outcome from a closed set) and `distill-<date>.jsonl` (each distiller extract and
-judge call's exact prompt and raw answer). Every headless `claude -p` argv comes from
-`headlessArgv()`, which adds `--no-session-persistence`. **Dated filenames are the rotation; do not add a size
+judge call's exact prompt and raw answer). Every line ends with `harness` (`claude` | `copilot`),
+read from the hook PAYLOAD by `setHarness()` — both CLIs leak env vars into anything started from
+their shell tool — and inherited by a detached worker. Every headless `claude -p` argv comes from
+`headlessArgv()`, which adds `--no-session-persistence`; under Copilot the distiller runs
+`copilot -s` through `headlessCli()`, which deletes each child session itself (#217). **Dated filenames are the rotation; do not add a size
 cap.** The read views are `/memory:doctor --stats` and `--hooks`.
 
 **`MEMORY_MACHINE_RUN` is a label, never a guard.** Set by an orchestrator on a scheduled run, it
