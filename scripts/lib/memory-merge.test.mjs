@@ -247,3 +247,10 @@ test('a merge records where each redundant note went, and a chain of merges is f
     'a cycle ends',
   );
 });
+
+test('readRedirects keeps only merges made in the folders asked for', (t) => {
+  const vault = fixture(t);
+  applyMerge(vault, planMerge(vault, [['keep', 'dup-a']], TODAY));
+  assert.deepEqual([...readRedirects(vault, new Set([P]))], [['dup-a', 'keep']]);
+  assert.deepEqual([...readRedirects(vault, new Set([M]))], [], "another project's merge");
+});

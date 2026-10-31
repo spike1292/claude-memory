@@ -21,6 +21,7 @@ import {
   pairwise,
   gateFailures,
   casesHash,
+  followCases,
   kindOfPath,
   abstains,
   TYPE,
@@ -1217,4 +1218,11 @@ test('CLI --run scores a frozen case set against the survivor of a merge, hash i
   assert.equal(json.recall[1], 1, 'the redirected gold is scored against the survivor');
   assert.deepEqual(json.pairwise, { total: 1, failed: 0 }, 'a redirected owner is followed too');
   assert.equal(json.unscorable, 1, 'a supersede pair folded into one note asserts nothing');
+});
+
+test('followCases moves gold and owner to the survivor and counts what moved', () => {
+  const cases = [{ gold: ['old', 'live'], owner: 'old' }, { gold: ['gone'] }];
+  const n = followCases(cases, new Set(['live', 'new']), new Map([['old', 'new']]));
+  assert.equal(n, 2);
+  assert.deepEqual(cases, [{ gold: ['new', 'live'], owner: 'new' }, { gold: ['gone'] }]);
 });

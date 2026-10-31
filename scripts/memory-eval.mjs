@@ -32,6 +32,7 @@ import {
   TYPE,
   gateFailures,
   casesHash,
+  followCases,
   kindOfPath,
   KIND,
   GOLD,
@@ -39,7 +40,7 @@ import {
   RECALL_KS,
 } from './lib/memory-eval.mjs';
 import { minePrompts } from './lib/memory-mine.mjs';
-import { readRedirects, redirect } from './lib/memory-merge.mjs';
+import { readRedirects } from './lib/memory-merge.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -139,6 +140,19 @@ if (val('--kind') && CASE_KIND !== REPORTED_KIND)
 
 /** @typedef {{ note: string, layer: string, file: string }} EvalNote */
 
+// permanent/ is a retrieval target like any other — consolidated notes are often the BEST answer,
+// so leaving them out both hides misses and rejects valid gold notes.
+/** @type {[string, string][]} vault-relative dir, layer */
+const NOTE_DIRS = [
+  [path.join('Memory', SLUG), 'Memory'],
+  ...['Patterns', 'Mistakes', 'Decisions'].map(
+    (l) => /** @type {[string, string]} */ ([path.join('Insights', SLUG, l), l]),
+  ),
+  ...['', 'domain', 'tools'].map(
+    (d) => /** @type {[string, string]} */ ([path.join('permanent', d), 'permanent']),
+  ),
+];
+
 /** @returns {EvalNote[]} */
 function allNotes() {
   /** @type {EvalNote[]} */
@@ -151,12 +165,7 @@ function allNotes() {
       out.push({ note: f.slice(0, -3), layer, file: path.join(dir, f) });
     }
   };
-  add(path.join(VAULT, 'Memory', SLUG), 'Memory');
-  for (const l of ['Patterns', 'Mistakes', 'Decisions'])
-    add(path.join(VAULT, 'Insights', SLUG, l), l);
-  // permanent/ is a retrieval target like any other — consolidated notes are often the BEST answer,
-  // so leaving them out both hides misses and rejects valid gold notes.
-  for (const d of ['', 'domain', 'tools']) add(path.join(VAULT, 'permanent', d), 'permanent');
+  for (const [d, layer] of NOTE_DIRS) add(path.join(VAULT, d), layer);
   return out;
 }
 
@@ -478,18 +487,11 @@ if (!known.size) {
 }
 // Followed in memory, never written back, so a frozen set's hash still holds: a merged gold is the
 // same lesson, now in the survivor.
-const redirects = readRedirects(VAULT);
-let followed = 0;
-/** @param {string} n */
-const follow = (n) => {
-  const to = redirect(n, known, redirects);
-  if (to !== n) followed++;
-  return to;
-};
-for (const c of cases) {
-  c.gold = c.gold.map(follow);
-  if (c.owner) c.owner = follow(String(c.owner));
-}
+const followed = followCases(
+  cases,
+  known,
+  readRedirects(VAULT, new Set(NOTE_DIRS.map(([d]) => d))),
+);
 if (followed)
   console.error(`followed ${followed} gold/owner name(s) to the note it was merged into.`);
 const cov = goldCoverage(cases, known);

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { bm25, lexTokens } from './lexical.mjs';
 import { MAX_NOTES, semanticArm } from '../../hooks/lib/memory-recall.mjs';
+import { redirect } from './memory-merge.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
@@ -311,4 +312,28 @@ export function gateFailures({ recall1, minRank1, unscorable, pairFails, recallC
  */
 export function casesHash(text) {
   return createHash('sha256').update(text.replace(/\r\n/g, '\n').trimEnd()).digest('hex');
+}
+
+/**
+ * Point each case's `gold` and `owner` at the note a merge folded them into, in place. Returns how
+ * many names moved.
+ *
+ * @param {{ gold: string[], owner?: string }[]} cases
+ * @param {ReadonlySet<string>} known
+ * @param {ReadonlyMap<string, string>} redirects
+ * @returns {number}
+ */
+export function followCases(cases, known, redirects) {
+  let followed = 0;
+  /** @param {string} n */
+  const follow = (n) => {
+    const to = redirect(n, known, redirects);
+    if (to !== n) followed++;
+    return to;
+  };
+  for (const c of cases) {
+    c.gold = c.gold.map(follow);
+    if (c.owner) c.owner = follow(String(c.owner));
+  }
+  return followed;
 }

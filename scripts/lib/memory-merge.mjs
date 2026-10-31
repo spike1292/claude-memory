@@ -260,7 +260,15 @@ export function applyMerge(vault, plan) {
   fs.appendFileSync(
     path.join(vault, REDIRECTS),
     plan.groups
-      .flatMap((g) => g.redundant.map((r) => JSON.stringify({ from: r.name, to: g.survivor.name })))
+      .flatMap((g) =>
+        g.redundant.map((r) =>
+          JSON.stringify({
+            from: r.name,
+            to: g.survivor.name,
+            dir: path.relative(vault, path.dirname(r.file)),
+          }),
+        ),
+      )
       .join('\n') + '\n',
   );
   const gone = new Set(rename.keys());
@@ -268,20 +276,24 @@ export function applyMerge(vault, plan) {
 }
 
 /**
- * Every merge so far, `from` → `to`. A later line for the same `from` wins.
+ * Every merge so far, `from` → `to`. A later line for the same `from` wins. `dirs` keeps only
+ * merges made in those vault-relative folders: names are unique per vault only at merge time, so
+ * another project's later merge of the same name must not redirect this one's.
  *
  * @param {string} vault
+ * @param {ReadonlySet<string>} [dirs]
  * @returns {Map<string, string>}
  */
-export function readRedirects(vault) {
+export function readRedirects(vault, dirs) {
   /** @type {Map<string, string>} */
   const out = new Map();
   const file = path.join(vault, REDIRECTS);
   if (!fs.existsSync(file)) return out;
   for (const l of fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
     try {
-      const { from, to } = JSON.parse(l);
-      if (typeof from === 'string' && typeof to === 'string') out.set(from, to);
+      const { from, to, dir } = JSON.parse(l);
+      if (typeof from !== 'string' || typeof to !== 'string') continue;
+      if (!dirs || dirs.has(dir)) out.set(from, to);
     } catch {}
   }
   return out;
