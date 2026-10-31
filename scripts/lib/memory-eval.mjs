@@ -202,6 +202,7 @@ export const UNSCORABLE = /** @type {const} */ ({
   score: 'a returned result carries a non-finite score',
   noGold: 'this case names no gold note at all',
   tied: 'every returned result scored the same, so the order is arrival order, not a ranking',
+  merged: 'the owner and a gold note were merged into one note, so the case asserts nothing',
 });
 
 /**
@@ -227,6 +228,7 @@ export function unscorableReason(c, results, known) {
   if (!gold.length) return UNSCORABLE.noGold;
   if (!gold.some((g) => known.has(g))) return UNSCORABLE.gold;
   if (c.owner && !known.has(String(c.owner))) return UNSCORABLE.gold;
+  if (c.owner && gold.includes(c.owner)) return UNSCORABLE.merged;
   return null;
 }
 

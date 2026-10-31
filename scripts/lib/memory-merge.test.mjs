@@ -5,7 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { applyMerge, dropSelfLinks, planMerge, rewriteLinks } from './memory-merge.mjs';
+import {
+  applyMerge,
+  dropSelfLinks,
+  noteIndex,
+  planMerge,
+  readRedirects,
+  redirect,
+  REDIRECTS,
+  rewriteLinks,
+} from './memory-merge.mjs';
 
 const TODAY = '2026-10-31';
 const P = path.join('Insights', 'proj', 'Patterns');
@@ -205,4 +214,36 @@ test('a link written in another form still counts as inbound, and none is left d
   assert.ok(plan.edits.includes(path.join(vault, 'Memory', 'proj', 'odd.md')));
   assert.deepEqual(applyMerge(vault, plan), []);
   assert.equal(read(vault, path.join('Memory', 'proj', 'odd.md')), '[[keep]] and [[keep]]\n');
+});
+
+test('a merge records where each redundant note went, and a chain of merges is followed', (t) => {
+  const vault = fixture(t);
+  applyMerge(vault, planMerge(vault, [['keep', 'dup-a']], TODAY));
+  fs.appendFileSync(path.join(vault, REDIRECTS), 'not json\n');
+  fs.writeFileSync(path.join(vault, P, 'keep2.md'), note('Keep 2', 'Later.', 'y'));
+  applyMerge(vault, planMerge(vault, [['keep2', 'keep']], '2026-11-01'));
+  const r = readRedirects(vault);
+  assert.deepEqual(
+    [...r],
+    [
+      ['dup-a', 'keep'],
+      ['keep', 'keep2'],
+    ],
+  );
+  const known = new Set(noteIndex(vault).keys());
+  assert.equal(redirect('dup-a', known, r), 'keep2');
+  assert.equal(redirect('dup-b', known, r), 'dup-b', 'a live note is never redirected');
+  assert.equal(redirect('gone', known, r), 'gone');
+  assert.equal(
+    redirect(
+      'a',
+      new Set(),
+      new Map([
+        ['a', 'b'],
+        ['b', 'a'],
+      ]),
+    ),
+    'a',
+    'a cycle ends',
+  );
 });

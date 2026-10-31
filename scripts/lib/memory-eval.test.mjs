@@ -26,6 +26,7 @@ import {
   TYPE,
 } from './memory-eval.mjs';
 import { MAX_NOTES, MIN_COS } from '../../hooks/lib/memory-recall.mjs';
+import { applyMerge, planMerge } from './memory-merge.mjs';
 
 test('titleTokens drops short tokens', () => {
   // 'cap' is 3 chars and drops out — short tokens are noise, not identity
@@ -1188,4 +1189,32 @@ test('CLI does not refuse an all-abstention set as one that names no gold', () =
   const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.doesNotMatch(r.stdout, /names no gold notes/);
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+});
+
+test('CLI --run scores a frozen case set against the survivor of a merge, hash intact', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [
+      { q: RANKED_Q, gold: ['old-note'] },
+      { q: RANKED_Q, gold: ['other-note'], owner: 'old-note' },
+      { q: RANKED_Q, gold: ['old-note'], owner: 'owner-note', type: TYPE.supersede },
+    ],
+    RANKED_BODIES,
+  );
+  const vault = path.join(path.dirname(casesPath), 'vault');
+  const dir = path.join(vault, 'Memory', SLUG);
+  const fm = (/** @type {string} */ body) => `---\ntitle: "t"\n---\n\n${body}\n`;
+  fs.writeFileSync(path.join(dir, 'owner-note.md'), fm(RANKED_BODIES['owner-note']));
+  fs.writeFileSync(path.join(dir, 'old-note.md'), fm('The ingress certificate lapsed.'));
+  assert.equal(run('--freeze', '--cases', casesPath).status, 0);
+  applyMerge(vault, planMerge(vault, [['owner-note', 'old-note']], '2026-10-31'));
+
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--json');
+  assert.ok(!r.stderr.includes('no longer exist'), r.stderr);
+  assert.match(r.stderr, /followed 3 gold\/owner name/);
+  const json = JSON.parse(r.stdout);
+  assert.equal(json.frozen?.length, 64, `the frozen hash must still verify:\n${r.stdout}`);
+  assert.equal(json.recall[1], 1, 'the redirected gold is scored against the survivor');
+  assert.deepEqual(json.pairwise, { total: 1, failed: 0 }, 'a redirected owner is followed too');
+  assert.equal(json.unscorable, 1, 'a supersede pair folded into one note asserts nothing');
 });

@@ -18,6 +18,12 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `<vault>/.trash/pruned-<date>/` instead of deleting them. It checks the whole plan before it
   writes, refuses cross-folder groups, and has `--dry-run`.
 
+- **A merge no longer breaks eval case sets.** `memory-merge.mjs` appends each `redundant →
+  survivor` pair to `<vault>/.merge-redirects.jsonl`, and `memory-eval.mjs --run` follows a missing
+  `gold` or `owner` name through it. A frozen set keeps its hash: it is read, never rewritten. A
+  pairwise case whose owner and gold were merged into one note is now unscorable instead of a
+  failed pair.
+
 ### Fixed
 
 - **`ctx_search` held at most 200 notes per vault layer.** context-mode stops a directory walk at

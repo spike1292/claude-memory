@@ -39,6 +39,7 @@ import {
   RECALL_KS,
 } from './lib/memory-eval.mjs';
 import { minePrompts } from './lib/memory-mine.mjs';
+import { readRedirects, redirect } from './lib/memory-merge.mjs';
 
 // ---------------------------------------------------------------- setup
 
@@ -475,6 +476,22 @@ if (!known.size) {
   );
   process.exit(1);
 }
+// Followed in memory, never written back, so a frozen set's hash still holds: a merged gold is the
+// same lesson, now in the survivor.
+const redirects = readRedirects(VAULT);
+let followed = 0;
+/** @param {string} n */
+const follow = (n) => {
+  const to = redirect(n, known, redirects);
+  if (to !== n) followed++;
+  return to;
+};
+for (const c of cases) {
+  c.gold = c.gold.map(follow);
+  if (c.owner) c.owner = follow(String(c.owner));
+}
+if (followed)
+  console.error(`followed ${followed} gold/owner name(s) to the note it was merged into.`);
 const cov = goldCoverage(cases, known);
 // An abstention case names no gold by design, so a set of nothing else has no coverage to check.
 const allAbstain = cases.length > 0 && cases.every((c) => c.type === TYPE.abstain);
