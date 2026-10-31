@@ -9,6 +9,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ctx_search` held at most 200 notes per vault layer.** context-mode stops a directory walk at
+  200 files unless told otherwise, and says nothing. The distiller's reindex now passes
+  `--max-files 100000` on all five `index` calls, and `/memory:prune` step 3 passes `maxFiles` to
+  `ctx_index`. Found on a vault with 4263 Insights notes, of which 200 were searchable.
+
 ## [0.12.0] - 2026-10-31
 
 ### Added

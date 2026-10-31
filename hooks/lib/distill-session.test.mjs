@@ -643,7 +643,7 @@ test('the ctx source label carries the same key as the directory it indexes', (t
 
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
   const contextModeDirs = calls.map((l) => l.split('\t')[0]);
-  const sources = calls.map((l) => l.split('\t')[1].split(' --source ')[1]);
+  const sources = calls.map((l) => l.split('\t')[1].split(' --source ')[1].split(' ')[0]);
   // Default lands under HOME/.claude/context-mode with no override in env.
   for (const d of contextModeDirs)
     assert.strictEqual(d, path.join(root, '.claude', 'context-mode'));
@@ -654,6 +654,9 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     `vault-graph-${slug}`,
   ]);
   assert.strictEqual(sources[4], 'vault-permanent', 'permanent/ keeps its cross-project label');
+  // context-mode's default walk stops at 200 files; a real Insights layer held 4263.
+  assert.strictEqual(calls.length, 5);
+  for (const c of calls) assert.match(c, /--max-files 100000\b/);
   // The directory on the same command line carries the same identity — that is the whole point.
   for (const [i, layer] of ['Insights', 'Memory', 'Logs', 'Graph'].entries())
     assert.ok(

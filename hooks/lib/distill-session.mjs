@@ -1175,6 +1175,10 @@ function autoCommit(notes, merged, slug) {
   }
 }
 
+// context-mode stops a directory walk at 200 files by default; one Insights layer held 4263 on
+// 2026-10-31, and ctx_search silently saw 200 of them.
+const CM_MAX_FILES = ['--max-files', '100000'];
+
 /**
  * Refresh the search indexes so notes written this session are findable next session.
  * Event-driven — runs right after writeNotes, inside this detached child, so the session never
@@ -1219,7 +1223,7 @@ function reindex(cwd, slug) {
     const d = path.join(VAULT, layer, slug);
     if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
     try {
-      execFileSync(cm, ['index', d, '--project', cwd, '--source', label], {
+      execFileSync(cm, ['index', d, '--project', cwd, '--source', label, ...CM_MAX_FILES], {
         encoding: 'utf8',
         timeout: 120_000,
         stdio: 'pipe',
@@ -1236,12 +1240,16 @@ function reindex(cwd, slug) {
   const pdir = path.join(VAULT, 'permanent');
   if (fs.existsSync(pdir) && fs.statSync(pdir).isDirectory()) {
     try {
-      execFileSync(cm, ['index', pdir, '--project', cwd, '--source', 'vault-permanent'], {
-        encoding: 'utf8',
-        timeout: 120_000,
-        stdio: 'pipe',
-        env: cmEnv,
-      });
+      execFileSync(
+        cm,
+        ['index', pdir, '--project', cwd, '--source', 'vault-permanent', ...CM_MAX_FILES],
+        {
+          encoding: 'utf8',
+          timeout: 120_000,
+          stdio: 'pipe',
+          env: cmEnv,
+        },
+      );
     } catch (e) {
       console.error(
         `distill: reindex permanent failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
