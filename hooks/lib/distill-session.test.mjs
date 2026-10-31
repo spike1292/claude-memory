@@ -654,7 +654,6 @@ test('the ctx source label carries the same key as the directory it indexes', (t
     `vault-graph-${slug}`,
   ]);
   assert.strictEqual(sources[4], 'vault-permanent', 'permanent/ keeps its cross-project label');
-  // context-mode's default walk stops at 200 files; a real Insights layer held 4263.
   assert.strictEqual(calls.length, 5);
   for (const c of calls) assert.match(c, /--max-files 100000\b/);
   // The directory on the same command line carries the same identity — that is the whole point.
