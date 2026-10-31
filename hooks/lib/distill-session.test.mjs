@@ -348,6 +348,10 @@ test('under Copilot the headless CLI is copilot, one fresh session per call, del
   const id = (/** @type {string[]} */ argv) => argv[argv.indexOf('--session-id') + 1];
   assert.notStrictEqual(id(a), id(b), 'a reused id resumes the earlier call');
   assert.ok(a.includes('--sync-session=off') && a.includes(COPILOT_MODEL));
+  assert.ok(
+    a.includes('--available-tools=none'),
+    'a closed tool list, as the claude regen argv has',
+  );
   assert.ok(!a.includes('-p'), 'the prompt goes in on stdin');
   for (const argv of [a, b])
     fs.mkdirSync(path.join(home, 'session-state', id(argv)), { recursive: true });

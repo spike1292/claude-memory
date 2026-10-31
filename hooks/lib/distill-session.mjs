@@ -711,6 +711,9 @@ export function headlessCli() {
           '--session-id',
           id,
           '--sync-session=off',
+          // An unknown name leaves the model no tools; an empty list leaves it all of them.
+          '--available-tools=none',
+          '--disable-builtin-mcps',
           ...rest,
         ];
       },

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/vault-memory-sync.sh\" | node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-context.mjs\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/vault-memory-sync.sh\" | { command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-context.mjs\" || cat; }",
             "timeout": 15,
             "statusMessage": "Syncing memory to Obsidian vault"
           },
