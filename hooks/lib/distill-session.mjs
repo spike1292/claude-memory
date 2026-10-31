@@ -391,6 +391,31 @@ export function parseEnvelope(raw) {
 }
 
 /**
+ * A Copilot CLI `events.jsonl` line in the Claude message shape `transcriptToText()` reads.
+ *
+ * @param {any} obj
+ * @returns {{ role?: string, content?: unknown }}
+ */
+function copilotMessage(obj) {
+  const d = obj?.data ?? {};
+  if (obj?.type === 'user.message') return { role: 'user', content: d.content };
+  if (obj?.type === 'assistant.message')
+    return {
+      role: 'assistant',
+      content: [
+        ...(d.content ? [{ type: 'text', text: d.content }] : []),
+        ...(d.toolRequests ?? []).map((/** @type {any} */ t) => ({
+          type: 'tool_use',
+          name: t?.name,
+        })),
+      ],
+    };
+  if (obj?.type === 'tool.execution_complete')
+    return { content: [{ type: 'tool_result', content: d.result?.content ?? '' }] };
+  return {};
+}
+
+/**
  * Flatten a JSONL transcript to role-tagged text + tool names.
  *
  * @param {string} file
@@ -408,7 +433,7 @@ export function transcriptToText(file) {
     } catch {
       continue;
     }
-    const msg = obj.message || {};
+    const msg = obj.message || copilotMessage(obj);
     const role = msg.role || obj.type || '';
     const content = msg.content;
     if (typeof content === 'string') {
@@ -1244,6 +1269,21 @@ export const GATE_REASONS = {
 };
 
 /**
+ * Copilot CLI's SessionEnd payload carries no `transcript_path`; its Stop payload shows where the
+ * file lives (#217).
+ *
+ * @param {import('./hook-io.mjs').HookPayload | null | undefined} p
+ * @returns {string | undefined}
+ */
+export function copilotTranscript(p) {
+  const sid = String(p?.session_id ?? '');
+  if (p?.hook_event_name !== 'SessionEnd' || !/^[\w-]+$/.test(sid)) return undefined;
+  const home = process.env.COPILOT_HOME || path.join(os.homedir(), '.copilot');
+  const file = path.join(home, 'session-state', sid, 'events.jsonl');
+  return fs.existsSync(file) ? file : undefined;
+}
+
+/**
  * Decide whether this event should distil, without spawning or writing.
  *
  * Dual trigger, and the two are not the same job:
@@ -1271,7 +1311,7 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
     return { run: false, reason: GATE_REASONS.noCwd };
   }
 
-  const transcript = p?.transcript_path;
+  const transcript = p?.transcript_path || copilotTranscript(p);
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
     if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };

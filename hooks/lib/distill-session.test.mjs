@@ -28,6 +28,7 @@ import {
   workerArgs,
   recordRun,
   markSuperseded,
+  copilotTranscript,
 } from './distill-session.mjs';
 import { COST_EVENT } from './hook-io.mjs';
 import { hasConfidence } from '../../scripts/lib/memory-audit-checks.mjs';
@@ -220,6 +221,26 @@ test('distill-session', async (t) => {
     assert.ok(flat.includes('[REDACTED]') && flat.includes('[assistant:tool] Bash'));
   });
 
+  await t.test('transcriptToText reads a Copilot CLI events.jsonl (#217)', () => {
+    const tr = path.join(tmpBase, 'events.jsonl');
+    fs.writeFileSync(
+      tr,
+      [
+        { type: 'hook.start', data: { input: { prompt: 'noise' } } },
+        { type: 'user.message', data: { content: 'fix <private>secret</private> it' } },
+        { type: 'assistant.message', data: { content: '', toolRequests: [{ name: 'bash' }] } },
+        { type: 'tool.execution_complete', data: { result: { content: 'exit 0' } } },
+        { type: 'assistant.message', data: { content: 'done', toolRequests: [] } },
+      ]
+        .map((o) => JSON.stringify(o))
+        .join('\n'),
+    );
+    assert.strictEqual(
+      transcriptToText(tr),
+      '[user] fix [REDACTED] it\n[assistant:tool] bash\n[tool_result] exit 0\n[assistant] done',
+    );
+  });
+
   fs.rmSync(tmpBase, { recursive: true, force: true });
 });
 
@@ -285,6 +306,31 @@ test('gatePlan needs a transcript that exists', () => {
     ).reason,
     GATE_REASONS.badTranscript,
     'Stop fires after a turn, so its transcript must exist',
+  );
+});
+
+test('a Copilot CLI SessionEnd finds its transcript from the session id (#217)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-home-'));
+  const prev = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = home;
+  t.after(() => {
+    if (prev === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const file = path.join(home, 'session-state', 'abc-123', 'events.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n'.repeat(500));
+  const end = { hook_event_name: 'SessionEnd', cwd: '/some/project', session_id: 'abc-123' };
+
+  const plan = gatePlan(end);
+  assert.strictEqual(plan.run, true);
+  assert.strictEqual(/** @type {any} */ (plan).transcript, file);
+  assert.strictEqual(copilotTranscript({ ...end, hook_event_name: 'Stop' }), undefined);
+  assert.strictEqual(copilotTranscript({ ...end, session_id: '../abc-123' }), undefined);
+  assert.strictEqual(
+    /** @type {any} */ (gatePlan({ ...end, session_id: 'other' })).reason,
+    GATE_REASONS.noTranscript,
   );
 });
 

@@ -3,7 +3,7 @@
 //
 // Thin on purpose: stdin, cwd, stdout, and the index handle. Logic and tests live in lib/.
 // hooks.json points at this path, so it is a contract — keep it.
-import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown, sessionContext } from './lib/hook-io.mjs';
 import { lint } from './lib/memory-link-lint.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { dupeReport } from './lib/dupe-report.mjs';
@@ -41,7 +41,7 @@ let reason;
 let extra;
 try {
   const text = [lint(cwd), await dupeReport(cwd, readIndex)].filter(Boolean).join('\n\n');
-  if (text) console.log(text);
+  if (text) console.log(sessionContext(text));
   reason = text ? 'reported' : 'nothing to report';
   // What this hook COSTS the session, in bytes of context window. Omitted rather than logged as 0
   // when it injects nothing, so "injected nothing" and "was not measuring yet" stay distinguishable

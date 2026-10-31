@@ -650,3 +650,17 @@ export function countLines(file) {
 export function systemMessage(text) {
   return JSON.stringify({ systemMessage: text });
 }
+
+/**
+ * SessionStart context both runtimes inject: Claude Code reads `hookSpecificOutput`, Copilot CLI
+ * only the top-level `additionalContext` and drops plain stdout (#217).
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function sessionContext(text) {
+  return JSON.stringify({
+    additionalContext: text,
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text },
+  });
+}

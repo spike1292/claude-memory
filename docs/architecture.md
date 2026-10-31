@@ -147,6 +147,8 @@ Claude Code fires SessionStart
    │                                             (a cwd-slug fallback key keeps the
    │                                             Memory/<key> the link names; #140),
    │                                             rewrite $STATE/plugin-root
+   │      | hooks/session-context.mjs            stdout -> additionalContext JSON
+   │                                             (Copilot CLI drops plain stdout; #217)
    │
    ├─▶ hooks/insights-surface.mjs          10s   print <=15 newest L3 Mistakes
    │      -> lib/insights-surface.mjs            (Insights/<slug>/Mistakes/)

@@ -9,6 +9,15 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **GitHub Copilot CLI support for session-start context and distill (#217).** Copilot CLI already
+  installs the plugin and fires its hooks, but injected nothing and distilled nothing. SessionStart
+  hooks now print `additionalContext` JSON in a shape both runtimes read (Copilot drops plain
+  stdout); the distiller reads Copilot's `events.jsonl` and finds it from the session id on a
+  SessionEnd, whose payload has no `transcript_path`. Recall stays Claude Code-only: Copilot drops
+  every `UserPromptSubmit` hook's output. Verified end to end on Copilot CLI 1.0.105.
+
 ## [0.11.0] - 2026-10-14
 
 ### Added
