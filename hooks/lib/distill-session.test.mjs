@@ -28,6 +28,10 @@ import {
   workerArgs,
   recordRun,
   markSuperseded,
+  copilotTranscript,
+  copilotAnswer,
+  headlessCli,
+  COPILOT_MODEL,
 } from './distill-session.mjs';
 import { COST_EVENT } from './hook-io.mjs';
 import { hasConfidence } from '../../scripts/lib/memory-audit-checks.mjs';
@@ -220,6 +224,26 @@ test('distill-session', async (t) => {
     assert.ok(flat.includes('[REDACTED]') && flat.includes('[assistant:tool] Bash'));
   });
 
+  await t.test('transcriptToText reads a Copilot CLI events.jsonl (#217)', () => {
+    const tr = path.join(tmpBase, 'events.jsonl');
+    fs.writeFileSync(
+      tr,
+      [
+        { type: 'hook.start', data: { input: { prompt: 'noise' } } },
+        { type: 'user.message', data: { content: 'fix <private>secret</private> it' } },
+        { type: 'assistant.message', data: { content: '', toolRequests: [{ name: 'bash' }] } },
+        { type: 'tool.execution_complete', data: { result: { content: 'exit 0' } } },
+        { type: 'assistant.message', data: { content: 'done', toolRequests: [] } },
+      ]
+        .map((o) => JSON.stringify(o))
+        .join('\n'),
+    );
+    assert.strictEqual(
+      transcriptToText(tr),
+      '[user] fix [REDACTED] it\n[assistant:tool] bash\n[tool_result] exit 0\n[assistant] done',
+    );
+  });
+
   fs.rmSync(tmpBase, { recursive: true, force: true });
 });
 
@@ -285,6 +309,78 @@ test('gatePlan needs a transcript that exists', () => {
     ).reason,
     GATE_REASONS.badTranscript,
     'Stop fires after a turn, so its transcript must exist',
+  );
+});
+
+test('a Copilot --output-format json run yields its last assistant message, and no cost (#217)', () => {
+  const out = [
+    { type: 'user.message', data: { content: '{"not":"the answer"}' } },
+    { type: 'assistant.message', data: { content: 'thinking' } },
+    { type: 'assistant.message', data: { content: '{"patterns":[]}' } },
+    { type: 'result', data: {} },
+  ]
+    .map((o) => JSON.stringify(o))
+    .join('\n');
+  assert.deepStrictEqual(parseEnvelope(out), {
+    text: '{"patterns":[]}',
+    isError: false,
+    usage: null,
+  });
+  assert.strictEqual(copilotAnswer(JSON.stringify({ type: 'result', result: 'x' })), null);
+});
+
+test('under Copilot the headless CLI is copilot, one fresh session per call, deleted after (#217)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-home-'));
+  const bin = path.join(home, 'copilot');
+  fs.writeFileSync(bin, '', { mode: 0o755 });
+  const prev = { ...process.env };
+  Object.assign(process.env, { COPILOT_HOME: home, MEMORY_HARNESS: 'copilot', PATH: home });
+  t.after(() => {
+    for (const k of ['COPILOT_HOME', 'MEMORY_HARNESS', 'PATH'])
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const cli = /** @type {import('./distill-session.mjs').HeadlessCli} */ (headlessCli());
+  assert.strictEqual(cli.bin, bin);
+  const a = cli.argv('--output-format', 'json');
+  const b = cli.argv();
+  const id = (/** @type {string[]} */ argv) => argv[argv.indexOf('--session-id') + 1];
+  assert.notStrictEqual(id(a), id(b), 'a reused id resumes the earlier call');
+  assert.ok(a.includes('--sync-session=off') && a.includes(COPILOT_MODEL));
+  assert.ok(
+    a.includes('--available-tools=none'),
+    'a closed tool list, as the claude regen argv has',
+  );
+  assert.ok(!a.includes('-p'), 'the prompt goes in on stdin');
+  for (const argv of [a, b])
+    fs.mkdirSync(path.join(home, 'session-state', id(argv)), { recursive: true });
+  cli.done();
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'session-state')), []);
+});
+
+test('a Copilot CLI SessionEnd finds its transcript from the session id (#217)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-home-'));
+  const prev = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = home;
+  t.after(() => {
+    if (prev === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const file = path.join(home, 'session-state', 'abc-123', 'events.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n'.repeat(500));
+  const end = { hook_event_name: 'SessionEnd', cwd: '/some/project', session_id: 'abc-123' };
+
+  const plan = gatePlan(end);
+  assert.strictEqual(plan.run, true);
+  assert.strictEqual(/** @type {any} */ (plan).transcript, file);
+  assert.strictEqual(copilotTranscript({ ...end, hook_event_name: 'Stop' }), undefined);
+  assert.strictEqual(copilotTranscript({ ...end, session_id: '../abc-123' }), undefined);
+  assert.strictEqual(
+    /** @type {any} */ (gatePlan({ ...end, session_id: 'other' })).reason,
+    GATE_REASONS.noTranscript,
   );
 });
 
@@ -1786,6 +1882,7 @@ test('a reversal the judge proves becomes a new note that supersedes the old cla
     event: COST_EVENT.judge,
     outcome: 'ran',
     session: 'sess-cli',
+    harness: 'claude',
   });
 
   // Writer to reader: the line the worker wrote is the judge row the report prints, and it is not

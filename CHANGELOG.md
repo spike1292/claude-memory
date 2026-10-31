@@ -9,6 +9,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Added
+
+- **GitHub Copilot CLI support: session-start context, recall and distill (#217).** Copilot CLI
+  already installs the plugin and fires its hooks, but injected nothing and distilled nothing.
+  SessionStart hooks now print `additionalContext` JSON in a shape both runtimes read (Copilot drops
+  plain stdout). Recall runs on Copilot's `userPromptTransformed` and prepends its brief to the
+  prompt, since Copilot drops `UserPromptSubmit` output. The distiller reads Copilot's
+  `events.jsonl`, finds it from the session id on a SessionEnd, and runs `copilot -s` with
+  `claude-haiku-5.5` instead of `claude -p` — a fresh session id per call, deleted afterwards, and
+  `--sync-session=off`. Verified end to end on Copilot CLI 1.0.105.
+- **Every JSONL log line names its `harness`** — `claude` or `copilot`, read from the hook payload.
+
 ## [0.11.0] - 2026-10-14
 
 ### Added

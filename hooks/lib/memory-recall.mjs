@@ -80,6 +80,12 @@ export const defuse = (s) => s.replace(INVISIBLE, '').replace(HARNESS_TAG, '‹'
 /** @param {readonly string[]} lines */
 export const brief = (lines) => `${HEADER}\n${lines.join('\n')}`;
 
+/** Copilot CLI injects only a rewritten prompt (#217). @param {Record<string, unknown>} p @param {string} out */
+export const recallOutput = (p, out) =>
+  typeof p.transformedPrompt === 'string'
+    ? JSON.stringify({ modifiedTransformedPrompt: `${out}\n\n${p.transformedPrompt}` })
+    : out;
+
 // Both arms render identically; only the trailing-weak-hit floor differs, so it is the one
 // parameter. `floor` is BM25-scaled for the keyword arm and absent for the semantic one.
 /**

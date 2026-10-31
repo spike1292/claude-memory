@@ -4,7 +4,7 @@
 //
 // Thin on purpose: stdin, cwd, stdout only — see docs/architecture.md's "Entry files are thin
 // wrappers over lib/" invariant (and G1, where the pattern breaks elsewhere).
-import { readStdin, payload, hookCwd, logHook, standDown } from './lib/hook-io.mjs';
+import { readStdin, payload, hookCwd, logHook, standDown, sessionContext } from './lib/hook-io.mjs';
 import { surface } from './lib/insights-surface.mjs';
 
 // readStdin() and not `new Response(process.stdin)`: the web-streams path costs ~18 ms of runtime
@@ -24,7 +24,7 @@ let reason;
 let extra;
 try {
   const text = surface(cwd);
-  if (text) console.log(text);
+  if (text) console.log(sessionContext(text));
   reason = text ? 'surfaced' : 'nothing to surface';
   // What this hook COSTS the session, in bytes of context window. Omitted rather than logged as 0
   // when it injects nothing, so "injected nothing" and "was not measuring yet" stay distinguishable

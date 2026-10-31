@@ -147,6 +147,8 @@ Claude Code fires SessionStart
    │                                             (a cwd-slug fallback key keeps the
    │                                             Memory/<key> the link names; #140),
    │                                             rewrite $STATE/plugin-root
+   │      | hooks/session-context.mjs            stdout -> additionalContext JSON
+   │                                             (Copilot CLI drops plain stdout; #217)
    │
    ├─▶ hooks/insights-surface.mjs          10s   print <=15 newest L3 Mistakes
    │      -> lib/insights-surface.mjs            (Insights/<slug>/Mistakes/)
@@ -188,6 +190,9 @@ Why the two gates sit where they do: [retrieval.md](retrieval.md#gating-and-abst
 
 ```
 UserPromptSubmit  ──▶  hooks/memory-recall.mjs
+userPromptTransformed     (Copilot CLI only: it drops UserPromptSubmit output, so recall
+                          skips that event there and prepends the brief to the
+                          transformed prompt instead; Claude Code ignores the event, #217)
                           │
                           ├─ recallEnabled()? ────────── no ──▶ exit 0   (SHIPS INERT)
                           ├─ prompt.length >= 25? ────── no ──▶ exit 0

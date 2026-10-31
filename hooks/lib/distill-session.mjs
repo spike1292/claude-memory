@@ -19,6 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import * as paths from './paths.mjs';
 // Imports nothing but node:fs and node:path, so it is safe above the entry guard — unlike
 // scripts/lib/memory-semantic.mjs, which process.exit()s at module scope on an unknown model
@@ -41,6 +42,9 @@ import {
   writeMarker,
   CHILD_RUN,
   isChildRun,
+  harness,
+  copilotHome,
+  findCopilot,
 } from './hook-io.mjs';
 
 // DISTILL_VAULT stays supported for dry runs against a throwaway vault; otherwise this is
@@ -355,6 +359,8 @@ export function parseEnvelope(raw) {
   // envelope object back as "insights" — junk that only writeNotes' shape check discarded, having
   // first suppressed the retry by looking non-empty.
   const text = String(raw ?? '').trim();
+  const copilot = copilotAnswer(text);
+  if (copilot !== null) return { text: copilot, isError: false, usage: null };
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end < start) return null;
@@ -391,6 +397,52 @@ export function parseEnvelope(raw) {
 }
 
 /**
+ * The last `assistant.message` of a Copilot `--output-format json` run, or null when `text` is not
+ * one. No usage: Copilot bills in AI credits, not tokens or dollars, and a cost is never a guess.
+ *
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function copilotAnswer(text) {
+  /** @type {string | null} */
+  let answer = null;
+  for (const line of text.split('\n')) {
+    if (!line.includes('"assistant.message"')) continue;
+    try {
+      const o = JSON.parse(line);
+      if (o?.type === 'assistant.message' && typeof o.data?.content === 'string')
+        answer = o.data.content;
+    } catch {}
+  }
+  return answer;
+}
+
+/**
+ * A Copilot CLI `events.jsonl` line in the Claude message shape `transcriptToText()` reads.
+ *
+ * @param {any} obj
+ * @returns {{ role?: string, content?: unknown }}
+ */
+function copilotMessage(obj) {
+  const d = obj?.data ?? {};
+  if (obj?.type === 'user.message') return { role: 'user', content: d.content };
+  if (obj?.type === 'assistant.message')
+    return {
+      role: 'assistant',
+      content: [
+        ...(d.content ? [{ type: 'text', text: d.content }] : []),
+        ...(d.toolRequests ?? []).map((/** @type {any} */ t) => ({
+          type: 'tool_use',
+          name: t?.name,
+        })),
+      ],
+    };
+  if (obj?.type === 'tool.execution_complete')
+    return { content: [{ type: 'tool_result', content: d.result?.content ?? '' }] };
+  return {};
+}
+
+/**
  * Flatten a JSONL transcript to role-tagged text + tool names.
  *
  * @param {string} file
@@ -408,7 +460,7 @@ export function transcriptToText(file) {
     } catch {
       continue;
     }
-    const msg = obj.message || {};
+    const msg = obj.message || copilotMessage(obj);
     const role = msg.role || obj.type || '';
     const content = msg.content;
     if (typeof content === 'string') {
@@ -518,12 +570,27 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
       decisions: [{ title: 'Dry run decision', decision: 'd', why: 'w' }],
     };
   }
-  const claude = findClaude();
-  if (!claude) {
-    console.error('distill: claude CLI not found');
+  const cli = headlessCli();
+  if (!cli) {
+    console.error(`distill: ${harness()} CLI not found`);
     return {};
   }
+  try {
+    return extractWith(cli, convo, cwd, slug, session);
+  } finally {
+    cli.done();
+  }
+}
 
+/**
+ * @param {HeadlessCli} cli
+ * @param {string} convo
+ * @param {string | undefined} cwd
+ * @param {string | undefined} slug
+ * @param {string | undefined} session
+ * @returns {Insights}
+ */
+function extractWith(cli, convo, cwd, slug, session) {
   /**
    * Read one attempt's stdout: log what it cost, and hand back the insights in it.
    *
@@ -555,11 +622,10 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
     return extractJson(envelope ? envelope.text : out);
   };
 
-  const args = headlessArgv('--model', 'haiku');
   const input = EXTRACT_PROMPT + fence('transcript', convo);
   try {
     return readAttempt(
-      execFileSync(claude, [...args, '--output-format', 'json'], {
+      execFileSync(cli.bin, cli.argv('--output-format', 'json'), {
         input,
         encoding: 'utf8',
         timeout: 150_000,
@@ -597,7 +663,7 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
     if (err.code === 'ETIMEDOUT' || err.signal) return {};
     try {
       console.error('distill: retrying without --output-format (no cost figure for this run)');
-      const out = execFileSync(claude, args, {
+      const out = execFileSync(cli.bin, cli.argv(), {
         input,
         encoding: 'utf8',
         timeout: 150_000,
@@ -614,6 +680,57 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
   }
 }
 
+// ponytail: one fixed model; a config key when an account's Copilot catalog lacks it.
+export const COPILOT_MODEL = 'claude-haiku-5.5';
+
+/** @typedef {{ bin: string, argv: (...rest: string[]) => string[], done: () => void }} HeadlessCli */
+
+/**
+ * The headless CLI of the harness the session ran in. Copilot has no `--no-session-persistence`, so
+ * every call gets a fresh session id (reusing one would resume it) and done() deletes them (#201).
+ * `--sync-session=off` keeps the transcript out of the account's history.
+ *
+ * @returns {HeadlessCli | null}
+ */
+export function headlessCli() {
+  if (harness() === 'copilot') {
+    const bin = findCopilot();
+    if (!bin) return null;
+    /** @type {string[]} */
+    const ids = [];
+    return {
+      bin,
+      argv: (...rest) => {
+        const id = crypto.randomUUID();
+        ids.push(id);
+        return [
+          '-s',
+          '--no-color',
+          '--model',
+          COPILOT_MODEL,
+          '--session-id',
+          id,
+          '--sync-session=off',
+          // An unknown name leaves the model no tools; an empty list leaves it all of them.
+          '--available-tools=none',
+          '--disable-builtin-mcps',
+          ...rest,
+        ];
+      },
+      done: () => {
+        for (const id of ids)
+          fs.rmSync(path.join(copilotHome(), 'session-state', id), {
+            recursive: true,
+            force: true,
+          });
+      },
+    };
+  }
+  const bin = findClaude();
+  if (!bin) return null;
+  return { bin, argv: (...rest) => headlessArgv('--model', 'haiku', ...rest), done: () => {} };
+}
+
 /**
  * One headless call that labels every merge pair of the run. Null when there is no answer at all;
  * the caller then merges every pair exactly as before. Its cost is its own line, as the extractor's.
@@ -625,14 +742,14 @@ function runExtractor(convo, cwd, slug, session = process.env.MEMORY_HOOK_SESSIO
  */
 function runJudge(pairs, cwd, slug) {
   if (process.env.DISTILL_DRYRUN) return null;
-  const claude = findClaude();
-  if (!claude) return null;
+  const cli = headlessCli();
+  if (!cli) return null;
   const items = pairs.map((p, i) => `[${i}]\nEXISTING: ${p.old}\nNEW: ${p.new}`).join('\n\n');
   const input = `${JUDGE_PROMPT}\n${fence('pairs', items)}`;
   let out;
   let failed = false;
   try {
-    out = execFileSync(claude, headlessArgv('--model', 'haiku', '--output-format', 'json'), {
+    out = execFileSync(cli.bin, cli.argv('--output-format', 'json'), {
       input,
       encoding: 'utf8',
       timeout: 150_000,
@@ -644,6 +761,8 @@ function runJudge(pairs, cwd, slug) {
     console.error(`distill: judge failed: ${/** @type {Error} */ (e).message}`);
     out = String(/** @type {{ stdout?: string }} */ (e).stdout ?? '');
     failed = true;
+  } finally {
+    cli.done();
   }
   recordCall('judge', cwd, slug, process.env.MEMORY_HOOK_SESSION, input, out);
   const envelope = parseEnvelope(out);
@@ -1244,6 +1363,20 @@ export const GATE_REASONS = {
 };
 
 /**
+ * Copilot CLI's SessionEnd payload carries no `transcript_path`; its Stop payload shows where the
+ * file lives (#217).
+ *
+ * @param {import('./hook-io.mjs').HookPayload | null | undefined} p
+ * @returns {string | undefined}
+ */
+export function copilotTranscript(p) {
+  const sid = String(p?.session_id ?? '');
+  if (p?.hook_event_name !== 'SessionEnd' || !/^[\w-]+$/.test(sid)) return undefined;
+  const file = path.join(copilotHome(), 'session-state', sid, 'events.jsonl');
+  return fs.existsSync(file) ? file : undefined;
+}
+
+/**
  * Decide whether this event should distil, without spawning or writing.
  *
  * Dual trigger, and the two are not the same job:
@@ -1271,7 +1404,7 @@ export function gatePlan(p, { now = nowSeconds() } = {}) {
     return { run: false, reason: GATE_REASONS.noCwd };
   }
 
-  const transcript = p?.transcript_path;
+  const transcript = p?.transcript_path || copilotTranscript(p);
   if (!transcript) return { run: false, reason: GATE_REASONS.noTranscript };
   try {
     if (!fs.statSync(transcript).isFile()) return { run: false, reason: GATE_REASONS.notAFile };

@@ -25,6 +25,7 @@ import {
   pruneDatedLogs,
   logHook,
   headlessArgv,
+  harness,
 } from './hook-io.mjs';
 
 test('every headless `claude -p` argv is built by headlessArgv, which never persists the session', () => {
@@ -43,7 +44,23 @@ test('every headless `claude -p` argv is built by headlessArgv, which never pers
   const sites = sources
     .filter((f) => !f.endsWith('hook-io.mjs'))
     .flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').match(/headlessArgv\(/g) ?? []);
-  assert.ok(sites.length >= 3, `found ${sites.length} headless spawn sites, expected >= 3`);
+  assert.ok(sites.length >= 2, `found ${sites.length} headless spawn sites, expected >= 2`);
+});
+
+test('the harness is read from the payload, never from an inherited env (#217)', () => {
+  const prev = process.env.MEMORY_HARNESS;
+  try {
+    process.env.MEMORY_HARNESS = 'copilot';
+    payload(JSON.stringify({ session_id: 's', transcript_path: '/t', hook_event_name: 'Stop' }));
+    assert.strictEqual(harness(), 'claude', 'a Claude Code payload wins over the env');
+    payload(JSON.stringify({ session_id: 's', timestamp: '2026-10-31T00:00:00Z', cwd: '/x' }));
+    assert.strictEqual(harness(), 'copilot', 'Copilot stamps timestamp on every payload');
+    payload(JSON.stringify({ sessionId: 's', cwd: '/x', prompt: 'p' }));
+    assert.strictEqual(harness(), 'copilot', 'camelCase is Copilot-only');
+  } finally {
+    if (prev === undefined) delete process.env.MEMORY_HARNESS;
+    else process.env.MEMORY_HARNESS = prev;
+  }
 });
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hookio-'));
@@ -293,7 +310,7 @@ test('appendJsonl stamps t and slug FIRST, then the record verbatim', () => {
     // Field ORDER is the contract, not just the field set: recall's records have been written as
     // t, slug, <entry…>, ms since the log began, and a reader diffing two days of them must not see
     // the shape change under it.
-    assert.deepStrictEqual(Object.keys(rec), ['t', 'slug', 'abstained', 'reason', 'ms']);
+    assert.deepStrictEqual(Object.keys(rec), ['t', 'slug', 'abstained', 'reason', 'ms', 'harness']);
     assert.match(String(rec.t), /^\d{4}-\d{2}-\d{2}T/);
     assert.strictEqual(rec.reason, 'nope');
   });
@@ -532,7 +549,7 @@ test('appendJsonl prunes once a day, and says on the line how many it deleted', 
       // AFTER the caller's fields: their order is a contract (see the first test in this file),
       // and a count injected into the middle of someone's record breaks a reader that never asked
       // for it.
-      assert.deepStrictEqual(Object.keys(first), ['t', 'slug', 'hook', 'pruned']);
+      assert.deepStrictEqual(Object.keys(first), ['t', 'slug', 'hook', 'harness', 'pruned']);
       assert.strictEqual(
         first.pruned,
         2,

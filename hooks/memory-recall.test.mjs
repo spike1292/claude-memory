@@ -23,17 +23,17 @@ test.after(() => {
 });
 
 /**
- * @param {{ prompt: string, recall?: boolean }} options
- * @returns {{ status: number, stdout: string, lines: Record<string, any>[], home: string }}
+ * @param {{ prompt: string, recall?: boolean, extra?: Record<string, unknown> }} options
+ * @returns {{ status: number, stdout: string, lines: Record<string, any>[], hookLines: Record<string, any>[], home: string }}
  */
-function run({ prompt, recall = true }) {
+function run({ prompt, recall = true, extra = {} }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'recall-entry-'));
   homes.push(home);
   let status = 0;
   let stdout = '';
   try {
     stdout = execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', HOOK], {
-      input: JSON.stringify({ prompt, cwd: process.cwd() }),
+      input: JSON.stringify({ prompt, cwd: process.cwd(), ...extra }),
       encoding: 'utf8',
       env: {
         ...process.env,
@@ -57,7 +57,15 @@ function run({ prompt, recall = true }) {
       .filter(Boolean)
       .map((l) => JSON.parse(l)),
   );
-  return { status, stdout, lines, home };
+  const hookFile = fs.existsSync(dir) && fs.readdirSync(dir).find((f) => f.startsWith('hooks-'));
+  const hookLines = hookFile
+    ? fs
+        .readFileSync(path.join(dir, hookFile), 'utf8')
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l))
+    : [];
+  return { status, stdout, lines, hookLines, home };
 }
 
 // The gates were tuned without live data and the reader half of this is worth nothing if the
@@ -86,4 +94,31 @@ test('a prompt below MIN_PROMPT exits 0 without a record', () => {
   const r = run({ prompt: 'hi' });
   assert.equal(r.status, 0);
   assert.deepEqual(r.lines, []);
+});
+
+test('under Copilot, recall skips UserPromptSubmit and runs on userPromptTransformed (#217)', () => {
+  const prompt = 'what did we decide about the cutover and the rollback plan';
+  const submit = run({
+    prompt,
+    extra: {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's',
+      timestamp: '2026-10-31T00:00:00Z',
+    },
+  });
+  assert.equal(submit.lines.length, 0, 'Copilot drops this output, so recall must not run twice');
+  assert.deepEqual(
+    submit.hookLines.map((l) => [l.event, l.outcome, l.harness]),
+    [['UserPromptSubmit', 'debounced', 'copilot']],
+  );
+
+  const transformed = run({
+    prompt,
+    extra: { sessionId: 's', timestamp: 1, transformedPrompt: prompt },
+  });
+  assert.equal(transformed.lines.length, 1, 'reaches the index lookup');
+  assert.deepEqual(
+    transformed.hookLines.map((l) => [l.event, l.session, l.harness]),
+    [['userPromptTransformed', 's', 'copilot']],
+  );
 });
