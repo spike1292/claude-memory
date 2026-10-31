@@ -43,7 +43,15 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
    Then, for each candidate, find notes that describe the **same** lesson or that a later note supersedes.
    - **Cluster within each folder FIRST, then look across folders.** Cross-type pairs (a Mistake plus its matching Decision) are complementary by design and get kept — so if a greedy pass assigns a note to a cross-type cluster first and marks it consumed, it never gets compared against its real same-type twin and the duplicate survives the prune. That is precisely how `cloudfront-function-code-budgeting-with-esbuild` and `…-size-budgeting-with-esbuild` (Jaccard 0.67) slipped through on 2026-08-07 and were only caught by the next audit. Same-folder first, always.
    - Propose a concrete merge plan: which note survives, what content folds in, which become redundant.
-   - **Do NOT delete anything without explicit confirmation** (vault rule). On confirmation: merge content into the surviving note and delete the redundant ones.
+   - **Do NOT delete anything without explicit confirmation** (vault rule). On confirmation, run the merge — do not hand-write one:
+
+     ```bash
+     node "$MEM/scripts/memory-merge.mjs" --dry-run <survivor> <redundant> [...]   # read what it would touch
+     node "$MEM/scripts/memory-merge.mjs" <survivor> <redundant> [...]
+     # many groups: --plan plan.json, holding [["survivor", "redundant", ...], ...]
+     ```
+
+     It checks the whole plan first and changes nothing if any name is missing, ambiguous, used twice, or in a different folder from its survivor. Then it folds each redundant body into the survivor under a `**Merged <date> (<title>):**` line, unions the `_Also asked as:` aliases, points every `[[redundant]]` link in the vault at the survivor, drops the survivor's links to itself, and **moves** the redundant notes to `<vault>/.trash/pruned-<date>/` (auto mode refuses an `unlink` of a vault note). It exits 1 if any link to a moved note is left. Same-folder only: a cross-folder restatement (step 3c) is merged by hand.
    - **Mark every pair you KEEP, in the same breath as deciding it** — do not leave it to memory:
 
      ```bash
@@ -51,7 +59,7 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
      ```
 
      This writes `reconcile: manual` into both notes' frontmatter, which stops the distiller ever auto-folding a later restatement into them. It is not optional bookkeeping: **cross-linking two notes RAISES their similarity**, so an audit that correctly relates a kept pair pushes it toward the merge bar — `equivalence-testing-over-survival-testing` / `mutation-testing-proves-test-validity` moved 0.754 → 0.762 when the back-link was added, crossing 0.75. Without the mark the same four pairs are proposed every prune until one is accepted by mistake. Four correct keeps on 2026-08-22 went unmarked because this was an instruction rather than a command; run the command.
-   - **Union the aliases on merge** (mandatory): before deleting a redundant note, fold every distinctive `_Also asked as:` paraphrase from it into the survivor's alias line. Dropping a deleted note's aliases silently shrinks retrieval coverage — a `/memory:eval` miss that looks like a vocabulary gap but is really merge-loss. Dedup near-identical phrasings; keep the union.
+   - **Union the aliases on merge** (mandatory; `memory-merge.mjs` does it): before deleting a redundant note, fold every distinctive `_Also asked as:` paraphrase from it into the survivor's alias line. Dropping a deleted note's aliases silently shrinks retrieval coverage — a `/memory:eval` miss that looks like a vocabulary gap but is really merge-loss. Dedup near-identical phrasings; keep the union.
 
 2b. **`--dupes` and `--clusters` are calibrated for bge-m3 as of 2026-08-17** (0.75 / 0.72), by the
    sweep below. They were **0.95 / 0.92**, copied from e5-multi and never measured, and at those
