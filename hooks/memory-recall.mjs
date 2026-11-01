@@ -42,7 +42,7 @@ import {
   logHook,
   setHarness,
 } from './lib/hook-io.mjs';
-import { projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
+import { fileQuery, projectKey, stateDir, scriptsDir, recallEnabled } from './lib/paths.mjs';
 import {
   CARD,
   MAX_NOTES,
@@ -52,9 +52,16 @@ import {
   semanticArm,
 } from './lib/memory-recall.mjs';
 
+// `--preview [--cwd d] (--file f | prompt…)`: this same path with argv for the payload — so it
+// cannot drift from the hook — printing the brief, the decision on stderr, and logging nothing.
+const argv = process.argv.slice(2);
+const preview = argv[0] === '--preview';
+/** @param {string} f */
+const opt = (f) => (argv.indexOf(f) > 0 ? argv.splice(argv.indexOf(f), 2)[1] : undefined);
+
 // Ships INERT. Injecting into every prompt changes how every session reads, so arming it is the
 // user's call:  {"recall": true} in $CLAUDE_MEMORY_HOME/config.json, or MEMORY_RECALL_ENABLED=1.
-if (!recallEnabled()) process.exit(0);
+if (!preview && !recallEnabled()) process.exit(0);
 
 // One line per ARMED invocation, in the `hooks` family, beside the decision line this hook has
 // always written in the `recall` family. Two lines because they answer two questions: the recall
@@ -72,19 +79,27 @@ let hookReason;
 /** @type {{ cwd?: string, session?: string, event?: string }} */
 const ctx = {};
 process.on('exit', () =>
-  logHook({
-    hook: 'memory-recall',
-    event: ctx.event ?? '',
-    cwd: ctx.cwd,
-    session: ctx.session,
-    outcome,
-    reason: hookReason,
-  }),
+  preview
+    ? fs.writeSync(2, `${outcome}: ${hookReason ?? ''}\n`)
+    : logHook({
+        hook: 'memory-recall',
+        event: ctx.event ?? '',
+        cwd: ctx.cwd,
+        session: ctx.session,
+        outcome,
+        reason: hookReason,
+      }),
 );
 
+/** @returns {Record<string, any>} */
+function previewPayload() {
+  const cwd = path.resolve(opt('--cwd') ?? process.cwd());
+  const file = opt('--file');
+  return { cwd, file, prompt: file ? fileQuery(file, cwd) : argv.slice(1).join(' ') };
+}
+
 try {
-  const raw = fs.readFileSync(0, 'utf8');
-  const payload = JSON.parse(raw || '{}');
+  const payload = preview ? previewPayload() : JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
   setHarness(payload);
   const prompt = (payload.prompt || '').trim();
   const cwd = payload.cwd || process.cwd();
@@ -102,7 +117,7 @@ try {
     hookReason = 'copilot: recall runs on userPromptTransformed';
     process.exit(0);
   }
-  if (prompt.length < MIN_PROMPT) {
+  if (prompt.length < MIN_PROMPT && !payload.file) {
     hookReason = 'prompt shorter than MIN_PROMPT';
     process.exit(0);
   }
@@ -124,15 +139,16 @@ try {
   // its own errors — logging must never break the prompt either.
   const log = (/** @type {import('./lib/memory-recall.mjs').LogEntry} */ entry) => {
     hookReason = entry.abstained ? `abstained: ${entry.reason ?? ''}`.trim() : 'injected';
-    appendJsonl('recall', cwd, {
-      ...entry,
-      // `performance.now()` is measured from process start, NOT from here, and that is the
-      // point: a prompt waits for the whole process, so node's own startup and this file's
-      // static import graph — ~40 ms of the budget — are inside the number. A clock started
-      // at the top of this try would have excluded exactly the part nobody can see. Read it
-      // against the 700 ms socket timeout, which it contains rather than sits beside.
-      ms: +performance.now().toFixed(1),
-    });
+    if (!preview)
+      appendJsonl('recall', cwd, {
+        ...entry,
+        // `performance.now()` is measured from process start, NOT from here, and that is the
+        // point: a prompt waits for the whole process, so node's own startup and this file's
+        // static import graph — ~40 ms of the budget — are inside the number. A clock started
+        // at the top of this try would have excluded exactly the part nobody can see. Read it
+        // against the 700 ms socket timeout, which it contains rather than sits beside.
+        ms: +performance.now().toFixed(1),
+      });
   };
 
   // The log is defined BEFORE the first exit on purpose. It used to sit after the missing-DB check,

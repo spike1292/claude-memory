@@ -12,7 +12,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync as run } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { normaliseRemote, legacyKey, claudeProjectsKey, requireProjectKey } from './paths.mjs';
+import {
+  normaliseRemote,
+  legacyKey,
+  claudeProjectsKey,
+  requireProjectKey,
+  fileQuery,
+} from './paths.mjs';
 
 const MODULE = fileURLToPath(new URL('./paths.mjs', import.meta.url));
 
@@ -378,5 +384,18 @@ test('requireProjectKey: a path-shaped key needs a folder in any layer', (t) => 
     assert.throws(() => requireProjectKey(key, vault), /no vault folder/, layer);
     fs.mkdirSync(path.join(vault, layer, key), { recursive: true });
     assert.strictEqual(requireProjectKey(key, vault), key, layer);
+  }
+});
+
+test('fileQuery names the path, its directories and the nearest package (#226)', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'filequery-')));
+  try {
+    fs.mkdirSync(path.join(root, 'web', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'web', 'package.json'), '{"name":"@acme/web"}');
+    const want = 'web src cart.ts @acme/web';
+    assert.strictEqual(fileQuery('web/src/cart.ts', root), want);
+    assert.strictEqual(fileQuery(path.join(root, 'web', 'src', 'cart.ts'), root), want);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

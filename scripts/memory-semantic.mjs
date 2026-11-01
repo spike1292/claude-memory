@@ -1086,7 +1086,13 @@ if (flag('--serve')) {
       console.log(
         JSON.stringify({
           q,
-          results: top.map(({ r, s }) => ({ note: r.note, layer: r.layer, score: +s.toFixed(4) })),
+          // `text` as --serve sends it, so the eval's injectedNotes() meets the hook's char budget.
+          results: top.map(({ r, s }) => ({
+            note: r.note,
+            layer: r.layer,
+            score: +s.toFixed(4),
+            text: selfIndex.cardByNote.get(r.note) ?? r.text,
+          })),
         }),
       );
       return;

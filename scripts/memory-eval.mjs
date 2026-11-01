@@ -29,6 +29,9 @@ import {
   unscorableReason,
   pairwise,
   abstains,
+  caseQuery,
+  injectedNotes,
+  injection,
   TYPE,
   gateFailures,
   casesHash,
@@ -307,7 +310,8 @@ if (flag('--author')) {
     // Same trust boundary as --run: this is input someone wrote, not a shape we can assume. Both
     // fields, because guarding `gold` and then dereferencing `c.q` two lines later just moves the
     // TypeError down the function.
-    if (!isQuestion(c.q) || !Array.isArray(c.gold)) {
+    const q = caseQuery(c, repo);
+    if (!isQuestion(q) || !Array.isArray(c.gold)) {
       console.log(
         `every case needs a question and a gold array — got: ${JSON.stringify(c).slice(0, 80)}`,
       );
@@ -315,7 +319,7 @@ if (flag('--author')) {
     }
     const missing = c.gold.filter((g) => !known.has(g));
     if (missing.length) {
-      bad.push(`${missing.join(', ')}  (Q: ${c.q.slice(0, 60)})`);
+      bad.push(`${missing.join(', ')}  (Q: ${String(q).slice(0, 60)})`);
       continue;
     }
     cases.push({ ...c, style: c.style || 'semantic-authored' });
@@ -448,6 +452,7 @@ const cases =
   /** @type {{ q: string, gold: string[], owner?: string, layer?: string, style?: string, type?: string }[]} */ (
     parseJsonl(casesText, CASES)
   );
+for (const c of cases) c.q = /** @type {string} */ (caseQuery(c, repo));
 
 // A line with no gold array is not a case. goldCoverage skips them, so a file of three good cases
 // and one truncated line passed coverage as `ok` and then killed the scorer on `c.gold.includes`.
@@ -591,6 +596,8 @@ const scored = cases.map((c, i) => {
     // scored by pairwise() and kept out of recall@k, where it would count as a miss by design.
     pair: c.owner ? pairwise(/** @type {{gold: string[], owner: string}} */ (c), res) : null,
     abstained: abstain ? abstains(res) : null,
+    relevant: c.gold,
+    injected: mode === 'semantic' ? injectedNotes(res) : [],
     unscorable: unscorableReason(c, res, known),
     top1: res[0]?.note ?? null,
   };
@@ -606,6 +613,8 @@ const abstain = skipped.length
   ? []
   : scored.filter((c) => c.type === TYPE.abstain && !c.unscorable);
 const spoke = abstain.filter((c) => !c.abstained);
+// Semantic only, like abstention: the hook gates on cosine. Pairwise gold is a loser, not relevant.
+const inj = mode === 'semantic' ? injection(scored.filter((c) => !c.pair && !c.unscorable)) : null;
 const { recall, mrr } = metrics(perCase);
 const misses = perCase.filter((c) => !c.rank);
 const buried = perCase.filter((c) => c.rank > 3);
@@ -659,6 +668,7 @@ if (flag('--json')) {
           passed: abstain.length - spoke.length,
           ...(skipped.length ? { skipped: skipped.length } : {}),
         },
+        ...(inj ? { injection: inj } : {}),
         gate: failures,
       },
       null,
@@ -723,6 +733,10 @@ if (abstain.length)
     `\nAbstention (the recall hook must inject nothing): ${abstain.length - spoke.length}/${abstain.length} passed`,
   );
 for (const f of spoke.slice(0, 8)) console.log(`  injected ${f.top1}  Q: ${f.q.slice(0, 70)}`);
+if (inj)
+  console.log(
+    `\nInjection (the recall hook's server path): precision ${inj.precision == null ? 'n/a' : `${(inj.precision * 100).toFixed(1)}%`} over ${inj.injecting} injecting case(s), ${inj.relevantInjected}/${inj.injected} notes relevant · false injection ${inj.falseInjections}/${inj.noRelevant}`,
+  );
 if (skipped.length)
   console.log(
     `\n${skipped.length} abstention case(s) skipped: scored in semantic mode only, the hook gates on cosine`,

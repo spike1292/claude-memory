@@ -113,6 +113,17 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    under `--mode lexical` (`abstain.skipped` in `--json`). The synthetic vault writes both as `cases-supersede.jsonl` and
    `cases-abstain.jsonl`.
 
+   **Injection precision and false injection (#226).** In semantic mode the run also reports what
+   the recall hook would *inject*, through its own gate, cap and character budget: **precision** is
+   the share of injected notes that are in `gold`, averaged over cases that inject anything;
+   **false injection** is how many abstain cases inject anything. `injection` in `--json`. A case
+   may name `"file":"src/x.ts"` instead of `"q"`: it is scored on the query a file-scoped recall
+   would send — the path segments and the nearest `package.json` name, relative to the repo.
+
+   To see the exact brief for one input, byte for byte, without arming recall or logging:
+   `node "$MEM/hooks/memory-recall.mjs" --preview [--cwd <repo>] "<prompt>"` or
+   `… --preview --file <path>`. stdout is what the hook injects; stderr is its decision.
+
    Author *new* cases only to extend coverage, never to re-run an old comparison: write `{"q":…,"gold":["note-name"]}` lines and pipe them to `--author`, which fails if a gold note does not exist. Steps 1-2 below describe how to write good questions; they now feed `--author`, not a throwaway list.
 
    ⚠ `--generate` produces **extracted sentences**, not paraphrases — BM25 scored 97.5% recall@1 on them (2026-08-15, real-vault generated set; the lexical arm has since moved to the shared tokeniser, which cost 5 points of recall@1 on `cases-paraphrase` — 55.0% to 50.0% on the seed-7 synthetic bench vault — and left `cases-keyword` unchanged at 25.0%). Useful as an index-coverage check; useless as a paraphrase test.
