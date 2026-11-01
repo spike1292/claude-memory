@@ -80,6 +80,7 @@ stays as it was written; it is not updated to track what shipped.
 | [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
 | [Code comments](research/2026-09-06-comment-density.md) | What style guides mandate about comment content, what the staleness literature measures, and why every volume threshold in the wild is a *lower* bound. Sonar removed its own; the famous "20%" is a measured average its authors said predicts nothing. |
 | [Agent memory, Aug → Oct 2026](research/2026-10-10-agent-memory-landscape.md) | What moved since the survey: Mem0 went ADD-only, Graphiti's invalidation read from code, Hindsight and the 2026 benchmarks. Seven ranked ideas; contradiction handling leads. |
+| [agentmemory](research/2026-10-31-agentmemory.md) | rohitg00/agentmemory, 30k★: a capture-everything memory server for ~15 agents. Its benchmark, an independent one, what reviewers say, and why we do not switch. One idea taken (#223). |
 
 ## Conventions for these documents
 
