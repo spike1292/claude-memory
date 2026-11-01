@@ -415,3 +415,19 @@ export function useModelCache(transformers) {
   transformers.env.cacheDir = d;
   return d;
 }
+
+// The query a file-scoped recall sends (#226): path segments, then the nearest package name.
+// ponytail: package.json only; add go.mod/pyproject when a non-JS repo is measured.
+/** @param {string} file @param {string} cwd @returns {string} */
+export function fileQuery(file, cwd) {
+  const abs = path.resolve(cwd, file);
+  const rel = path.relative(cwd, abs);
+  const parts = (rel.startsWith('..') ? abs : rel).split(/[\\/]/).filter(Boolean);
+  for (let d = path.dirname(abs); ; d = path.dirname(d)) {
+    try {
+      const { name } = JSON.parse(fs.readFileSync(path.join(d, 'package.json'), 'utf8'));
+      if (typeof name === 'string') return [...parts, name].join(' ');
+    } catch {}
+    if (d === path.dirname(d)) return parts.join(' ');
+  }
+}

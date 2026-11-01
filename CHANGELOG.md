@@ -11,6 +11,13 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Recall preview, and injection precision in the eval (#226, phase 1).**
+  `hooks/memory-recall.mjs --preview "<prompt>"` (or `--file <path>`) prints the exact brief the
+  recall hook would inject, through the hook's own code path, without arming recall or writing a
+  log line. `memory-eval.mjs --run` now reports injection precision and false-injection rate in
+  semantic mode, and a case may name a `file` instead of a question. File-scoped injection itself
+  waits on a held-out measurement.
+
 - **`scripts/memory-merge.mjs`, the merge step of `/memory:prune`.** Every prune used to hand-write
   its own merge. The script folds redundant notes into a survivor, unions their aliases, rewrites
   inbound `[[links]]` across the vault in every form Obsidian resolves (`[[ name ]]`, `[[Name]]`,
