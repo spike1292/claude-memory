@@ -93,6 +93,6 @@ Claude Code, Copilot and Cursor are proprietary.
 
 ## Not in the table
 
-`context-mode` and `codebase-memory-mcp` are optional integrations, not competitors. Neither is on
-the retrieval path: without them, recall still works and L1–L3 are unaffected
+`codebase-memory-mcp` is an optional integration, not a competitor. It is not on the retrieval
+path: without it, recall still works and L1–L3 are unaffected
 ([optional integrations](optional-integrations.md)).

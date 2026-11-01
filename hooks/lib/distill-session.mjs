@@ -37,7 +37,6 @@ import {
   nowSeconds,
   readMarker,
   requireHookCwd,
-  which,
   withinDebounce,
   writeMarker,
   CHILD_RUN,
@@ -1116,7 +1115,7 @@ export function reconcileFields({ arms, scores, judge }) {
 
 /** 10s: local, fast git operations — the bound exists only to stop a stale index.lock or a gpg
  *  pinentry prompt (commit.gpgsign, on the vault's ambient identity) from hanging the detached
- *  distill worker forever and skipping reindex() right after it. */
+ *  distill worker forever and skipping refreshOwnIndex() right after it. */
 const GIT_TIMEOUT_MS = 10_000;
 
 /**
@@ -1173,91 +1172,6 @@ function autoCommit(notes, merged, slug) {
       }
     }
   }
-}
-
-// context-mode stops a directory walk at 200 files by default; one Insights layer held 4263 on
-// 2026-10-31, and ctx_search silently saw 200 of them.
-const CM_MAX_FILES = ['--max-files', '100000'];
-
-/**
- * Refresh the search indexes so notes written this session are findable next session.
- * Event-driven — runs right after writeNotes, inside this detached child, so the session never
- * waits. Failures never break distillation.
- *
- * context-mode is OPTIONAL. It backs `ctx_search` (BM25/FTS5), which is a SECOND index, separate
- * from the one this plugin owns. `scripts/memory-semantic.mjs` carries its own vector arm AND its
- * own BM25 arm in its own SQLite file, and that is the primary retrieval path — it does not read
- * anything context-mode writes. So when the CLI is absent the fallback is simply to refresh the
- * index we do own, and the only thing actually lost is ctx_search freshness.
- *
- * @param {string} cwd
- * @param {string} slug
- * @returns {void}
- */
-function reindex(cwd, slug) {
-  const cm = which('context-mode');
-  // Pin the storage root: don't trust context-mode's own platform auto-detection (#108).
-  const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const cmEnv = {
-    ...process.env,
-    CONTEXT_MODE_DIR: process.env.CONTEXT_MODE_DIR || path.join(claudeHome, 'context-mode'),
-  };
-  if (!cm) {
-    // This CLI resolves out of an fnm/nvm multishell dir, so switching Node versions silently
-    // drops it from PATH. Say what was lost precisely — the old message claimed the vault stops
-    // being searchable, which was never true of the plugin's own index.
-    console.error(
-      'distill: context-mode not on PATH — ctx_search will drift behind the notes on ' +
-        "disk. The plugin's own index is unaffected and is being refreshed instead. " +
-        'To restore ctx_search: npm i -g context-mode (then /memory:prune to catch up).',
-    );
-    refreshOwnIndex(cwd, slug);
-    return;
-  }
-  // INVARIANT: label and indexed directory must derive from the same `slug` (label == indexed
-  // directory, NOT label == projectKey(cwd)) — `slug` falls back to `legacyKey` when the vault has
-  // not been migrated yet, and legacyKey is a raw cwd slug that can carry uppercase. Regressed
-  // once when the label used path.basename(cwd) instead: docs/architecture.md Known hacks H7.
-  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph']) {
-    const label = `vault-${layer.toLowerCase()}-${slug}`;
-    const d = path.join(VAULT, layer, slug);
-    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
-    try {
-      execFileSync(cm, ['index', d, '--project', cwd, '--source', label, ...CM_MAX_FILES], {
-        encoding: 'utf8',
-        timeout: 120_000,
-        stdio: 'pipe',
-        env: cmEnv,
-      });
-    } catch (e) {
-      console.error(
-        `distill: reindex ${layer} failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
-      );
-    }
-  }
-  // permanent/ is cross-project (not slug-scoped): index the shared dir under this project so its
-  // notes are searchable here too. Global source label.
-  const pdir = path.join(VAULT, 'permanent');
-  if (fs.existsSync(pdir) && fs.statSync(pdir).isDirectory()) {
-    try {
-      execFileSync(
-        cm,
-        ['index', pdir, '--project', cwd, '--source', 'vault-permanent', ...CM_MAX_FILES],
-        {
-          encoding: 'utf8',
-          timeout: 120_000,
-          stdio: 'pipe',
-          env: cmEnv,
-        },
-      );
-    } catch (e) {
-      console.error(
-        `distill: reindex permanent failed: ${/** @type {NodeJS.ErrnoException} */ (e).message}`,
-      );
-    }
-  }
-  // Also with context-mode: the write-time dupe check queries this index, not that one (#145).
-  refreshOwnIndex(cwd, slug);
 }
 
 /**
@@ -1330,11 +1244,8 @@ export async function distill(transcript, cwd, key) {
     resolved,
   );
   autoCommit(notes, merged, slug);
-  // reindex unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual
-  // note edits), and reindex() skips missing dirs.
-  // ponytail: re-reads dirs every session end; append-only so deletions still need
-  // /memory:prune's purge — the distiller only keeps additions fresh.
-  reindex(cwd, slug);
+  // Unconditionally: Memory/Logs can change without new Insights (e.g. /remember, manual edits).
+  refreshOwnIndex(cwd, slug);
   return { written, merged, declined, arms, scores, judge, slug };
 }
 

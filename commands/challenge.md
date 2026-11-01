@@ -19,10 +19,9 @@ not stopped them recurring; being confronted before acting might.
 
 **Input:** the decision, in the user's words. If they invoked this bare, ask for it in one sentence.
 
-1. **Retrieve the opposition — both channels, and widen the net beyond the obvious.**
-   - `node "$MEM/scripts/memory-semantic.mjs" --query "<the decision>" -k 8`
-   - `ctx_search(queries: [...], source: "vault-insights-<slug>")` — expand the query into the
-     vocabulary the *answer* would use, not the user's phrasing (see CLAUDE.md).
+1. **Retrieve the opposition, and widen the net beyond the obvious.**
+   - `node "$MEM/scripts/memory-semantic.mjs" --query "<the decision>" -k 8` — expand the query
+     into the vocabulary the *answer* would use, not the user's phrasing.
    - Read `Insights/<slug>/REFLECTIONS.md` for the same subject, and `Mistakes/` in particular.
    Search for the decision **and for its opposite** — a note arguing the other way will not share
    vocabulary with the plan.

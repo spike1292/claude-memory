@@ -127,21 +127,8 @@ fi
 rmdir "$VAULT/Commands/memory" 2>/dev/null || true
 rmdir "$VAULT/Commands" 2>/dev/null || true
 
-# context-mode is OPTIONAL — it backs ctx_search, a second index the plugin does not read from.
-# It resolves out of an fnm/nvm multishell dir, so switching Node versions silently drops it from
-# PATH; worth one line because distill.log is not somewhere anyone looks. Scoped to what is
-# actually lost: the earlier wording said the vault "stops being searchable", which was never
-# true — memory-semantic.mjs owns its own index and the distiller refreshes that instead.
-# Silent when present, so this costs nothing in the normal case.
-command -v context-mode >/dev/null 2>&1 || cat <<'WARN'
-ℹ context-mode CLI not on PATH (optional) — ctx_search results will drift behind the notes on
-  disk. Semantic recall and memory-semantic.mjs are unaffected; the SessionEnd distiller
-  refreshes the plugin's own index instead. Usually an fnm/nvm Node version switch.
-  To restore ctx_search: npm i -g context-mode     then: /memory:prune
-WARN
-
 # --- standing retrieval rules --------------------------------------------------
-# A plugin cannot append to CLAUDE.md, and these three rules change behaviour in the moment
+# A plugin cannot append to CLAUDE.md, and these rules change behaviour in the moment
 # rather than when a note is written — so they go in the session context, not in the on-demand
 # /memory:protocol skill. Kept to ~15 lines: this is paid every session.
 cat <<CTX
@@ -155,15 +142,10 @@ Layers in the vault: L1 facts \`Memory/$key/\` · L2 logs \`Logs/$key/\` · L3 l
 It runs vector + keyword arms and rank-fuses them, so it wins on described-not-named questions AND
 on identifiers. Local embeddings, so private notes never leave the machine.
 
-1. **Expand the query into domain vocabulary first — the single biggest recall lever.** The lexical
-   arm is keyword-only: "firewall" never matches \`WAF\`, "short outage" never matches \`cutover\`, and
-   generic words are weighted to nothing. Do not search the user's phrasing verbatim; restate it as
-   the terms the answer would be written in, and search both.
-2. **If \`ctx_search\` is available, scope it to the layer you want** — unscoped, it is
-   Insights-dominated (many small dense notes outrank few large ones). Project facts →
-   \`vault-memory-$key\`; "have I hit this before" → \`vault-insights-$key\`. Answer an L1 miss
-   by scoping, not by piling on aliases. It is an optional second index (context-mode); when it is
-   absent the tool above is the whole retrieval path and nothing else changes.
+**Expand the query into domain vocabulary first — the single biggest recall lever.** The lexical
+arm is keyword-only: "firewall" never matches \`WAF\`, "short outage" never matches \`cutover\`, and
+generic words are weighted to nothing. Do not search the user's phrasing verbatim; restate it as
+the terms the answer would be written in, and search both.
 
 Writing or auditing a note? Load the \`/memory:protocol\` skill first — filename/frontmatter rules,
 per-claim recency and supersession, aliases, and when knowledge graduates to \`permanent/\`.

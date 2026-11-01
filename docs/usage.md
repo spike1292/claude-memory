@@ -67,8 +67,7 @@ silent.
 - **Stale graph report.** It regenerates in the background at session start once commits move past
   it, so the first session after a big change may still read the old one. Run
   `/memory:graph-report` to force it.
-- **An optional integration is missing.** Without `context-mode`, `ctx_search` is gone; without
-  `codebase-memory-mcp`, L4 is empty. Recall and the vault keep working. Details:
+- **An optional integration is missing.** Without `codebase-memory-mcp`, L4 is empty. Recall and the vault keep working. Details:
   [optional-integrations.md](optional-integrations.md).
 
 More symptoms and fixes: [Troubleshooting](../README.md#troubleshooting).

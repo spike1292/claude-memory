@@ -91,15 +91,8 @@ command -v claude  >/dev/null 2>&1 && ok "claude CLI" \
 
 echo
 echo "optional integrations"
-# Neither is required. Both are separate tools with their own indexes; the plugin's own
-# retrieval path does not read from either. Reported so a missing one is a known state
-# rather than a mystery, and so the cost of its absence is stated precisely.
-if command -v context-mode >/dev/null 2>&1; then
-  ok "context-mode CLI — ctx_search index kept fresh at SessionEnd"
-else
-  warn "context-mode CLI not on PATH (optional)" \
-    "ctx_search drifts behind the notes on disk. The plugin's own index is UNAFFECTED — memory-semantic.mjs carries its own vector and BM25 arms — and the distiller refreshes it instead. Restore ctx_search with: npm i -g context-mode (then /memory:prune)"
-fi
+# Not required; the plugin's own retrieval path does not read from it. Reported so its absence
+# is a known state rather than a mystery, and so what that costs is stated precisely.
 # codebase-memory-mcp is an MCP server, not a CLI, so PATH cannot see it. The Graph layer is the
 # observable evidence: a GRAPH_REPORT.md exists only if the server has run for this project.
 # One fork for the whole report: project_key shells out to node, and three sections need it.
