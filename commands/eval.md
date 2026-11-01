@@ -153,16 +153,14 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
 
 1. **Build a question set.** From notes under `Memory/<slug>/` and `Insights/<slug>/`, derive ~15–20 natural-language questions a future session would realistically ask — phrased in the user's words, deliberately **paraphrased**, NOT copied from note titles (paraphrase is what stresses retrieval). For each, record the note(s) that are the correct answer = the gold set.
 
-2. **Retrieve through BOTH channels — they fail differently.** Run each question through:
-   - `ctx_search(queries:[...])` — BM25/FTS5, wins on exact identifiers (ticket keys, `--parallel=2`, file paths).
-   - `node "$MEM/scripts/memory-semantic.mjs" --query "..." -k 5` — vectors, wins on described-not-named questions. It is the only channel that bridges "firewall"→`WAF` or "short outage"→`cutover`.
+2. **Retrieve through both channels — they fail differently.** Run each question through:
+   - `node "$MEM/scripts/memory-semantic.mjs" --query "..." -k 5` — a vector arm plus a BM25 arm, rank-fused: the vectors bridge "firewall"→`WAF` or "short outage"→`cutover`, the BM25 arm catches exact identifiers (ticket keys, `--parallel=2`, file paths).
    - the `MEMORY.md` MOC hooks, which are auto-loaded and therefore have 100% L1 coverage by construction — a note reachable from its hook is not truly lost, whatever search returns.
 
    ⚠ **Scoping the semantic tool by layer is REFUTED** (measured 2026-08-15: EN @5 67.9% →
    53.6%). Filtering the note set instead of re-ranking it deletes gold answers living in Insights
    from the window rather than out-ranking them; the `--layer` flag that did it was removed on
-   2026-08-19. The 2026-08-14 advice to scope by layer still
-   holds for `ctx_search`, which is a separate index with a separate failure. A layer *quota*
+   2026-08-19. A layer *quota*
    (`MEMORY_FUSE_RESERVE`) was also tried and refuted: at k=5 it changes nothing, because the top-5
    already contains a Memory note — just not the right one. The misses are the gold note losing to a
    similar SIBLING, which no layer rule can reach.
@@ -173,7 +171,7 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    fetch shows nothing at @5. `memory-eval.mjs` prints the model; pass `--fetch-k 5` to measure what
    a session actually receives.
 
-   **Score — and report `@2` for `ctx_search`, not `@5`.** `ctx_search` hard-caps visible results at **2 per query regardless of `limit` or batch size**, so recall@5 is *unmeasurable* through it; reporting @5 overstates what a session actually sees. The semantic channel honours `-k`, so score it at @5 and label the two separately.
+   **Score** at @5:
    - **recall@k** per channel — fraction of questions whose gold note is returned.
    - **MRR** — mean of 1/(rank of first gold hit), 0 if absent.
    - List the **concrete misses**: questions where the right note ranked low or was absent.

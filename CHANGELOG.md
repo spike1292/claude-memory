@@ -24,12 +24,14 @@ what a user's setup depends on: config keys, command names, vault layout, and
   pairwise case whose owner and gold were merged into one note is now unscorable instead of a
   failed pair.
 
-### Fixed
+### Removed
 
-- **`ctx_search` held at most 200 notes per vault layer.** context-mode stops a directory walk at
-  200 files unless told otherwise, and says nothing. The distiller's reindex now passes
-  `--max-files 100000` on all five `index` calls, and `/memory:prune` step 3 passes `maxFiles` to
-  `ctx_index`.
+- **The `context-mode` integration.** The distiller no longer runs the `context-mode` CLI to
+  refresh `ctx_search`, the session start and `/memory:doctor` no longer warn when it is missing,
+  and `/memory:challenge`, `/memory:eval`, `/memory:health` and `/memory:prune` use only
+  `memory-semantic.mjs`, which already has its own BM25 arm. No person had committed to
+  `context-mode` since 2026-06-29. Recall is unchanged. A `ctx_search` index you built before
+  stays where it is and simply stops being updated.
 
 ## [0.12.0] - 2026-10-31
 

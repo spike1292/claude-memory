@@ -110,7 +110,7 @@ vault resolves to, so isolate `HOME`, not just `CLAUDE_VAULT`, when testing hook
 **Full map: [docs/architecture.md](docs/architecture.md)** — the three homes, the module graph, the
 six key flows as diagrams, and the invariants table with an *enforced by* column. Its second half,
 "how things really work", records where this section's rules do not hold in the code: the entry/`lib`
-inversion, the mutual `hooks/`↔`scripts/` dependency, the four implicit services, and the twelve
+inversion, the mutual `hooks/`↔`scripts/` dependency, the three implicit services, and the twelve
 load-bearing hacks. Read it before a refactor; edit it in place when the code moves.
 
 **Every Node hook and script is a thin entry over a `lib/` module.** `hooks/<name>.mjs` and
@@ -226,12 +226,13 @@ The hook spawns on any miss — including its 700 ms timeout expiring during war
 spawns are routine; `--serve` probes the socket and exits in ~55 ms rather than stealing it, and only
 an unbound socket (`ECONNREFUSED`) may be unlinked. Six servers once ran at once on a 16 GB machine.
 
-**Two optional integrations, neither installed by this plugin, neither on the retrieval path.**
-`context-mode` backs `ctx_search` (a second index `memory-semantic.mjs` never reads);
+**One optional integration, not installed by this plugin, not on the retrieval path.**
 `codebase-memory-mcp` backs the L4 `Graph/` layer. Details in
-[docs/optional-integrations.md](docs/optional-integrations.md).
+[docs/optional-integrations.md](docs/optional-integrations.md). `context-mode` was the second one;
+its `ctx_search` index was dropped on 2026-11-01 — no person had committed to it since 2026-06-29,
+and `memory-semantic.mjs` already carries its own BM25 arm. Do not re-add a second index.
 
-Do not write code that assumes either is present, and do not describe a missing one as breakage.
+Do not write code that assumes it is present, and do not describe a missing one as breakage.
 State precisely what degrades — an earlier warning claimed the vault "stops being searchable" when
 `context-mode` was gone, which was never true.
 

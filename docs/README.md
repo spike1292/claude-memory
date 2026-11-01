@@ -42,7 +42,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
 | [Retrieval](retrieval.md) | Why retrieval is shaped as it is: the two arms, rank fusion, the two gates, chunking and its silent traps, model profiles, the duplicate predicate, the server, and how it is evaluated. |
 | [Comparison](comparison.md) | Against Claude Code's auto memory and the systems in the research notes: store, write trigger, retrieval, locality, weight, licences, and where ours loses. Dated. |
-| [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
+| [Optional integrations](optional-integrations.md) | `codebase-memory-mcp` — what it adds, what its absence costs. |
 | [Hook startup baseline](hook-startup-baseline.md) | What every hook costs at startup today, with its conditions and the command that regenerates it. Replaced in place. |
 | [CI, review, and releases](ci-and-releases.md) | Branch protection, the review workflows, the release flow. |
 | [Ponytail audit, 2026-08-19](2026-08-19-ponytail-audit.md) | A repo-wide scan for over-engineering: nine cuts, ranked; eight applied, one declined with its reason. |

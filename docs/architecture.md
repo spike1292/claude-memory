@@ -309,9 +309,8 @@ SessionEnd AND Stop  ──▶ hooks/distill-session.mjs   ONE FILE, TWO MODES
                                    ├─ runJudge(): ONE more haiku call over the run's merge
                                    │     pairs; a proved reversal becomes a new note and the
                                    │     old claim gets (superseded <date> by [[new]]) (#156)
-                                   └─ reindex(): context-mode `cm index` x5 (120 s each)
-                                        if present, then always memory-semantic.mjs
-                                        --index (600 s) — the dupe check reads that one
+                                   └─ refreshOwnIndex(): memory-semantic.mjs --index
+                                        (600 s) — the dupe check reads that one
 
   Note the timeout arithmetic: a 15 s hook wrapping work budgeted to 600 s. Correct only
   because detach() in hook-io.mjs is spawn(detached) + unref() + stdio to a log fd — a
@@ -496,14 +495,13 @@ Consequence: `validate-note` is a `PostToolUse` hook firing on **every Write/Edi
 and it pulls the whole `/memory:health` audit engine in by import. Deliberate (the comment says
 imported-not-spawned, to avoid a fork), but it puts the audit module's import cost on the edit path.
 
-## Implicit services — four, none with a definition
+## Implicit services — three, none with a definition
 
 | Service | Invoked from | Contract lives where |
 | --- | --- | --- |
 | the search daemon | `memory-recall.mjs` over a unix socket | **hand-written on both sides**; only `QUIT` is shared |
 | the SQLite index | `memory-semantic.mjs` writes, `memory-recall.mjs` reads with its own SQL | the `CREATE TABLE`, and the card heading — `CARD` in `scripts/lib/lexical.mjs` since 2026-08-19, bound as a parameter by every reader |
 | headless `claude` | `lib/distill-session.mjs` → `claude -p --model haiku` | argv, hardcoded model |
-| `context-mode` CLI | `lib/distill-session.mjs` → `cm index` ×5 | argv; source labels share the vault's identity since 2026-08-19 (H7) |
 
 ## Known hacks
 
@@ -596,22 +594,8 @@ The same 2026-08-19 change also moved `scripts/lib/model-default.mjs`'s import o
 dynamic import (inside `memory-semantic.mjs`) into an uncatchable static one, since it is now
 reached from the same statically-imported path.
 
-**H7 — two identity schemes, adjacent. — CLOSED 2026-08-19 (item 14).** In `reindex()` the
-directory indexed was `VAULT/<layer>/<project_key>` while the source label was
-`vault-<layer>-${basename(cwd)}`. Both sides now derive from the same `slug`, so the label is
-`vault-<layer>-<project_key>` and `ctx_search` scopes are derivable from the note path.
-
-Two corrections to what was written here before. The recorded harm — "two checkouts of one repo
-give one vault folder and two source labels" — never produced a shared index: context-mode
-partitions its content DB by checkout path (`--project cwd` → its own `<hash>.db`), so the two
-labels lived in two databases. The real cost was that the label named the checkout rather than the
-notes, so no other part of the system could reconstruct it. And the invariant that now holds is
-**label == indexed directory**, not label == `projectKey(cwd)`: `distill()` falls back to
-`legacyKey` when the vault has not been migrated yet, and both sides move together.
-
-Closing it does orphan every source indexed under the old label. Nothing purges them automatically
-— context-mode's only eviction is a 14-day staleness sweep — so `/memory:prune` carries a one-time
-purge-then-reindex, and the CHANGELOG says so.
+**H7 — two identity schemes, adjacent. — GONE 2026-11-01.** It lived in the context-mode
+`reindex()`, which was deleted with that integration.
 
 **H8 — `config()` is memoised for process lifetime.** Correct for a 40 ms hook. For the 30-minute
 daemon it means an edit to `config.json` is invisible until the process idles out, with nothing
