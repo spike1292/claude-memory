@@ -99,6 +99,12 @@ export function warnings(file, raw, vaultRoot) {
   } else {
     if (fm.includes('\t')) warn.push('tab inside frontmatter — YAML needs spaces');
     if (file.startsWith(path.join(vaultRoot, 'Memory') + '/')) {
+      const status = fm.match(/^status:[ \t]*["']?([^"'\n]*?)["']?[ \t]*$/m)?.[1];
+      if (status !== undefined && status !== 'open' && status !== 'closed') {
+        warn.push(
+          `status: ${status} — a fork is status: open or closed; anything else is never surfaced`,
+        );
+      }
       if (
         !new RegExp(
           `^name:[ \\t]*["']?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?[ \\t]*$`,

@@ -11,6 +11,11 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Open forks at session start (#228).** An L1 note with `status: open` in its frontmatter is
+  listed by the SessionStart `insights-surface` hook, newest first and capped, until it is set to
+  `status: closed` or the field is removed. The output is unchanged for a project with no open
+  forks. The note validator warns on any other `status:` value. `/memory:protocol` documents when
+  to write a fork and how it differs from a `Logs/` handoff.
 - **Recall preview, and injection precision in the eval (#226, phase 1).**
   `hooks/memory-recall.mjs --preview "<prompt>"` (or `--file <path>`) prints the exact brief the
   recall hook would inject, through the hook's own code path, without arming recall or writing a

@@ -60,6 +60,19 @@ Ask: *"which existing note would someone be reading when they need this one?"* â
 there. This is write-time discipline, not cleanup: audits have flagged the same failure
 repeatedly, which means doing it afterwards does not happen.
 
+## Open forks: `status: open`
+
+A **fork** is an idea worth building that came up while doing something else. Write it as a
+normal L1 note with `status: open` in its frontmatter, the moment you notice it â€” otherwise it is
+lost in the scrollback. Every SessionStart lists the project's open forks (title and
+`[[name]]`, newest edit first) under the past mistakes, until someone closes them.
+
+Close a fork by setting `status: closed`, or by removing the field. Nothing else about the note
+changes. Any other value (`wip`, `todo`) makes the validator warn and is never listed.
+
+A fork is not a `Logs/` handoff. A log records where one session stopped, for the next session to
+resume; a fork is an open loop that outlives sessions until it is built or rejected.
+
 ## Per-claim recency: timeless, snapshot, or pointer
 
 There is no fourth form, and the illegal one is a present-tense claim about something that moves

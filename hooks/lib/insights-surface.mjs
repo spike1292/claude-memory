@@ -1,4 +1,4 @@
-// L3 Mistakes surfacing — the logic half. The CLI entry is hooks/insights-surface.mjs.
+// L3 Mistakes and open-fork surfacing — the logic half. The CLI entry is hooks/insights-surface.mjs.
 //
 // Nothing here reads argv, stdin or prints: it takes a cwd and returns the text to show, so it is
 // importable and testable without a subprocess. Tests: hooks/lib/insights-surface.test.mjs
@@ -65,6 +65,56 @@ export function render(slug, files, read) {
   return out.join('\n');
 }
 
+/**
+ * L1 notes whose frontmatter says `status: open`, newest first.
+ *
+ * @param {string} dir
+ * @returns {{ name: string, title: string }[]}
+ */
+export function openForks(dir) {
+  /** @type {{ name: string, title: string, mtime: number }[]} */
+  const out = [];
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  for (const f of names) {
+    if (!f.endsWith('.md') || f === 'MEMORY.md') continue;
+    try {
+      const file = path.join(dir, f);
+      const raw = fs.readFileSync(file, 'utf8');
+      if (!raw.startsWith('---\n')) continue;
+      const end = raw.indexOf('\n---', 3);
+      const fm = raw.slice(4, end === -1 ? undefined : end + 1);
+      if (!/^status:[ \t]*["']?open["']?[ \t]*$/m.test(fm)) continue;
+      // ponytail: mtime orders by last edit, and a fresh clone resets it; add a created: field if that bites
+      out.push({ name: f.slice(0, -3), title: noteTitle(f, fm), mtime: fs.statSync(file).mtimeMs });
+    } catch {
+      /* unreadable note: skip it */
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime).map(({ name, title }) => ({ name, title }));
+}
+
+/**
+ * @param {string} slug
+ * @param {{ name: string, title: string }[]} forks
+ * @returns {string}
+ */
+export function renderForks(slug, forks) {
+  if (!forks.length) return '';
+  const out = [
+    'Open forks for this project (ideas parked mid-session; close with status: closed):',
+  ];
+  for (const f of forks.slice(0, LIMIT)) out.push(`- ${defuse(f.title)} ([[${defuse(f.name)}]])`);
+  if (forks.length > LIMIT) {
+    out.push(`(+${forks.length - LIMIT} more in Memory/${slug}/ with status: open)`);
+  }
+  return out.join('\n');
+}
+
 /** @param {string} p */
 function isDir(p) {
   try {
@@ -87,27 +137,29 @@ export function surface(cwd) {
   } catch {
     slug = legacyKey(cwd);
   }
-  const dirFor = (/** @type {string} */ s) => path.join(vault(), 'Insights', s, 'Mistakes');
-  let dir = dirFor(slug);
   // Tolerate a not-yet-migrated vault: vault-memory-sync.sh performs the rename, but SessionStart
   // hook order isn't guaranteed, so fall back for this one session.
-  if (!isDir(dir)) {
-    slug = legacyKey(cwd);
-    dir = dirFor(slug);
-  }
-  if (!isDir(dir)) return '';
-
-  let files;
+  const resolve = (/** @type {string[]} */ ...sub) => {
+    const dir = path.join(vault(), sub[0], slug, ...sub.slice(1));
+    if (isDir(dir)) return { s: slug, dir };
+    const s = legacyKey(cwd);
+    return { s, dir: path.join(vault(), sub[0], s, ...sub.slice(1)) };
+  };
+  const m = resolve('Insights', 'Mistakes');
+  /** @type {string[]} */
+  let files = [];
   try {
-    files = orderNewestFirst(fs.readdirSync(dir));
+    files = orderNewestFirst(fs.readdirSync(m.dir));
   } catch {
-    return '';
+    /* no Mistakes folder */
   }
-  return render(slug, files, (f) => {
+  const mistakes = render(m.s, files, (f) => {
     try {
-      return fs.readFileSync(path.join(dir, f), 'utf8');
+      return fs.readFileSync(path.join(m.dir, f), 'utf8');
     } catch {
       return '';
     }
   });
+  const mem = resolve('Memory');
+  return [mistakes, renderForks(mem.s, openForks(mem.dir))].filter(Boolean).join('\n\n');
 }
