@@ -51,7 +51,7 @@ Keep the vault signal-dense. `<slug>` = the project key: normalised git remote o
      # many groups: --plan plan.json, holding [["survivor", "redundant", ...], ...]
      ```
 
-     It checks the whole plan first and changes nothing if any name is missing, ambiguous, used twice, or in a different folder from its survivor. Then it folds each redundant body into the survivor under a `**Merged <date> (<title>):**` line, unions the `_Also asked as:` aliases, points every `[[redundant]]` link in the vault at the survivor, drops the survivor's links to itself, and **moves** the redundant notes to `<vault>/.trash/pruned-<date>/` (auto mode refuses an `unlink` of a vault note). It exits 1 if any link to a moved note is left. Same-folder only: a cross-folder restatement (step 3c) is merged by hand.
+     It checks the whole plan first and changes nothing if any name is missing, ambiguous, used twice, or in a different folder from its survivor. Then it folds each redundant body into the survivor under a `**Merged <date> (<title>):**` line, unions the `_Also asked as:` aliases, points every `[[redundant]]` link in the vault at the survivor, drops the survivor's links to itself, and **moves** the redundant notes to `<vault>/.trash/pruned-<date>/` (auto mode refuses an `unlink` of a vault note). It exits 1 if any link to a moved note is left. It appends each `redundant → survivor` pair to `<vault>/.merge-redirects.jsonl`, which `/memory:eval` follows for `gold` and `owner`, so frozen case sets stay valid with no re-freeze. Same-folder only: a cross-folder restatement (step 3c) is merged by hand.
    - **Mark every pair you KEEP, in the same breath as deciding it** — do not leave it to memory:
 
      ```bash

@@ -83,6 +83,10 @@ Check that the memory can be *found*, not just that it exists. `<slug>` = the pr
    already contain, so generating one would put an inflated number behind a held-out label and a
    publishable hash. Every run prints `frozen:` — the hash, or `no` — because deleting a sidecar
    un-freezes a set silently and a consumer has to see that verification did not happen.
+   A note `memory-merge.mjs` folded away is followed to its survivor through
+   `<vault>/.merge-redirects.jsonl` when `--run` reads a `gold` or `owner` name, so a prune never
+   needs a re-freeze: the redirected note is the same lesson, now in the survivor. A pairwise case
+   whose owner and gold were merged into one note is unscorable.
 
    **`--min-rank1 <percent>` turns a report into a gate** — below the floor the process exits
    non-zero, so CI or a tuning loop fails instead of printing a regression nobody reads. Under a
