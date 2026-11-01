@@ -5,9 +5,9 @@ read on that day. No tool was installed or measured here. Anything not read at t
 is **unverified**.
 
 **Verdict: keep `codebase-memory-mcp` (cbm).** It is the only candidate that feeds the L4 `Graph/`
-layer as built, it is MIT with no paid tier, and it scores at or near the top in the one accuracy
-test found. For exact single-symbol answers, Claude Code's built-in `LSP` tool covers what Serena
-would add.
+layer as built, it is MIT with no paid tier, and in the one accuracy test found it is top on gitleaks
+and mid-pack elsewhere — and that test is a competitor's own. For exact single-symbol answers,
+Claude Code's built-in `LSP` tool covers what Serena would add.
 
 ## Caveats on the evidence
 
@@ -30,7 +30,7 @@ Cypher-like `query_graph`.
 
 | Tool | Graph built by | License | For | Against |
 | --- | --- | --- | --- | --- |
-| cbm | tree-sitter + LSP types | MIT | One dependency-free install; infra files; highest recall on gitleaks | 0.36–0.54 recall on syft; 17 tool schemas per turn |
+| cbm | tree-sitter + LSP types | MIT | One dependency-free install; infra files; highest recall on gitleaks | Weak recall on syft; 17 tool schemas per turn |
 | Serena | live language servers, no stored graph | GPL-3.0 (MIT core) | Exact and current; edits by symbol | 53 tools; per-symbol only; built-in `LSP` (Claude Code 2.0.74+) covers most of it |
 | CodeGraph | tree-sitter, Rust kernel | MIT | 1 tool by default; file watcher | 20+ languages; 0.37 recall on zod |
 | repowise | tree-sitter + typed resolution + git mining | AGPL-3.0 | Best precision/recall in its own test; history and docs | AGPL; self-graded |
@@ -42,7 +42,7 @@ Cypher-like `query_graph`.
 | trace-mcp | — | — | Refactoring and security scanning | 81 languages (its own count) |
 
 Precision / recall from the repowise test, cbm column: cobra 0.912 / 0.743, gitleaks 0.934 / 0.967,
-zod 0.987 / 0.694, hono 0.949 / 0.686.
+zod 0.987 / 0.694, hono 0.949 / 0.686; recall on syft 0.542 and 0.361.
 
 ## Graph vs language server
 
