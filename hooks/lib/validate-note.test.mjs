@@ -36,6 +36,16 @@ test('a well-formed Memory note warns about nothing', () => {
   assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, good, V), []);
 });
 
+test('status: accepts open and closed, warns on anything else (#228)', () => {
+  const note = (/** @type {string} */ s) =>
+    `---\nname: a\nconfidence: high\nstatus: ${s}\n---\n\nbody\n\n_Also asked as: one, two._\n`;
+  assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, note('open'), V), []);
+  assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, note('"closed"'), V), []);
+  assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, note('wip'), V), [
+    'status: wip — a fork is status: open or closed; anything else is never surfaced',
+  ]);
+});
+
 test('name mismatch, missing confidence and missing aliases each warn', () => {
   const w1 = warnings(`${V}/Memory/p/a.md`, '---\nname: WRONG\n---\n\nx\n', V);
   assert.ok(w1.some((w) => w.includes('name: must equal the filename')));
