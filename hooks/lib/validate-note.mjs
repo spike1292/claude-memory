@@ -98,13 +98,13 @@ export function warnings(file, raw, vaultRoot) {
     warn.push('no frontmatter fence on line 1 — every field below it is invisible to the tooling');
   } else {
     if (fm.includes('\t')) warn.push('tab inside frontmatter — YAML needs spaces');
-    const status = fm.match(/^status:[ \t]*["']?([^"'\n]*?)["']?[ \t]*$/m)?.[1];
-    if (status !== undefined && status !== 'open' && status !== 'closed') {
-      warn.push(
-        `status: ${status} — a fork is status: open or closed; anything else is never surfaced`,
-      );
-    }
     if (file.startsWith(path.join(vaultRoot, 'Memory') + '/')) {
+      const status = fm.match(/^status:[ \t]*["']?([^"'\n]*?)["']?[ \t]*$/m)?.[1];
+      if (status !== undefined && status !== 'open' && status !== 'closed') {
+        warn.push(
+          `status: ${status} — a fork is status: open or closed; anything else is never surfaced`,
+        );
+      }
       if (
         !new RegExp(
           `^name:[ \\t]*["']?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?[ \\t]*$`,

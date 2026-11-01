@@ -44,6 +44,8 @@ test('status: accepts open and closed, warns on anything else (#228)', () => {
   assert.deepStrictEqual(warnings(`${V}/Memory/p/a.md`, note('wip'), V), [
     'status: wip — a fork is status: open or closed; anything else is never surfaced',
   ]);
+  const staging = '---\ntype: promotion-candidate\nstatus: proposed\n---\n\n_Also asked as: a._\n';
+  assert.deepStrictEqual(warnings(`${V}/Staging/p/x.md`, staging, V), [], 'L1 notes only');
 });
 
 test('name mismatch, missing confidence and missing aliases each warn', () => {
