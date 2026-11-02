@@ -27,7 +27,8 @@ random unflagged ones. It holds 20 real reversals; the 30 random pairs held 0. R
 | haiku, shipped prompt + "same subject" rule (×2) | 12, 11 | 5, 7 | ~$0.01 per call |
 | sonnet, shipped prompt | 11 | 2 | ~$0.18 per call |
 
-About 60% recall and 65% precision; no prompt or batch size moved that. A false mark only demotes a
+On this key, about 60% recall and 65% precision; no prompt or batch size moved that. Production
+precision was 15% (see "Re-measured on production verdicts"). A false mark only demotes a
 note, it never hides one. Every quoted claim in these runs was in its note verbatim, so the quote
 check rejected nothing; it stays because it is what ties each marker to evidence.
 
@@ -54,7 +55,7 @@ Every `reverses` verdict from 2026-10-11 to 2026-10-31, joined to its pair from 
 | extends | 14 |
 | total | 34 |
 
-Precision is 5/34 (15%), against 65% on the 2026-10-10 answer key. That key was built from
+Precision is 5/34 (15%), against the answer key's figure above. That key was built from
 `**Also seen**` appends, so it never held the restatements the extractor writes day to day. The
 quote check refused none of the 34: a restatement shares the words it quotes. The backwards row is
 a failure the first measurement had no label for; on it the marker demotes the correct note.
