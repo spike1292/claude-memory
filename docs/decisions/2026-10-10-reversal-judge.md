@@ -28,7 +28,7 @@ random unflagged ones. It holds 20 real reversals; the 30 random pairs held 0. R
 | sonnet, shipped prompt | 11 | 2 | ~$0.18 per call |
 
 On this key, about 60% recall and 65% precision; no prompt or batch size moved that. Production
-precision was 15% (see "Re-measured on production verdicts"). A false mark only demotes a
+precision was far lower (see "Re-measured on production verdicts"). A false mark only demotes a
 note, it never hides one. Every quoted claim in these runs was in its note verbatim, so the quote
 check rejected nothing; it stays because it is what ties each marker to evidence.
 
