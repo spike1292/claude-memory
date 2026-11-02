@@ -41,6 +41,24 @@ On the real pairs it called 179/507 "reverses", 0 of a 15-pair random sample of 
 and it took ~3 s per pair. NLI models are trained on single short sentences; these are
 multi-sentence notes.
 
+## Re-measured on production verdicts (2026-11-02, #221)
+
+Every `reverses` verdict from 2026-10-11 to 2026-10-31, joined to its pair from the judge's own
+`distill-*.jsonl` records and labelled by hand (labels and text machine-local):
+
+| Label | Pairs |
+|---|---|
+| real reversal (NEW right, OLD out of date) | 5 |
+| backwards (NEW contradicts OLD, OLD is right) | 4 |
+| same | 11 |
+| extends | 14 |
+| total | 34 |
+
+Precision is 5/34 (15%), against 65% on the 2026-10-10 answer key. That key was built from
+`**Also seen**` appends, so it never held the restatements the extractor writes day to day. The
+quote check refused none of the 34: a restatement shares the words it quotes. The backwards row is
+a failure the first measurement had no label for; on it the marker demotes the correct note.
+
 ## Where it is logged
 
 The worker line carries `judge` (verdict counts, zeros omitted; `rejected` is a `reverses` the quote check refused).
