@@ -53,15 +53,13 @@ distiller used, so on a stock Mac `Insights/` silently stopped being written.
 
 ### Optional integrations
 
-Two separate tools, each with its own index. **Neither is installed by this plugin, neither is
-required, and neither is on the plugin's retrieval path.**
+**Not installed by this plugin, not required, and not on the plugin's retrieval path.**
 
 | | What it adds | Without it |
 | --- | --- | --- |
-| `context-mode` CLI | `ctx_search` — a second BM25/FTS5 index over the vault | `ctx_search` goes stale; recall unaffected |
 | `codebase-memory-mcp` server | the L4 `Graph/` layer and `/memory:graph-report` | no L4 digest; L1–L3 unaffected |
 
-Setup, failure modes, and what each absence actually costs:
+Setup, failure modes, and what its absence actually costs:
 **[docs/optional-integrations.md](docs/optional-integrations.md)**.
 
 ## Configuration
@@ -191,13 +189,6 @@ For team knowledge, do not share the vault — check the facts into the *project
 
 **"embedding runtime not installed" at session start.** Claude Code installed the packages but
 skipped `onnxruntime-node`'s postinstall, so the native binary is missing. `/memory:install`.
-
-**"context-mode not on PATH" at session start.** Optional — see
-[context-mode](#context-mode-ctx_search) above. Only `ctx_search` is affected; recall keeps
-working.
-
-**Notes stopped being found after deleting some.** The keyword index is append-only, so deletions
-leave stale chunks behind. `/memory:prune` purges and rebuilds; a plain re-index does not.
 
 **Weights re-downloaded after a plugin update.** They should be in `$CLAUDE_MEMORY_HOME/models`,
 outside the version-pinned plugin cache. `/memory:doctor` warns if they end up inside the plugin.

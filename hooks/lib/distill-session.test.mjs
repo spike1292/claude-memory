@@ -572,148 +572,6 @@ test('SessionEnd without a session id is never stood down by another id-less ses
   }
 });
 
-// The ctx source label and the indexed directory must carry the SAME identity (item 14, unified
-// 2026-08-19). Before that the label was `vault-<layer>-${basename(cwd)}` while the directory was
-// `VAULT/<layer>/<project_key>` — so this repo, checked out as `mem-checkout`, indexed
-// `Memory/github.com-spike1292-claude-memory` under the source `vault-memory-mem-checkout`: a name
-// that named the checkout rather than the notes, and that no other part of the system could
-// reconstruct. (It did NOT put two labels in one index — context-mode partitions its content DB by
-// checkout path — see the comment on `reindex()`.) Driven end to end through the entry with a fake
-// `context-mode` on PATH, because that is the only place the two halves are visible together;
-// `reindex()` is deliberately not exported.
-//
-// This asserts the post-migration case, where `slug` is `projectKey(cwd)`. The invariant is the
-// weaker "label == indexed directory": on the pre-migration fallback path `slug` is `legacyKey`
-// and both sides move together. That path is not covered here.
-test('the ctx source label carries the same key as the directory it indexes', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-'));
-  // Registered the moment the scratch world exists, not after the assertions: an rmSync on the last
-  // line is skipped whenever an assertion above it throws — exactly when there is something to
-  // leak. #30 added t.after for the same reason, after leaked worlds reached 2.7 GB in $TMPDIR
-  // (2026-08-19, review of #31).
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const repo = path.join(root, 'mem-checkout');
-  const vault = path.join(root, 'vault');
-  const bin = path.join(root, 'bin');
-  const log = path.join(root, 'ctx.log');
-  fs.mkdirSync(repo, { recursive: true });
-  fs.mkdirSync(bin, { recursive: true });
-  // Git runs with its user and system config neutralised, not the inherited env. The hook under
-  // test resolves project_key from `git remote get-url origin`, so a developer with a global
-  // `[url] insteadOf` rewrite would see a different remote here than the assertion expects and the
-  // test would fail on a machine setting rather than on the code (2026-08-19, review of #31).
-  const git = (/** @type {string[]} */ ...a) =>
-    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
-  git('init', '-q');
-  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
-  const slug = 'github.com-spike1292-claude-memory';
-  for (const layer of ['Insights', 'Memory', 'Logs', 'Graph'])
-    fs.mkdirSync(path.join(vault, layer, slug), { recursive: true });
-  fs.mkdirSync(path.join(vault, 'permanent'), { recursive: true });
-
-  // Records argv and $CONTEXT_MODE_DIR instead of indexing. context-mode is never on CI's PATH.
-  fs.writeFileSync(
-    path.join(bin, 'context-mode'),
-    `#!/bin/sh\nprintf '%s\\t%s\\n' "$CONTEXT_MODE_DIR" "$*" >> ${JSON.stringify(log)}\n`,
-  );
-  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
-
-  const transcript = path.join(root, 't.jsonl');
-  fs.writeFileSync(
-    transcript,
-    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
-  );
-
-  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
-  execFileSync(process.execPath, [entry, transcript, repo], {
-    stdio: 'pipe',
-    env: {
-      ...GIT_ENV,
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      HOME: root,
-      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
-      DISTILL_VAULT: vault,
-      DISTILL_DRYRUN: '1',
-      // Neutralised, not just left unset in this object: GIT_ENV spreads the real process.env, so
-      // an ambient CLAUDE_CONFIG_DIR (plausible in a Claude Code session) would otherwise leak
-      // through and this assertion would fail on a machine setting, not the code.
-      CLAUDE_CONFIG_DIR: undefined,
-    },
-  });
-
-  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
-  const contextModeDirs = calls.map((l) => l.split('\t')[0]);
-  const sources = calls.map((l) => l.split('\t')[1].split(' --source ')[1].split(' ')[0]);
-  // Default lands under HOME/.claude/context-mode with no override in env.
-  for (const d of contextModeDirs)
-    assert.strictEqual(d, path.join(root, '.claude', 'context-mode'));
-  assert.deepStrictEqual(sources.slice(0, 4), [
-    `vault-insights-${slug}`,
-    `vault-memory-${slug}`,
-    `vault-logs-${slug}`,
-    `vault-graph-${slug}`,
-  ]);
-  assert.strictEqual(sources[4], 'vault-permanent', 'permanent/ keeps its cross-project label');
-  assert.strictEqual(calls.length, 5);
-  for (const c of calls) assert.match(c, /--max-files 100000\b/);
-  // The directory on the same command line carries the same identity — that is the whole point.
-  for (const [i, layer] of ['Insights', 'Memory', 'Logs', 'Graph'].entries())
-    assert.ok(
-      calls[i].includes(path.join(vault, layer, slug)),
-      `${layer}: label and directory must agree`,
-    );
-  // `--project` is still the checkout path (context-mode scopes on it); only the labels moved.
-  assert.ok(!sources.join(' ').includes('mem-checkout'), 'no label keyed on the checkout dir name');
-});
-
-test('an existing CONTEXT_MODE_DIR in the parent env is passed through, not overridden', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-ctx-override-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const repo = path.join(root, 'mem-checkout');
-  const vault = path.join(root, 'vault');
-  const bin = path.join(root, 'bin');
-  const log = path.join(root, 'ctx.log');
-  const customDir = path.join(root, 'custom-context-mode-dir');
-  fs.mkdirSync(repo, { recursive: true });
-  fs.mkdirSync(bin, { recursive: true });
-  const git = (/** @type {string[]} */ ...a) =>
-    execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: GIT_ENV });
-  git('init', '-q');
-  git('remote', 'add', 'origin', 'git@github.com:spike1292/claude-memory.git');
-  const slug = 'github.com-spike1292-claude-memory';
-  fs.mkdirSync(path.join(vault, 'Insights', slug), { recursive: true });
-
-  fs.writeFileSync(
-    path.join(bin, 'context-mode'),
-    `#!/bin/sh\nprintf '%s\\n' "$CONTEXT_MODE_DIR" >> ${JSON.stringify(log)}\n`,
-  );
-  fs.chmodSync(path.join(bin, 'context-mode'), 0o755);
-
-  const transcript = path.join(root, 't.jsonl');
-  fs.writeFileSync(
-    transcript,
-    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
-  );
-
-  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
-  execFileSync(process.execPath, [entry, transcript, repo], {
-    stdio: 'pipe',
-    env: {
-      ...GIT_ENV,
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      HOME: root,
-      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
-      DISTILL_VAULT: vault,
-      DISTILL_DRYRUN: '1',
-      CONTEXT_MODE_DIR: customDir,
-    },
-  });
-
-  const dirs = fs.readFileSync(log, 'utf8').trim().split('\n');
-  assert.ok(dirs.length > 0);
-  for (const d of dirs) assert.strictEqual(d, customDir);
-});
-
 // The whole mark, end to end through the real entry: an existing note the slug arm WOULD have
 // merged into, carrying `reconcile: manual`, must survive as its own note and be counted. Unit
 // tests on isManual() and on the predicate each pin one end; only this sees them wired together.
@@ -1028,7 +886,6 @@ const keyWorld = (t, prefix) => {
         CLAUDE_MEMORY_HOME: path.join(root, 'state'),
         DISTILL_VAULT: vault,
         DISTILL_DRYRUN: '1',
-        CONTEXT_MODE_DIR: undefined,
       },
     });
   /** @param {string} slug */
@@ -1560,49 +1417,33 @@ test('auto-commit unstages notes when commit fails after add succeeded (e.g. no 
   );
 });
 
-// #145: with context-mode installed, the plugin's own index was refreshed only at SessionStart, so a
-// second distil run before then could not see the first run's notes. The refresh fails fast here
-// (no embedding runtime in a checkout), and either stderr line proves it was attempted.
-for (const [what, code] of [
-  ['succeeds', 0],
-  ['fails', 1],
-])
-  test(`the plugin index is refreshed when context-mode is installed and ${what}`, (t) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-own-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const bin = path.join(root, 'bin');
-    const log = path.join(root, 'ctx.log');
-    fs.mkdirSync(bin);
-    fs.writeFileSync(
-      path.join(bin, 'context-mode'),
-      `#!/bin/sh\necho x >> ${log}\nexit ${code}\n`,
-      {
-        mode: 0o755,
-      },
-    );
-    const transcript = path.join(root, 't.jsonl');
-    fs.writeFileSync(
-      transcript,
-      JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
-    );
-    const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
-    const r = spawnSync(process.execPath, [entry, transcript, process.cwd()], {
-      encoding: 'utf8',
-      env: {
-        ...GIT_ENV,
-        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-        HOME: root,
-        CLAUDE_MEMORY_HOME: path.join(root, 'state'),
-        DISTILL_VAULT: path.join(root, 'vault'),
-        DISTILL_DRYRUN: '1',
-      },
-    });
-    assert.strictEqual(r.status, 0, r.stderr);
-    assert.ok(fs.existsSync(log), 'context-mode was the branch taken');
-    assert.match(r.stderr, /refreshed the plugin semantic index|semantic index refresh failed/);
+// #145: the plugin's own index is refreshed at SessionEnd, so a second distil run before the next
+// SessionStart sees the first run's notes. The refresh fails fast here (no embedding runtime in a
+// checkout), and either stderr line proves it was attempted.
+test('the plugin index is refreshed at the end of a distil run', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'distill-own-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transcript = path.join(root, 't.jsonl');
+  fs.writeFileSync(
+    transcript,
+    JSON.stringify({ message: { role: 'user', content: 'x'.repeat(400) } }) + '\n',
+  );
+  const entry = fileURLToPath(new URL('../distill-session.mjs', import.meta.url));
+  const r = spawnSync(process.execPath, [entry, transcript, process.cwd()], {
+    encoding: 'utf8',
+    env: {
+      ...GIT_ENV,
+      HOME: root,
+      CLAUDE_MEMORY_HOME: path.join(root, 'state'),
+      DISTILL_VAULT: path.join(root, 'vault'),
+      DISTILL_DRYRUN: '1',
+    },
   });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stderr, /refreshed the plugin semantic index|semantic index refresh failed/);
+});
 
-// macOS caps a socket path at 104 bytes; a long TMPDIR (context-mode sandbox) overruns it.
+// macOS caps a socket path at 104 bytes; a long TMPDIR overruns it.
 const SOCK_BASE = '/tmp';
 
 /**
@@ -1689,7 +1530,7 @@ test('the worker line records which arm decided each note, and the best score of
 
 // #145's headline: a restatement in a SECOND run folds into the first run's note. The server here
 // answers from the notes on disk, i.e. an index refreshed between runs; the refresh itself is the
-// context-mode test above.
+// #145 test above.
 test('a second distil run folds a restatement of a first-run note', async (t) => {
   const root = withStubClaude(
     '#!/bin/sh\ncat > /dev/null\n' +

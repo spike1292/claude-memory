@@ -50,8 +50,7 @@ Find rot in the vault before it misleads a future session. `<slug>` = the projec
    audit acts on, and reading every note re-derives them at a cost that grows with the vault. The
    measurements behind this, the band and the cap:
    `docs/decisions/2026-10-12-health-read-scope.md`. Steps 2–6 work from the notes gathered here; a finding may still pull in a
-   note that a gathered note links to — a targeted read, not a sweep. `ctx_execute_file` /
-   `ctx_search` keep raw bytes out of context if you have them.
+   note that a gathered note links to — a targeted read, not a sweep.
 
    **Note the snapshot size** (note count per layer) — the distiller writes notes concurrently, so record what you actually audited and report it. If the count grew mid-audit, say so rather than implying full coverage.
 

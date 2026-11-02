@@ -42,7 +42,7 @@ Dated, and superseded rather than edited when the answer changes.
 | [Architecture](architecture.md) | The shape of the system, the flows, the invariants and who enforces them — plus a "how things really work" half for the gaps between the two. |
 | [Retrieval](retrieval.md) | Why retrieval is shaped as it is: the two arms, rank fusion, the two gates, chunking and its silent traps, model profiles, the duplicate predicate, the server, and how it is evaluated. |
 | [Comparison](comparison.md) | Against Claude Code's auto memory and the systems in the research notes: store, write trigger, retrieval, locality, weight, licences, and where ours loses. Dated. |
-| [Optional integrations](optional-integrations.md) | `context-mode` and `codebase-memory-mcp` — what each adds, what its absence costs. |
+| [Optional integrations](optional-integrations.md) | `codebase-memory-mcp` — what it adds, what its absence costs. |
 | [Hook startup baseline](hook-startup-baseline.md) | What every hook costs at startup today, with its conditions and the command that regenerates it. Replaced in place. |
 | [CI, review, and releases](ci-and-releases.md) | Branch protection, the review workflows, the release flow. |
 | [Ponytail audit, 2026-08-19](2026-08-19-ponytail-audit.md) | A repo-wide scan for over-engineering: nine cuts, ranked; eight applied, one declined with its reason. |
@@ -80,6 +80,8 @@ stays as it was written; it is not updated to track what shipped.
 | [Comparison evidence](research/2026-08-21-comparison-evidence.md) | The evidence behind #42: Claude Code's own memory, basic-memory, Cursor, Copilot, Letta, Obsidian plugins — plus licence, install weight, and where ours loses. |
 | [Code comments](research/2026-09-06-comment-density.md) | What style guides mandate about comment content, what the staleness literature measures, and why every volume threshold in the wild is a *lower* bound. Sonar removed its own; the famous "20%" is a measured average its authors said predicts nothing. |
 | [Agent memory, Aug → Oct 2026](research/2026-10-10-agent-memory-landscape.md) | What moved since the survey: Mem0 went ADD-only, Graphiti's invalidation read from code, Hindsight and the 2026 benchmarks. Seven ranked ideas; contradiction handling leads. |
+| [agentmemory](research/2026-10-31-agentmemory.md) | rohitg00/agentmemory, 30k★: a capture-everything memory server for ~15 agents. Its benchmark, an independent one, what reviewers say, and why we do not switch. One idea taken (#223). |
+| [Code graph alternatives](research/2026-11-01-code-graph-alternatives.md) | Nine alternatives to codebase-memory-mcp, from Serena to GitNexus, with the one (vendor-run) accuracy test. Keep cbm; the built-in `LSP` tool covers Serena's part. |
 
 ## Conventions for these documents
 

@@ -8,6 +8,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { bm25, lexTokens } from './lexical.mjs';
 import { MAX_NOTES, semanticArm } from '../../hooks/lib/memory-recall.mjs';
+import { fileQuery } from '../../hooks/lib/paths.mjs';
+import { redirect } from './memory-merge.mjs';
 
 export const RECALL_KS = [1, 3, 5, 10];
 
@@ -202,6 +204,7 @@ export const UNSCORABLE = /** @type {const} */ ({
   score: 'a returned result carries a non-finite score',
   noGold: 'this case names no gold note at all',
   tied: 'every returned result scored the same, so the order is arrival order, not a ranking',
+  merged: 'the owner and a gold note were merged into one note, so the case asserts nothing',
 });
 
 /**
@@ -227,6 +230,7 @@ export function unscorableReason(c, results, known) {
   if (!gold.length) return UNSCORABLE.noGold;
   if (!gold.some((g) => known.has(g))) return UNSCORABLE.gold;
   if (c.owner && !known.has(String(c.owner))) return UNSCORABLE.gold;
+  if (c.owner && gold.includes(c.owner)) return UNSCORABLE.merged;
   return null;
 }
 
@@ -264,10 +268,51 @@ export const TYPE = /** @type {const} */ ({ supersede: 'supersede', abstain: 'ab
  * @param {readonly { note: string, score?: number }[]} results
  * @returns {boolean}
  */
-export function abstains(results) {
+export const abstains = (results) => !injectedNotes(results).length;
+
+/**
+ * The notes the hook's semantic arm would inject, in order — its gate, cap and character budget.
+ *
+ * @param {readonly { note: string, score?: number, text?: string }[]} results
+ * @returns {string[]}
+ */
+export function injectedNotes(results) {
   const hits = results.slice(0, MAX_NOTES).map((r) => ({ layer: '', ...r }));
-  return semanticArm(hits)?.entry.abstained ?? true;
+  const e = semanticArm(hits)?.entry;
+  return e && !e.abstained ? (e.notes ?? []).slice(0, e.injected) : [];
 }
+
+/**
+ * Precision is averaged over cases that inject anything; false injection is over cases with no
+ * relevant note at all (#226). Null precision means nothing was injected, not zero.
+ *
+ * @param {readonly { relevant: readonly string[], injected: readonly string[] }[]} rows
+ */
+export function injection(rows) {
+  const spoke = rows.filter((r) => r.injected.length);
+  const hits = spoke.map((r) => r.injected.filter((n) => r.relevant.includes(n)).length);
+  const none = rows.filter((r) => !r.relevant.length);
+  return {
+    injecting: spoke.length,
+    precision: spoke.length
+      ? spoke.reduce((a, r, i) => a + hits[i] / r.injected.length, 0) / spoke.length
+      : null,
+    relevantInjected: hits.reduce((a, b) => a + b, 0),
+    injected: spoke.reduce((a, r) => a + r.injected.length, 0),
+    noRelevant: none.length,
+    falseInjections: none.filter((r) => r.injected.length).length,
+  };
+}
+
+/**
+ * A case's query: its question, or the file-scoped query for a case that names a `file`.
+ *
+ * @param {{ q?: unknown, file?: unknown }} c
+ * @param {string} repo
+ * @returns {unknown}
+ */
+export const caseQuery = (c, repo) =>
+  typeof c.file === 'string' && c.q === undefined ? fileQuery(c.file, repo) : c.q;
 
 /**
  * The accept/reject rule, as a list of reasons to reject. Empty means accept.
@@ -309,4 +354,28 @@ export function gateFailures({ recall1, minRank1, unscorable, pairFails, recallC
  */
 export function casesHash(text) {
   return createHash('sha256').update(text.replace(/\r\n/g, '\n').trimEnd()).digest('hex');
+}
+
+/**
+ * Point each case's `gold` and `owner` at the note a merge folded them into, in place. Returns how
+ * many names moved.
+ *
+ * @param {{ gold: string[], owner?: string }[]} cases
+ * @param {ReadonlySet<string>} known
+ * @param {ReadonlyMap<string, string>} redirects
+ * @returns {number}
+ */
+export function followCases(cases, known, redirects) {
+  let followed = 0;
+  /** @param {string} n */
+  const follow = (n) => {
+    const to = redirect(n, known, redirects);
+    if (to !== n) followed++;
+    return to;
+  };
+  for (const c of cases) {
+    c.gold = c.gold.map(follow);
+    if (c.owner) c.owner = follow(String(c.owner));
+  }
+  return followed;
 }

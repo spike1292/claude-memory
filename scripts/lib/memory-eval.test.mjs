@@ -21,11 +21,15 @@ import {
   pairwise,
   gateFailures,
   casesHash,
+  followCases,
   kindOfPath,
   abstains,
+  injectedNotes,
+  injection,
   TYPE,
 } from './memory-eval.mjs';
 import { MAX_NOTES, MIN_COS } from '../../hooks/lib/memory-recall.mjs';
+import { applyMerge, planMerge } from './memory-merge.mjs';
 
 test('titleTokens drops short tokens', () => {
   // 'cap' is 3 chars and drops out — short tokens are noise, not identity
@@ -401,6 +405,18 @@ test('CLI --author writes a real case set from valid stdin', () => {
   assert.equal(r.status, 0, `got:\n${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /1 authored cases/);
   assert.match(fs.readFileSync(scopedPath, 'utf8'), /semantic-authored/);
+});
+
+test('CLI: a case may name a file instead of a question, through --author and --run (#226)', () => {
+  const { run, scopedPath } = scratch(['ours-cart', 'ours-other'], null, {
+    'ours-cart': 'The cart total is recomputed on every checkout step, never cached.',
+  });
+  const line = JSON.stringify({ file: 'web/src/cart.ts', gold: ['ours-cart'] }) + '\n';
+  const authored = run('--author', { stdin: line });
+  assert.equal(authored.status, 0, `got:\n${authored.stdout}${authored.stderr}`);
+  const r = run('--run', '--cases', scopedPath, '--mode', 'lexical', '--json');
+  assert.equal(r.status, 0, `got:\n${r.stdout}${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).recall[1], 1);
 });
 
 test('CLI --run refuses a --cases pointing at a directory', () => {
@@ -1118,6 +1134,46 @@ test('abstains() sees only the MAX_NOTES results the hook asks the server for', 
   assert.equal(abstains([...below, { note: 'deep', score: MIN_COS + 0.1 }]), true);
 });
 
+test('injectedNotes() is what the hook renders: gated, capped, and cut by the character budget', () => {
+  const over = MIN_COS + 0.1;
+  assert.deepEqual(
+    injectedNotes([
+      { note: 'a', score: over },
+      { note: 'low', score: MIN_COS - 0.1 },
+      { note: 'b', score: over },
+    ]),
+    ['a', 'b'],
+  );
+  const long = 'x\n' + 'y'.repeat(150);
+  const full = Array.from({ length: MAX_NOTES + 1 }, (_, i) => ({
+    note: `n${i}`.padEnd(200, 'z'),
+    score: over,
+    text: long,
+  }));
+  const got = injectedNotes(full);
+  assert.ok(got.length > 0 && got.length < MAX_NOTES, `budget must cut: got ${got.length}`);
+  assert.deepEqual(injectedNotes([]), []);
+});
+
+test('injection(): precision averages over injecting cases; false injection counts no-gold cases', () => {
+  const m = injection([
+    { relevant: ['a'], injected: ['a', 'x'] },
+    { relevant: ['b'], injected: ['b'] },
+    { relevant: ['c'], injected: [] },
+    { relevant: [], injected: ['y'] },
+    { relevant: [], injected: [] },
+  ]);
+  assert.deepEqual(m, {
+    injecting: 3,
+    precision: (0.5 + 1 + 0) / 3,
+    relevantInjected: 2,
+    injected: 4,
+    noRelevant: 2,
+    falseInjections: 1,
+  });
+  assert.equal(injection([{ relevant: ['a'], injected: [] }]).precision, null);
+});
+
 test('an abstention case is scorable with no gold and no results — those are its expected shape', () => {
   const c = { q: 'how long do I proof sourdough', gold: [], type: TYPE.abstain };
   const known = new Set(['some-note']);
@@ -1188,4 +1244,39 @@ test('CLI does not refuse an all-abstention set as one that names no gold', () =
   const r = run('--run', '--cases', casesPath, '--mode', 'lexical');
   assert.doesNotMatch(r.stdout, /names no gold notes/);
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+});
+
+test('CLI --run scores a frozen case set against the survivor of a merge, hash intact', () => {
+  const { run, casesPath } = scratch(
+    ['owner-note', 'other-note', 'third-note'],
+    [
+      { q: RANKED_Q, gold: ['old-note'] },
+      { q: RANKED_Q, gold: ['other-note'], owner: 'old-note' },
+      { q: RANKED_Q, gold: ['old-note'], owner: 'owner-note', type: TYPE.supersede },
+    ],
+    RANKED_BODIES,
+  );
+  const vault = path.join(path.dirname(casesPath), 'vault');
+  const dir = path.join(vault, 'Memory', SLUG);
+  const fm = (/** @type {string} */ body) => `---\ntitle: "t"\n---\n\n${body}\n`;
+  fs.writeFileSync(path.join(dir, 'owner-note.md'), fm(RANKED_BODIES['owner-note']));
+  fs.writeFileSync(path.join(dir, 'old-note.md'), fm('The ingress certificate lapsed.'));
+  assert.equal(run('--freeze', '--cases', casesPath).status, 0);
+  applyMerge(vault, planMerge(vault, [['owner-note', 'old-note']], '2026-10-31'));
+
+  const r = run('--run', '--cases', casesPath, '--mode', 'lexical', '--json');
+  assert.ok(!r.stderr.includes('no longer exist'), r.stderr);
+  assert.match(r.stderr, /followed 3 gold\/owner name/);
+  const json = JSON.parse(r.stdout);
+  assert.equal(json.frozen?.length, 64, `the frozen hash must still verify:\n${r.stdout}`);
+  assert.equal(json.recall[1], 1, 'the redirected gold is scored against the survivor');
+  assert.deepEqual(json.pairwise, { total: 1, failed: 0 }, 'a redirected owner is followed too');
+  assert.equal(json.unscorable, 1, 'a supersede pair folded into one note asserts nothing');
+});
+
+test('followCases moves gold and owner to the survivor and counts what moved', () => {
+  const cases = [{ gold: ['old', 'live'], owner: 'old' }, { gold: ['gone'] }];
+  const n = followCases(cases, new Set(['live', 'new']), new Map([['old', 'new']]));
+  assert.equal(n, 2);
+  assert.deepEqual(cases, [{ gold: ['new', 'live'], owner: 'new' }, { gold: ['gone'] }]);
 });

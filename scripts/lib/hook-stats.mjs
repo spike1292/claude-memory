@@ -607,17 +607,14 @@ function injectedSection(s, recall) {
       'says the number.',
     );
   // Measured once, by hand, because logging it needs a second appender written in shell and that
-  // hook is under a do-not-port fence: its heredoc is 1546 bytes of template before variable
+  // hook is under a do-not-port fence: its heredoc is 1079 bytes of template before variable
   // expansion — the body INCLUDING the newline that ends its last line, which is what the hook
-  // actually prints — and a further 342 ONLY when context-mode is absent. Both numbers are printed rather
-  // than the worst case alone, because adding the conditional one unconditionally overstates the
-  // common install. Near-fixed, which is why measuring once is enough — but it is a 2026-08-21
+  // actually prints. Near-fixed, which is why measuring once is enough — but it is a 2026-11-01
   // measurement of a template and it moves when the template is edited.
   body.push(
     '',
-    `Not counted: ${UNLOGGED} injects a near-fixed memory block — measured by hand at 1546 B,`,
-    `about ${estTokens(1546)} more estimated tokens per session, rising to ${estTokens(1546 + 342)}` +
-      ' when context-mode is not installed.',
+    `Not counted: ${UNLOGGED} injects a near-fixed memory block — measured by hand at 1079 B,`,
+    `about ${estTokens(1079)} more estimated tokens per session.`,
   );
   return body;
 }

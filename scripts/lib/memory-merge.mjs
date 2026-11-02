@@ -10,6 +10,8 @@ import { FENCE, INLINE_CODE, linkTargets } from '../../hooks/lib/memory-link-lin
 import { frontmatter } from './memory-mark.mjs';
 
 const SKIP = new Set(['.git', '.trash']);
+// Vault root, not `.trash/`: a redirect outlives an emptied trash, as the lesson lives on in the survivor.
+export const REDIRECTS = '.merge-redirects.jsonl';
 const ALIAS = /^_Also asked as: (.*?)\.?_[ \t]*$/m;
 
 /** @param {string} s */
@@ -255,6 +257,60 @@ export function applyMerge(vault, plan) {
     fs.mkdirSync(path.dirname(m.to), { recursive: true });
     fs.renameSync(m.from, m.to);
   }
+  fs.appendFileSync(
+    path.join(vault, REDIRECTS),
+    plan.groups
+      .flatMap((g) =>
+        g.redundant.map((r) =>
+          JSON.stringify({
+            from: r.name,
+            to: g.survivor.name,
+            dir: path.relative(vault, path.dirname(r.file)),
+          }),
+        ),
+      )
+      .join('\n') + '\n',
+  );
   const gone = new Set(rename.keys());
   return [...noteIndex(vault).values()].flat().filter((f) => linksTo(f, gone));
+}
+
+/**
+ * Every merge so far, `from` → `to`. A later line for the same `from` wins. `dirs` keeps only
+ * merges made in those vault-relative folders: names are unique per vault only at merge time, so
+ * another project's later merge of the same name must not redirect this one's.
+ *
+ * @param {string} vault
+ * @param {ReadonlySet<string>} [dirs]
+ * @returns {Map<string, string>}
+ */
+export function readRedirects(vault, dirs) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  const file = path.join(vault, REDIRECTS);
+  if (!fs.existsSync(file)) return out;
+  for (const l of fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+    try {
+      const { from, to, dir } = JSON.parse(l);
+      if (typeof from !== 'string' || typeof to !== 'string') continue;
+      if (!dirs || dirs.has(dir)) out.set(from, to);
+    } catch {}
+  }
+  return out;
+}
+
+/**
+ * A name that is no longer a note, followed through every merge to the note that holds it now.
+ * Unchanged when it is still a note or the chain ends nowhere, so a restored note wins.
+ *
+ * @param {string} name
+ * @param {ReadonlySet<string>} known
+ * @param {ReadonlyMap<string, string>} redirects
+ * @returns {string}
+ */
+export function redirect(name, known, redirects) {
+  let n = name;
+  for (let i = 0; i < redirects.size && !known.has(n) && redirects.has(n); i++)
+    n = /** @type {string} */ (redirects.get(n));
+  return known.has(n) ? n : name;
 }

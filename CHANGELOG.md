@@ -11,6 +11,18 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **Open forks at session start (#228).** An L1 note with `status: open` in its frontmatter is
+  listed by the SessionStart `insights-surface` hook, newest first and capped, until it is set to
+  `status: closed` or the field is removed. The output is unchanged for a project with no open
+  forks. The note validator warns on any other `status:` value. `/memory:protocol` documents when
+  to write a fork and how it differs from a `Logs/` handoff.
+- **Recall preview, and injection precision in the eval (#226, phase 1).**
+  `hooks/memory-recall.mjs --preview "<prompt>"` (or `--file <path>`) prints the exact brief the
+  recall hook would inject, through the hook's own code path, without arming recall or writing a
+  log line. `memory-eval.mjs --run` now reports injection precision and false-injection rate in
+  semantic mode, and a case may name a `file` instead of a question. File-scoped injection itself
+  waits on a held-out measurement.
+
 - **`scripts/memory-merge.mjs`, the merge step of `/memory:prune`.** Every prune used to hand-write
   its own merge. The script folds redundant notes into a survivor, unions their aliases, rewrites
   inbound `[[links]]` across the vault in every form Obsidian resolves (`[[ name ]]`, `[[Name]]`,
@@ -18,12 +30,20 @@ what a user's setup depends on: config keys, command names, vault layout, and
   `<vault>/.trash/pruned-<date>/` instead of deleting them. It checks the whole plan before it
   writes, refuses cross-folder groups, and has `--dry-run`.
 
-### Fixed
+- **A merge no longer breaks eval case sets.** `memory-merge.mjs` appends each `redundant →
+  survivor` pair to `<vault>/.merge-redirects.jsonl`, and `memory-eval.mjs --run` follows a missing
+  `gold` or `owner` name through it. A frozen set keeps its hash: it is read, never rewritten. A
+  pairwise case whose owner and gold were merged into one note is now unscorable instead of a
+  failed pair.
 
-- **`ctx_search` held at most 200 notes per vault layer.** context-mode stops a directory walk at
-  200 files unless told otherwise, and says nothing. The distiller's reindex now passes
-  `--max-files 100000` on all five `index` calls, and `/memory:prune` step 3 passes `maxFiles` to
-  `ctx_index`.
+### Removed
+
+- **The `context-mode` integration.** The distiller no longer runs the `context-mode` CLI to
+  refresh `ctx_search`, the session start and `/memory:doctor` no longer warn when it is missing,
+  and `/memory:challenge`, `/memory:eval`, `/memory:health` and `/memory:prune` use only
+  `memory-semantic.mjs`, which already has its own BM25 arm. No person had committed to
+  `context-mode` since 2026-06-29. Recall is unchanged. A `ctx_search` index you built before
+  stays where it is and simply stops being updated.
 
 ## [0.12.0] - 2026-10-31
 
