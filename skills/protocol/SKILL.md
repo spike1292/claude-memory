@@ -162,7 +162,9 @@ before extraction, so they never reach `Insights/`.
 current over time. Both are flat, with kebab-case stems. Nothing creates the folders ahead of time
 — the first note written makes its folder.
 
-- **Searchable.** The indexer allow-list names `Personal/Research/` and `Personal/Wiki/`, so recall and the connector can return these notes. They are cross-project: any project's search can find them.
+- **Searchable.** The indexer allow-list names `Personal/Research/` and `Personal/Wiki/`, so recall
+  and the connector can return these notes. They are cross-project: any project's search can find
+  them.
 - **Same note rules as every other note:** frontmatter on line 1, an `_Also asked as:` line (recall uses it), and
   `[[wikilinks]]` only. `validate-note` checks them. `name:` and `confidence:` are not required.
 - **Wiki pages:** one page per topic you come back to, not per source. Link a page to the
