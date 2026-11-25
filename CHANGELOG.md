@@ -11,6 +11,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ### Added
 
+- **`Personal/{Research,Wiki}/` is now indexed (#113, decision 4 reversed).** The notes are searchable
+  by recall and exposed by the vault-mcp connector, as a cross-project layer like `permanent/`.
+  Existing vaults pick them up on the next `--index`.
+
 - **Open forks at session start (#228).** An L1 note with `status: open` in its frontmatter is
   listed by the SessionStart `insights-surface` hook, newest first and capped, until it is set to
   `status: closed` or the field is removed. The output is unchanged for a project with no open

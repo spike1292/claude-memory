@@ -1271,7 +1271,7 @@ test('assertVectorWidth reports a missing vector instead of throwing', () => {
   assert.equal(run('[{ vec: new Uint8Array(16) }]').trim(), '');
 });
 
-test('vaultSources is the allow-list, unchanged (#113)', () => {
+test('vaultSources is the allow-list, with Personal/ (#113 reversed)', () => {
   assert.deepStrictEqual(vaultSources('/v', 's'), [
     { dir: '/v/Memory/s', layer: 'Memory' },
     { dir: '/v/Insights/s/Patterns', layer: 'Patterns' },
@@ -1280,18 +1280,22 @@ test('vaultSources is the allow-list, unchanged (#113)', () => {
     { dir: '/v/permanent', layer: 'permanent' },
     { dir: '/v/permanent/domain', layer: 'permanent' },
     { dir: '/v/permanent/tools', layer: 'permanent' },
+    { dir: '/v/Personal/Research', layer: 'Personal' },
+    { dir: '/v/Personal/Wiki', layer: 'Personal' },
   ]);
 });
 
-test('a Personal/ note never reaches the indexer input (#113)', (t) => {
+test('a Personal/ note reaches the indexer input (#113 reversed)', (t) => {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-'));
   t.after(() => fs.rmSync(vault, { recursive: true, force: true }));
-  for (const rel of ['Memory/s/kept.md', 'Personal/Research/private.md', 'Personal/Wiki/page.md']) {
+  for (const rel of ['Memory/s/kept.md', 'Personal/Research/found.md', 'Personal/Wiki/page.md']) {
     fs.mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true });
     fs.writeFileSync(path.join(vault, rel), '---\n---\nx\n');
   }
-  const files = indexInput(vault, 's').map((f) => f.full);
-  assert.ok(files.length > 0, 'the scan found nothing, so the exclusion below proves nothing');
+  const input = indexInput(vault, 's');
+  const files = input.map((f) => f.full);
   assert.ok(files.includes(path.join(vault, 'Memory/s/kept.md')));
-  assert.ok(!files.some((f) => f.includes('/Personal/')), files.join('\n'));
+  assert.ok(files.includes(path.join(vault, 'Personal/Wiki/page.md')), files.join('\n'));
+  assert.ok(files.includes(path.join(vault, 'Personal/Research/found.md')), files.join('\n'));
+  assert.equal(input.find((f) => f.full.endsWith('Wiki/page.md'))?.layer, 'Personal');
 });
