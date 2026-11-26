@@ -18,7 +18,7 @@ hedged prose.
 | L3 lessons | `Insights/<slug>/{Patterns,Mistakes,Decisions}/` | auto-distilled once per session |
 | L4 graph | `Graph/<slug>/GRAPH_REPORT.md` | codebase graph digest |
 | global | `permanent/{domain,tools}/` | cross-project consolidated notes |
-| personal | `Personal/{Research,Wiki}/` | personal research and wiki pages — **not indexed, not recalled, not exposed by the connector**, on purpose |
+| personal | `Personal/{Research,Wiki}/` | personal research and wiki pages — indexed, recalled and exposed by the connector, like `permanent/` (cross-project, not slug-scoped) |
 
 `<slug>` is the **project key** — the normalised git remote, not the checkout path. Get it with
 `. "$MEM/hooks/lib/vault-env.sh"; project_key "$PWD"`. Deriving it from `pwd` forks a second
@@ -162,13 +162,11 @@ before extraction, so they never reach `Insights/`.
 current over time. Both are flat, with kebab-case stems. Nothing creates the folders ahead of time
 — the first note written makes its folder.
 
-- **Outside the index on purpose.** The indexer reads an allow-list of layers and `Personal/` is
-  not on it, so neither recall arm nor the connector can return these notes. Do not add it.
-- **Same note rules as every other note:** frontmatter on line 1, an `_Also asked as:` line, and
+- **Searchable.** The indexer allow-list names `Personal/Research/` and `Personal/Wiki/`, so recall
+  and the connector can return these notes. They are cross-project: any project's search can find
+  them.
+- **Same note rules as every other note:** frontmatter on line 1, an `_Also asked as:` line (recall uses it), and
   `[[wikilinks]]` only. `validate-note` checks them. `name:` and `confidence:` are not required.
-- **The distiller is not fenced off.** A session that copies personal source text ends in some
-  project directory and is distilled into that project's `Insights/`. Wrap copied source text in
-  `<private>…</private>` while you work.
 - **Wiki pages:** one page per topic you come back to, not per source. Link a page to the
   research notes it cites and to related pages. Prune a page when its topic is gone or another page
   covers it — fold what is still true into the survivor first, and ask before you delete.

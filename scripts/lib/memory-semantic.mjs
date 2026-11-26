@@ -525,7 +525,7 @@ export function mistakesFirst(gaps) {
 }
 
 /**
- * The index allow-list. A folder not named here — `Personal/` included — is never indexed.
+ * The index allow-list. A folder not named here is never indexed.
  *
  * @param {string} vault
  * @param {string} slug
@@ -540,6 +540,9 @@ export function vaultSources(vault, slug) {
   out.push({ dir: path.join(vault, 'permanent'), layer: 'permanent' });
   for (const sub of ['domain', 'tools'])
     out.push({ dir: path.join(vault, 'permanent', sub), layer: 'permanent' });
+  // Personal/ is cross-project too, and searchable on purpose (docs/decisions/2026-11-25-index-personal.md).
+  for (const sub of ['Research', 'Wiki'])
+    out.push({ dir: path.join(vault, 'Personal', sub), layer: 'Personal' });
   return out;
 }
 
