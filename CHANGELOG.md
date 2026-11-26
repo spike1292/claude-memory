@@ -9,6 +9,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-26
+
 ### Added
 
 - **`Personal/{Research,Wiki}/` is now indexed (#113, decision 4 reversed).** The notes are searchable
@@ -1703,7 +1705,8 @@ what a user's setup depends on: config keys, command names, vault layout, and
 - Hybrid retrieval — a local ONNX vector arm and a keyword arm, rank-fused, with per-model indexes.
 - Session distillation into `Insights/`, deduped on write.
 
-[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/spike1292/claude-memory/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/spike1292/claude-memory/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/spike1292/claude-memory/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/spike1292/claude-memory/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/spike1292/claude-memory/compare/v0.9.0...v0.10.0
