@@ -9,6 +9,10 @@ what a user's setup depends on: config keys, command names, vault layout, and
 
 ## [Unreleased]
 
+### Fixed
+
+- `scripts/release.sh --selftest` turns signing off in its throwaway repos, so it passes with global `commit.gpgsign`/`tag.gpgsign` on.
+
 ## [0.13.0] - 2026-11-26
 
 ### Added

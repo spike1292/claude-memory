@@ -64,7 +64,7 @@ if [ "${1:-}" = "--selftest" ]; then
     _want=$1; _cur=$2; shift 2
     rm -rf "$_t/r"; mkdir -p "$_t/r"
     ( cd "$_t/r"
-      git init -q .; git config user.email t@t; git config user.name t
+      git init -q .; git config user.email t@t; git config user.name t; git config commit.gpgsign false; git config tag.gpgsign false
       git commit -q --allow-empty -m 'chore: base'
       git tag v"$_cur"
       for _s in "$@"; do git commit -q --allow-empty -m "$_s"; done )
